@@ -160,6 +160,11 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  deleteCrmLead: (id: number) =>
+    request<{ ok: true }>(`/crm/leads?id=${id}`, {
+      method: "DELETE",
+    }),
+
   getAgents: () => request<any[]>("/agents"),
   saveAgents: (agents: any[]) =>
     request<{ ok: true; count: number }>("/agents", {

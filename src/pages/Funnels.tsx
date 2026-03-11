@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { GripVertical, User, Plus, Search } from "lucide-react";
+import { GripVertical, User, Plus, Search, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -84,7 +84,22 @@ export default function Funnels() {
     }
   }, [columnsQuery.isSuccess, columnsQuery.data, createColumn]);
 
-  const columns = (columnsQuery.data || []).slice().sort((a, b) => a.position - b.position) as CrmColumn[];
+  // Deduplica colunas por nome e mantém a ordem padrão (Leads, Em contato, Proposta, Fechado)
+  const rawColumns = (columnsQuery.data || []) as CrmColumn[];
+  const columnsMap = new Map<string, CrmColumn>();
+  rawColumns
+    .slice()
+    .sort((a, b) => a.position - b.position)
+    .forEach((c) => {
+      const key = c.name.toLowerCase();
+      if (!columnsMap.has(key)) {
+        columnsMap.set(key, c);
+      }
+    });
+  const columns = DEFAULT_COLUMNS.map((name) => {
+    const key = name.toLowerCase();
+    return columnsMap.get(key);
+  }).filter(Boolean) as CrmColumn[];
   const crmLeads = (leadsQuery.data || []) as CrmLead[];
 
   const leadsByColumn = useMemo(() => {
@@ -115,6 +130,13 @@ export default function Funnels() {
       (l.company.toLowerCase().includes(search.toLowerCase()) ||
         l.phone.includes(search)),
   );
+
+  const deleteCrmLead = useMutation({
+    mutationFn: api.deleteCrmLead,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["crm-leads"] });
+    },
+  });
 
   return (
     <div className="space-y-6 animate-slide-in">
@@ -149,7 +171,7 @@ export default function Funnels() {
                 <span className="text-sm font-medium text-foreground">
                   {column.name}
                 </span>
-                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2">
                   <Badge variant="secondary" className="text-[10px] bg-secondary">
                     {(leadsByColumn[column.id] || []).length}
                   </Badge>
@@ -236,7 +258,7 @@ export default function Funnels() {
                     onDragStart={() => setDraggingId(lead.id)}
                     onDragEnd={() => setDraggingId(null)}
                   >
-                    <div className="flex items-start justify-between">
+                    <div className="flex items-start justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/10">
                           <User className="h-3.5 w-3.5 text-primary" />
@@ -250,7 +272,16 @@ export default function Funnels() {
                           </p>
                         </div>
                       </div>
-                      <GripVertical className="h-4 w-4 text-muted-foreground/30 group-hover:text-muted-foreground" />
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          className="h-5 w-5 rounded-full flex items-center justify-center text-muted-foreground/60 hover:text-destructive hover:bg-destructive/10 text-[10px]"
+                          onClick={() => deleteCrmLead.mutate(lead.id)}
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                        <GripVertical className="h-4 w-4 text-muted-foreground/30 group-hover:text-muted-foreground" />
+                      </div>
                     </div>
                   </div>
                 ))}

@@ -587,6 +587,17 @@ async function handleCRM(request: Request, env: Env, method: string, url: URL) {
       return json({ ok: true });
     }
 
+    if (method === "DELETE") {
+      const id = url.searchParams.get("id");
+      if (!id) return json({ error: "ID obrigatório" }, { status: 400 });
+      await env.DB.prepare(
+        "DELETE FROM crm_leads WHERE id = ? AND tenant_id = ?",
+      )
+        .bind(id, tenantId)
+        .run();
+      return json({ ok: true });
+    }
+
     return new Response("Method not allowed", { status: 405 });
   }
 
