@@ -1,55 +1,61 @@
 import express from "express";
-import pkg from "whatsapp-web.js";
-import qrcode from "qrcode-terminal";
-
-const { Client, LocalAuth } = pkg;
+import makeWASocket, {
+  useMultiFileAuthState,
+  DisconnectReason,
+} from "@whiskeysockets/baileys";
 
 const app = express();
 app.use(express.json());
 
-const SESSION_NAME = "bot-connect-crm";
 const PORT = process.env.PORT || 3000;
 
 let connectionStatus = "disconnected";
-let lastQr = null;
+let sock = null;
 
-const client = new Client({
-  authStrategy: new LocalAuth({ clientId: SESSION_NAME }),
-  puppeteer: {
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
-  },
-});
+async function startWhatsApp() {
+  const { state, saveCreds } = await useMultiFileAuthState("./auth");
 
-client.on("qr", (qr) => {
-  connectionStatus = "qr";
-  lastQr = qr;
-  console.log("QR recebido. Escaneie no WhatsApp:");
-  qrcode.generate(qr, { small: true });
-});
+  sock = makeWASocket({
+    auth: state,
+    printQRInTerminal: true, // QR aparece direto nos logs do Railway
+  });
 
-client.on("ready", () => {
-  console.log("WhatsApp pronto!");
-  connectionStatus = "connected";
-});
+  sock.ev.on("creds.update", saveCreds);
 
-client.on("disconnected", () => {
-  console.log("WhatsApp desconectado");
-  connectionStatus = "disconnected";
-});
+  sock.ev.on("connection.update", (update) => {
+    const { connection, lastDisconnect } = update;
 
-client.initialize();
+    if (connection === "open") {
+      console.log("WhatsApp conectado");
+      connectionStatus = "connected";
+    } else if (connection === "close") {
+      const shouldReconnect =
+        lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+      console.log(
+        "Conexão fechada. Reconnecting? ",
+        shouldReconnect,
+        lastDisconnect?.error,
+      );
+      connectionStatus = "disconnected";
+      if (shouldReconnect) {
+        startWhatsApp().catch((err) =>
+          console.error("Erro ao reconectar WhatsApp:", err),
+        );
+      }
+    } else if (connection === "connecting") {
+      connectionStatus = "connecting";
+    }
+  });
+}
+
+startWhatsApp().catch((err) =>
+  console.error("Erro ao iniciar WhatsApp:", err),
+);
 
 app.get("/status", (req, res) => {
   res.json({
     status: connectionStatus,
-    hasQr: !!lastQr,
   });
-});
-
-app.get("/qr", (req, res) => {
-  if (!lastQr) return res.status(404).json({ error: "QR não disponível" });
-  res.json({ qr: lastQr });
 });
 
 app.post("/send-message", async (req, res) => {
@@ -60,8 +66,12 @@ app.post("/send-message", async (req, res) => {
       .json({ error: "to e message são obrigatórios" });
   }
 
+  if (!sock) {
+    return res.status(500).json({ error: "Sessão WhatsApp ainda não iniciada" });
+  }
+
   try {
-    await client.sendMessage(to, message);
+    await sock.sendMessage(to, { text: message });
     res.json({ ok: true });
   } catch (err) {
     console.error(err);
