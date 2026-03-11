@@ -14,8 +14,8 @@ import SettingsPage from "./pages/Settings";
 import NotFound from "./pages/NotFound";
 import Connections from "./pages/Connections";
 import Admin from "./pages/Admin";
-import ClientLogin from "./pages\ClientLogin";
-import AdminLogin from "./pages\AdminLogin";
+import ClientLogin from "./pages/ClientLogin";
+import AdminLogin from "./pages/AdminLogin";
 
 const queryClient = new QueryClient();
 
