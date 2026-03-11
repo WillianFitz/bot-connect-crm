@@ -19,6 +19,9 @@ import AdminLogin from "./pages/AdminLogin";
 
 const queryClient = new QueryClient();
 
+// Log simples apenas para forçar novo build/deploy no Pages
+console.log("LeadFlowAI App carregado");
+
 function AdminRoute() {
   const isLogged =
     typeof localStorage !== "undefined" &&
