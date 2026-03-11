@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface CrmColumn {
   id: number;
@@ -30,8 +31,7 @@ export default function Funnels() {
   const [draggingId, setDraggingId] = useState<number | null>(null);
   const initializedRef = useRef(false);
   const [selectedColumnForNewLead, setSelectedColumnForNewLead] = useState<number | null>(null);
-  const [newCompany, setNewCompany] = useState("");
-  const [newPhone, setNewPhone] = useState("");
+  const [selectedLeadId, setSelectedLeadId] = useState<string>("");
 
   const columnsQuery = useQuery({
     queryKey: ["crm-columns"],
@@ -41,6 +41,11 @@ export default function Funnels() {
   const leadsQuery = useQuery({
     queryKey: ["crm-leads"],
     queryFn: api.getCrmLeads,
+  });
+
+  const allLeadsQuery = useQuery({
+    queryKey: ["leads-for-crm"],
+    queryFn: () => api.getLeads(),
   });
 
   const createColumn = useMutation({
@@ -58,20 +63,13 @@ export default function Funnels() {
   });
 
   const createLeadInCrm = useMutation({
-    mutationFn: async (payload: { column_id: number; company: string; phone: string }) => {
-      // cria lead simples sem pasta e vincula ao CRM
-      const lead = await api.createLead({
-        company: payload.company,
-        phone: payload.phone,
-        folder_id: null,
-      });
-      await api.createCrmLead({ lead_id: lead.id, column_id: payload.column_id });
+    mutationFn: async (payload: { column_id: number; lead_id: number }) => {
+      await api.createCrmLead({ lead_id: payload.lead_id, column_id: payload.column_id });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["crm-leads"] });
       setSelectedColumnForNewLead(null);
-      setNewCompany("");
-      setNewPhone("");
+      setSelectedLeadId("");
     },
   });
 
@@ -109,6 +107,11 @@ export default function Funnels() {
     setDraggingId(null);
   };
 
+  const leadsAlreadyInCrmIds = new Set(crmLeads.map((l) => l.lead_id));
+  const availableLeads = (allLeadsQuery.data || []).filter(
+    (l) => !leadsAlreadyInCrmIds.has(l.id),
+  );
+
   return (
     <div className="space-y-6 animate-slide-in">
       <div>
@@ -142,6 +145,7 @@ export default function Funnels() {
                         setSelectedColumnForNewLead(column.id);
                       } else {
                         setSelectedColumnForNewLead(null);
+                        setSelectedLeadId("");
                       }
                     }}
                   >
@@ -156,31 +160,48 @@ export default function Funnels() {
                       </DialogHeader>
                       <div className="mt-4 space-y-3">
                         <div>
-                          <Label className="text-xs text-muted-foreground">Empresa</Label>
-                          <Input
-                            className="mt-1 bg-secondary border-border/50"
-                            value={newCompany}
-                            onChange={(e) => setNewCompany(e.target.value)}
-                          />
-                        </div>
-                        <div>
-                          <Label className="text-xs text-muted-foreground">Telefone</Label>
-                          <Input
-                            className="mt-1 bg-secondary border-border/50"
-                            value={newPhone}
-                            onChange={(e) => setNewPhone(e.target.value)}
-                          />
+                          <Label className="text-xs text-muted-foreground">
+                            Selecionar lead existente
+                          </Label>
+                          <Select
+                            value={selectedLeadId}
+                            onValueChange={setSelectedLeadId}
+                          >
+                            <SelectTrigger className="mt-1 bg-secondary border-border/50 w-full">
+                              <SelectValue placeholder={
+                                availableLeads.length === 0
+                                  ? "Nenhum lead disponível"
+                                  : "Escolha um lead"
+                              } />
+                            </SelectTrigger>
+                            <SelectContent className="bg-popover border-border/50 max-h-64">
+                              {availableLeads.length === 0 ? (
+                                <SelectItem value="__none__" disabled>
+                                  Nenhum lead disponível
+                                </SelectItem>
+                              ) : (
+                                availableLeads.map((l) => (
+                                  <SelectItem key={l.id} value={String(l.id)}>
+                                    {l.company} • {l.phone}
+                                  </SelectItem>
+                                ))
+                              )}
+                            </SelectContent>
+                          </Select>
                         </div>
                         <button
                           type="button"
                           className="mt-2 w-full inline-flex items-center justify-center rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-                          disabled={!newCompany || !newPhone || createLeadInCrm.isPending}
+                          disabled={
+                            !selectedLeadId ||
+                            selectedLeadId === "__none__" ||
+                            createLeadInCrm.isPending
+                          }
                           onClick={() =>
                             selectedColumnForNewLead &&
                             createLeadInCrm.mutate({
                               column_id: selectedColumnForNewLead,
-                              company: newCompany,
-                              phone: newPhone,
+                              lead_id: Number(selectedLeadId),
                             })
                           }
                         >
