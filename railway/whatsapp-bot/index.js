@@ -2,7 +2,7 @@ import express from "express";
 import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
-} from "@whiskeysockets/baileys";
+} from "baileys";
 
 const app = express();
 app.use(express.json());
