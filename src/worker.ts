@@ -64,6 +64,37 @@ async function ensureTenant(env: Env, tenantId: string) {
     .run();
 }
 
+async function callOpenAI(
+  env: Env,
+  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
+) {
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      messages,
+      temperature: 0.7,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`OpenAI error: ${text}`);
+  }
+
+  const data = await res.json();
+  const content = data.choices?.[0]?.message?.content;
+  if (!content || typeof content !== "string") {
+    throw new Error("Resposta inválida da OpenAI");
+  }
+
+  return content;
+}
+
 async function handleAdminCreateTenantUser(request: Request, env: Env): Promise<Response> {
   if (!isAdmin(request, env)) {
     return json({ error: "Unauthorized" }, { status: 401 });
@@ -454,6 +485,65 @@ async function handleAgents(request: Request, env: Env, method: string, url: URL
   return new Response("Method not allowed", { status: 405 });
 }
 
+async function handleAIDisparo(request: Request, env: Env): Promise<Response> {
+  const tenantId = getTenantId(request);
+  await ensureTenant(env, tenantId);
+
+  const row = await env.DB.prepare(
+    `SELECT base_prompt FROM agents WHERE tenant_id = ? AND id = 'disparo' LIMIT 1`,
+  )
+    .bind(tenantId)
+    .first<{ base_prompt?: string }>();
+
+  const basePrompt = row?.base_prompt || `Você é um agente de disparo automático.
+Gere uma saudação curta, natural e humana para iniciar uma conversa com um lead.
+Responda EXCLUSIVAMENTE em JSON no formato {"mensagem": "texto"}.`;
+
+  const content = await callOpenAI(env, [
+    { role: "system", content: basePrompt },
+    { role: "user", content: "Gere uma saudação válida conforme as regras." },
+  ]);
+
+  // Tentamos devolver JSON parseado; se falhar, devolvemos como string.
+  try {
+    const parsed = JSON.parse(content);
+    return json(parsed);
+  } catch {
+    return json({ mensagem: content });
+  }
+}
+
+async function handleAIAgent(
+  request: Request,
+  env: Env,
+  agentId: "atendimento" | "agendamento",
+): Promise<Response> {
+  const tenantId = getTenantId(request);
+  await ensureTenant(env, tenantId);
+
+  const body = await readBody<{ message?: string }>(request);
+  const userMessage = body.message || "";
+
+  const row = await env.DB.prepare(
+    `SELECT base_prompt FROM agents WHERE tenant_id = ? AND id = ? LIMIT 1`,
+  )
+    .bind(tenantId, agentId)
+    .first<{ base_prompt?: string }>();
+
+  const basePrompt =
+    row?.base_prompt ||
+    (agentId === "atendimento"
+      ? "Você é um agente de atendimento. Responda de forma educada, clara e objetiva."
+      : "Você é um agente de agendamento. Ajude a marcar reuniões, sugerindo horários e confirmando com o lead.");
+
+  const content = await callOpenAI(env, [
+    { role: "system", content: basePrompt },
+    { role: "user", content: userMessage },
+  ]);
+
+  return json({ resposta: content });
+}
+
 async function handleCampaigns(request: Request, env: Env, method: string, url: URL) {
   const tenantId = getTenantId(request);
   await ensureTenant(env, tenantId);
@@ -646,6 +736,12 @@ export default {
         response = await handleCampaigns(request, env, method, url);
       } else if (pathname.startsWith("/api/crm")) {
         response = await handleCRM(request, env, method, url);
+      } else if (pathname === "/api/ai/disparo" && method === "POST") {
+        response = await handleAIDisparo(request, env);
+      } else if (pathname === "/api/ai/atendimento" && method === "POST") {
+        response = await handleAIAgent(request, env, "atendimento");
+      } else if (pathname === "/api/ai/agendamento" && method === "POST") {
+        response = await handleAIAgent(request, env, "agendamento");
       } else {
         response = notFound();
       }

@@ -221,5 +221,23 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+
+  // IA
+  runDisparoAgent: () =>
+    request<{ mensagem: string }>("/ai/disparo", {
+      method: "POST",
+    }),
+
+  runAtendimentoAgent: (payload: { message: string }) =>
+    request<{ resposta: string }>("/ai/atendimento", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  runAgendamentoAgent: (payload: { message: string }) =>
+    request<{ resposta: string }>("/ai/agendamento", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
 };
 
