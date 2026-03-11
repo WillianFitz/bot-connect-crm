@@ -26,22 +26,28 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <Routes>
+          {/* Login principal do sistema (clientes) */}
+          <Route path="/" element={<ClientLogin />} />
           <Route path="/login" element={<ClientLogin />} />
-          <Route path="/login-admin" element={<AdminLogin />} />
+
+          {/* Admin (fora do layout do app dos clientes) */}
+          <Route path="/admin-login" element={<AdminLogin />} />
+          <Route path="/admin" element={<Admin />} />
+
+          {/* App dos clientes, com sidebar/layout */}
           <Route
-            path="/*"
+            path="/app/*"
             element={(
               <AppLayout>
                 <Routes>
-                  <Route path="/" element={<Dashboard />} />
-                  <Route path="/connections" element={<Connections />} />
-                  <Route path="/leads" element={<Leads />} />
-                  <Route path="/crm" element={<Funnels />} />
-                  <Route path="/campaigns" element={<Campaigns />} />
-                  <Route path="/agents" element={<Agents />} />
-                  <Route path="/appointments" element={<Appointments />} />
-                  <Route path="/settings" element={<SettingsPage />} />
-                  <Route path="/admin" element={<Admin />} />
+                  <Route path="" element={<Dashboard />} />
+                  <Route path="connections" element={<Connections />} />
+                  <Route path="leads" element={<Leads />} />
+                  <Route path="crm" element={<Funnels />} />
+                  <Route path="campaigns" element={<Campaigns />} />
+                  <Route path="agents" element={<Agents />} />
+                  <Route path="appointments" element={<Appointments />} />
+                  <Route path="settings" element={<SettingsPage />} />
                   <Route path="*" element={<NotFound />} />
                 </Routes>
               </AppLayout>

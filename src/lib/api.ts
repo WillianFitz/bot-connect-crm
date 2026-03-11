@@ -172,6 +172,33 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  adminListUsers: () =>
+    request<
+      Array<{
+        id: number;
+        tenant_id: string;
+        tenant_name: string;
+        username: string;
+        document: string;
+        created_at: string;
+      }>
+    >("/admin/users", {
+      method: "GET",
+      headers: {
+        "x-admin-key":
+          (import.meta.env.VITE_ADMIN_API_KEY as string | undefined) || "",
+      },
+    }),
+
+  adminDeleteUser: (id: number) =>
+    request<{ ok: true }>(`/admin/users?id=${id}`, {
+      method: "DELETE",
+      headers: {
+        "x-admin-key":
+          (import.meta.env.VITE_ADMIN_API_KEY as string | undefined) || "",
+      },
+    }),
+
   clientLogin: (payload: { username: string; password: string }) =>
     request<{ ok: true; tenantId: string; username: string }>("/auth/login", {
       method: "POST",

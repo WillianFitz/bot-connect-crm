@@ -9,21 +9,20 @@ import {
 } from "@/components/ui/sidebar";
 
 const mainItems = [
-  { title: "Dashboard", url: "/", icon: LayoutDashboard },
-  { title: "Conexões", url: "/connections", icon: Link2 },
-  { title: "Leads", url: "/leads", icon: Users },
-  { title: "CRM", url: "/crm", icon: GitBranch },
-  { title: "Disparos", url: "/campaigns", icon: Megaphone },
+  { title: "Dashboard", url: "/app", icon: LayoutDashboard },
+  { title: "Conexões", url: "/app/connections", icon: Link2 },
+  { title: "Leads", url: "/app/leads", icon: Users },
+  { title: "CRM", url: "/app/crm", icon: GitBranch },
+  { title: "Disparos", url: "/app/campaigns", icon: Megaphone },
 ];
 
 const automationItems = [
-  { title: "Agentes de IA", url: "/agents", icon: Bot },
-  { title: "Agendamentos", url: "/appointments", icon: CalendarCheck },
+  { title: "Agentes de IA", url: "/app/agents", icon: Bot },
+  { title: "Agendamentos", url: "/app/appointments", icon: CalendarCheck },
 ];
 
 const systemItems = [
-  { title: "Configurações", url: "/settings", icon: Settings },
-  { title: "Admin", url: "/admin", icon: Settings },
+  { title: "Configurações", url: "/app/settings", icon: Settings },
 ];
 
 function SidebarSection({ label, items }: { label: string; items: typeof mainItems }) {

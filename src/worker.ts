@@ -95,6 +95,33 @@ async function handleAdminCreateTenantUser(request: Request, env: Env): Promise<
   return json({ ok: true, tenantId });
 }
 
+async function handleAdminListUsers(request: Request, env: Env): Promise<Response> {
+  if (!isAdmin(request, env)) {
+    return json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const res = await env.DB.prepare(
+    `SELECT u.id, u.tenant_id, t.name as tenant_name, u.username, u.document, u.created_at
+     FROM users u
+     JOIN tenants t ON t.id = u.tenant_id
+     ORDER BY t.name ASC, u.username ASC`,
+  ).all();
+
+  return json(res.results || []);
+}
+
+async function handleAdminDeleteUser(request: Request, env: Env, url: URL): Promise<Response> {
+  if (!isAdmin(request, env)) {
+    return json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const id = url.searchParams.get("id");
+  if (!id) return json({ error: "ID obrigatório" }, { status: 400 });
+
+  await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(id).run();
+  return json({ ok: true });
+}
+
 async function handleClientLogin(request: Request, env: Env): Promise<Response> {
   const body = await readBody<{ username?: string; password?: string }>(request);
   if (!body.username || !body.password) {
@@ -540,6 +567,10 @@ export default {
 
     if (pathname === "/api/admin/create-tenant-user" && method === "POST") {
       response = await handleAdminCreateTenantUser(request, env);
+    } else if (pathname === "/api/admin/users" && method === "GET") {
+      response = await handleAdminListUsers(request, env);
+    } else if (pathname === "/api/admin/users" && method === "DELETE") {
+      response = await handleAdminDeleteUser(request, env, url);
     } else if (pathname === "/api/auth/login" && method === "POST") {
       response = await handleClientLogin(request, env);
     } else if (pathname.startsWith("/api/connections/whatsapp")) {
