@@ -11,10 +11,9 @@ export default function AdminLogin() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // Para simplificar, guardamos a key localmente;
-    // as chamadas admin usam VITE_ADMIN_API_KEY no frontend.
     if (typeof localStorage !== "undefined") {
-      localStorage.setItem("admin_key", key);
+      // marca apenas que o admin está autenticado no front
+      localStorage.setItem("admin_logged", "1");
     }
     navigate("/admin");
   };
