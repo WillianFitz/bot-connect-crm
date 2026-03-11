@@ -194,6 +194,33 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
   const tenantId = getTenantId(request);
   await ensureTenant(env, tenantId);
 
+  const pathname = url.pathname;
+
+  // QR para conexão, proxyando o serviço do Railway
+  if (pathname === "/api/connections/whatsapp/qr") {
+    if (method !== "GET") {
+      return new Response("Method not allowed", { status: 405 });
+    }
+
+    if (!env.BOT_SERVICE_URL) {
+      return json({ qr: null, error: "BOT_SERVICE_URL não configurado" }, { status: 500 });
+    }
+
+    try {
+      const res = await fetch(`${env.BOT_SERVICE_URL}/qr`);
+      if (!res.ok) {
+        return json({ qr: null, error: "QR não disponível" }, { status: res.status });
+      }
+      const data = await res.json();
+      return json({ qr: data.qr || null });
+    } catch (err: any) {
+      return json(
+        { qr: null, error: err?.message || "Erro ao buscar QR do bot" },
+        { status: 500 },
+      );
+    }
+  }
+
   if (method === "GET") {
     const row = await env.DB.prepare(
       "SELECT type, status, agent_enabled, reply_all FROM connections WHERE tenant_id = ? AND type = 'whatsapp' LIMIT 1"

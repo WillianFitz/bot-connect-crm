@@ -10,6 +10,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 let connectionStatus = "disconnected";
+let lastQr = null;
 let sock = null;
 
 async function startWhatsApp() {
@@ -17,13 +18,19 @@ async function startWhatsApp() {
 
   sock = makeWASocket({
     auth: state,
-    printQRInTerminal: true, // QR aparece direto nos logs do Railway
+    printQRInTerminal: true, // QR também aparece nos logs do Railway
   });
 
   sock.ev.on("creds.update", saveCreds);
 
   sock.ev.on("connection.update", (update) => {
-    const { connection, lastDisconnect } = update;
+    const { connection, lastDisconnect, qr } = update;
+
+    if (qr) {
+      lastQr = qr;
+      connectionStatus = "qr";
+      console.log("Novo QR gerado (será exibido no frontend).");
+    }
 
     if (connection === "open") {
       console.log("WhatsApp conectado");
@@ -56,6 +63,13 @@ app.get("/status", (req, res) => {
   res.json({
     status: connectionStatus,
   });
+});
+
+app.get("/qr", (req, res) => {
+  if (!lastQr) {
+    return res.status(404).json({ qr: null, error: "QR não disponível" });
+  }
+  return res.json({ qr: lastQr });
 });
 
 app.post("/send-message", async (req, res) => {

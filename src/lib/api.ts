@@ -46,6 +46,8 @@ export const api = {
       reply_all: number;
     }>("/connections/whatsapp"),
 
+  getWhatsappQr: () =>
+    request<{ qr: string | null; error?: string }>("/connections/whatsapp/qr"),
   updateWhatsappConnection: (payload: {
     status?: string;
     agent_enabled?: boolean;
