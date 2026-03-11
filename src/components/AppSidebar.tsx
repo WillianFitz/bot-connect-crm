@@ -1,5 +1,5 @@
 import {
-  LayoutDashboard, Users, GitBranch, Megaphone, Bot, CalendarCheck, Settings, Zap,
+  LayoutDashboard, Users, GitBranch, Megaphone, Bot, CalendarCheck, Settings, Zap, Link2,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
@@ -10,9 +10,10 @@ import {
 
 const mainItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
+  { title: "Conexões", url: "/connections", icon: Link2 },
   { title: "Leads", url: "/leads", icon: Users },
-  { title: "Funis", url: "/funnels", icon: GitBranch },
-  { title: "Campanhas", url: "/campaigns", icon: Megaphone },
+  { title: "CRM", url: "/crm", icon: GitBranch },
+  { title: "Disparos", url: "/campaigns", icon: Megaphone },
 ];
 
 const automationItems = [
@@ -22,6 +23,7 @@ const automationItems = [
 
 const systemItems = [
   { title: "Configurações", url: "/settings", icon: Settings },
+  { title: "Admin", url: "/admin", icon: Settings },
 ];
 
 function SidebarSection({ label, items }: { label: string; items: typeof mainItems }) {

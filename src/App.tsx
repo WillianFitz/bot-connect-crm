@@ -12,6 +12,10 @@ import Agents from "./pages/Agents";
 import Appointments from "./pages/Appointments";
 import SettingsPage from "./pages/Settings";
 import NotFound from "./pages/NotFound";
+import Connections from "./pages/Connections";
+import Admin from "./pages/Admin";
+import ClientLogin from "./pages\ClientLogin";
+import AdminLogin from "./pages\AdminLogin";
 
 const queryClient = new QueryClient();
 
@@ -21,18 +25,29 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
-        <AppLayout>
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/leads" element={<Leads />} />
-            <Route path="/funnels" element={<Funnels />} />
-            <Route path="/campaigns" element={<Campaigns />} />
-            <Route path="/agents" element={<Agents />} />
-            <Route path="/appointments" element={<Appointments />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </AppLayout>
+        <Routes>
+          <Route path="/login" element={<ClientLogin />} />
+          <Route path="/login-admin" element={<AdminLogin />} />
+          <Route
+            path="/*"
+            element={(
+              <AppLayout>
+                <Routes>
+                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/connections" element={<Connections />} />
+                  <Route path="/leads" element={<Leads />} />
+                  <Route path="/crm" element={<Funnels />} />
+                  <Route path="/campaigns" element={<Campaigns />} />
+                  <Route path="/agents" element={<Agents />} />
+                  <Route path="/appointments" element={<Appointments />} />
+                  <Route path="/settings" element={<SettingsPage />} />
+                  <Route path="/admin" element={<Admin />} />
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </AppLayout>
+            )}
+          />
+        </Routes>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>

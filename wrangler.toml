@@ -1,0 +1,13 @@
+name = "bot-connect-crm-api"
+main = "src/worker.ts"
+compatibility_date = "2025-01-01"
+
+# URL base da API em produção (ajuste conforme seu domínio do Pages/Worker)
+route = ""
+
+[[d1_databases]]
+binding = "DB"
+database_name = "bot_connect_crm"
+# Substitua abaixo pelo ID real do D1 no painel da Cloudflare
+database_id = "00000000-0000-0000-0000-000000000000"
+
