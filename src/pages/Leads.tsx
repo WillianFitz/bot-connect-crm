@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { api } from "@/lib/api";
+import { useToast } from "@/hooks/use-toast";
 
 export default function Leads() {
   const [search, setSearch] = useState("");
@@ -20,6 +21,8 @@ export default function Leads() {
     phone: string;
     folder_id: number | null;
   } | null>(null);
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const { toast } = useToast();
 
   const queryClient = useQueryClient();
 
@@ -64,6 +67,11 @@ export default function Leads() {
       queryClient.invalidateQueries({ queryKey: ["leads"] });
       setNewLeadCompany("");
       setNewLeadPhone("");
+      setIsCreateOpen(false);
+      toast({
+        title: "Lead cadastrado",
+        description: "O lead foi salvo com sucesso.",
+      });
     },
   });
 
@@ -81,6 +89,10 @@ export default function Leads() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["leads"] });
       setEditingLead(null);
+      toast({
+        title: "Lead atualizado",
+        description: "As informações do lead foram salvas.",
+      });
     },
   });
 
@@ -88,6 +100,10 @@ export default function Leads() {
     mutationFn: (id: number) => api.deleteLead(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["leads"] });
+      toast({
+        title: "Lead excluído",
+        description: "O lead foi removido da sua lista.",
+      });
     },
   });
 
@@ -106,9 +122,9 @@ export default function Leads() {
           <Button variant="outline" size="sm" className="gap-2 border-border/50">
             <Upload className="h-4 w-4" /> Importar
           </Button>
-          <Dialog>
+          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
-              <Button size="sm" className="gap-2">
+              <Button size="sm" className="gap-2" onClick={() => setIsCreateOpen(true)}>
                 <Plus className="h-4 w-4" /> Novo Lead
               </Button>
             </DialogTrigger>
