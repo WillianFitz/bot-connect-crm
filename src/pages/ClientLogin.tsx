@@ -18,7 +18,7 @@ export default function ClientLogin() {
         localStorage.setItem("tenant_id", data.tenantId);
         localStorage.setItem("user", data.username);
       }
-      navigate("/");
+      navigate("/app");
     },
   });
 

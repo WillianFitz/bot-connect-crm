@@ -31,6 +31,32 @@ function AdminRoute() {
   return <Admin />;
 }
 
+function ProtectedAppLayout() {
+  const hasTenant =
+    typeof localStorage !== "undefined" &&
+    !!localStorage.getItem("tenant_id");
+
+  if (!hasTenant) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return (
+    <AppLayout>
+      <Routes>
+        <Route path="" element={<Dashboard />} />
+        <Route path="connections" element={<Connections />} />
+        <Route path="leads" element={<Leads />} />
+        <Route path="crm" element={<Funnels />} />
+        <Route path="campaigns" element={<Campaigns />} />
+        <Route path="agents" element={<Agents />} />
+        <Route path="appointments" element={<Appointments />} />
+        <Route path="settings" element={<SettingsPage />} />
+        <Route path="*" element={<NotFound />} />
+      </Routes>
+    </AppLayout>
+  );
+}
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
@@ -49,21 +75,7 @@ const App = () => (
           {/* App dos clientes, com sidebar/layout */}
           <Route
             path="/app/*"
-            element={(
-              <AppLayout>
-                <Routes>
-                  <Route path="" element={<Dashboard />} />
-                  <Route path="connections" element={<Connections />} />
-                  <Route path="leads" element={<Leads />} />
-                  <Route path="crm" element={<Funnels />} />
-                  <Route path="campaigns" element={<Campaigns />} />
-                  <Route path="agents" element={<Agents />} />
-                  <Route path="appointments" element={<Appointments />} />
-                  <Route path="settings" element={<SettingsPage />} />
-                  <Route path="*" element={<NotFound />} />
-                </Routes>
-              </AppLayout>
-            )}
+            element={<ProtectedAppLayout />}
           />
         </Routes>
       </BrowserRouter>
