@@ -1,6 +1,8 @@
 import express from "express";
-import { Client, LocalAuth } from "whatsapp-web.js";
+import pkg from "whatsapp-web.js";
 import qrcode from "qrcode-terminal";
+
+const { Client, LocalAuth } = pkg;
 
 const app = express();
 app.use(express.json());
