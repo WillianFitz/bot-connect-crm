@@ -310,16 +310,9 @@ async function handleLeads(request: Request, env: Env, method: string, url: URL)
       .bind(tenantId, company, phone, folderId ?? null)
       .run();
 
-    const lead = await env.DB.prepare(
-      `SELECT l.id, l.company, l.phone, l.folder_id, lf.name as folder_name, l.created_at
-       FROM leads l
-       LEFT JOIN lead_folders lf ON lf.id = l.folder_id
-       WHERE l.id = ? AND l.tenant_id = ?`,
-    )
-      .bind(res.lastRowId, tenantId)
-      .first();
-
-    return json(lead, { status: 201 });
+    // Não fazemos SELECT adicional para evitar qualquer erro extra do D1.
+    // O frontend sempre refaz o GET /leads depois da criação.
+    return json({ ok: true, id: res.lastRowId }, { status: 201 });
   }
 
   if (method === "PUT") {
