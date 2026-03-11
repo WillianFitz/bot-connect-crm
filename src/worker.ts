@@ -290,15 +290,24 @@ async function handleLeads(request: Request, env: Env, method: string, url: URL)
   }
 
   if (method === "POST") {
-    const body = await readBody<{ company?: string; phone?: string; folder_id?: number | null }>(request);
-    if (!body.company || !body.phone) {
+    const body = await readBody<{ company?: unknown; phone?: unknown; folder_id?: unknown }>(request);
+    const company = typeof body.company === "string" ? body.company : "";
+    const phone = typeof body.phone === "string" ? body.phone : "";
+    const folderId =
+      typeof body.folder_id === "number"
+        ? body.folder_id
+        : body.folder_id == null
+        ? null
+        : Number(body.folder_id);
+
+    if (!company || !phone) {
       return json({ error: "Empresa e telefone são obrigatórios" }, { status: 400 });
     }
 
     const res = await env.DB.prepare(
       "INSERT INTO leads (tenant_id, company, phone, folder_id) VALUES (?, ?, ?, ?)",
     )
-      .bind(tenantId, body.company, body.phone, body.folder_id ?? null)
+      .bind(tenantId, company, phone, folderId ?? null)
       .run();
 
     const lead = await env.DB.prepare(
