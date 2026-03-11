@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { GripVertical, User, Plus } from "lucide-react";
+import { GripVertical, User, Plus, Search } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -32,6 +32,7 @@ export default function Funnels() {
   const initializedRef = useRef(false);
   const [selectedColumnForNewLead, setSelectedColumnForNewLead] = useState<number | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string>("");
+  const [search, setSearch] = useState("");
 
   const columnsQuery = useQuery({
     queryKey: ["crm-columns"],
@@ -109,27 +110,41 @@ export default function Funnels() {
 
   const leadsAlreadyInCrmIds = new Set(crmLeads.map((l) => l.lead_id));
   const availableLeads = (allLeadsQuery.data || []).filter(
-    (l) => !leadsAlreadyInCrmIds.has(l.id),
+    (l) =>
+      !leadsAlreadyInCrmIds.has(l.id) &&
+      (l.company.toLowerCase().includes(search.toLowerCase()) ||
+        l.phone.includes(search)),
   );
 
   return (
     <div className="space-y-6 animate-slide-in">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">CRM Kanban</h1>
-        <p className="text-sm text-muted-foreground">
-          Funil de Prospecção com colunas: Leads, Em contato, Proposta e Fechado. Arraste os cartões para mudar de etapa.
-        </p>
+      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">CRM Kanban</h1>
+          <p className="text-sm text-muted-foreground">
+            Funil de Prospecção com colunas: Leads, Em contato, Proposta e Fechado. Arraste os cartões para mudar de etapa.
+          </p>
+        </div>
+        <div className="w-full max-w-xs relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            className="pl-9 bg-secondary border-border/50 h-9 text-xs"
+            placeholder="Buscar lead por nome ou telefone..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
       </div>
 
-      <div className="flex gap-4 overflow-x-auto pb-4">
+      <div className="flex gap-4 overflow-x-auto pb-4 min-h-[380px]">
         {columns.map((column) => (
           <div
             key={column.id}
-            className="min-w-[280px] max-w-[280px] flex-shrink-0"
+            className="min-w-[280px] max-w-[320px] flex-shrink-0"
             onDragOver={(e) => e.preventDefault()}
             onDrop={() => handleDropOnColumn(column.id)}
           >
-            <div className="rounded-xl border border-border/50 bg-card overflow-hidden">
+            <div className="rounded-xl border border-border/50 bg-card overflow-hidden flex flex-col h-full min-h-[320px]">
               <div className="flex items-center justify-between px-4 py-3 border-b border-border/30">
                 <span className="text-sm font-medium text-foreground">
                   {column.name}
@@ -212,7 +227,7 @@ export default function Funnels() {
                   </Dialog>
                 </div>
               </div>
-              <div className="p-2 space-y-2 max-h-[500px] overflow-y-auto">
+              <div className="p-2 space-y-2 flex-1 overflow-y-auto">
                 {(leadsByColumn[column.id] || []).map((lead) => (
                   <div
                     key={lead.id}
@@ -240,7 +255,7 @@ export default function Funnels() {
                   </div>
                 ))}
                 {(leadsByColumn[column.id] || []).length === 0 && (
-                  <p className="text-[11px] text-muted-foreground/70 text-center py-4">
+                  <p className="text-[11px] text-muted-foreground/70 text-center py-8">
                     Nenhum lead nesta coluna.
                   </p>
                 )}
