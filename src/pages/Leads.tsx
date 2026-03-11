@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Search, Plus, Upload, MoreHorizontal } from "lucide-react";
+import { Search, Plus, Upload, MoreHorizontal, Trash2, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -14,6 +14,12 @@ export default function Leads() {
   const [newFolderName, setNewFolderName] = useState("");
   const [newLeadCompany, setNewLeadCompany] = useState("");
   const [newLeadPhone, setNewLeadPhone] = useState("");
+  const [editingLead, setEditingLead] = useState<{
+    id: number;
+    company: string;
+    phone: string;
+    folder_id: number | null;
+  } | null>(null);
 
   const queryClient = useQueryClient();
 
@@ -58,6 +64,30 @@ export default function Leads() {
       queryClient.invalidateQueries({ queryKey: ["leads"] });
       setNewLeadCompany("");
       setNewLeadPhone("");
+    },
+  });
+
+  const updateLead = useMutation({
+    mutationFn: (payload: {
+      id: number;
+      company: string;
+      phone: string;
+      folder_id: number | null;
+    }) => api.updateLead(payload.id, {
+      company: payload.company,
+      phone: payload.phone,
+      folder_id: payload.folder_id,
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["leads"] });
+      setEditingLead(null);
+    },
+  });
+
+  const deleteLead = useMutation({
+    mutationFn: (id: number) => api.deleteLead(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["leads"] });
     },
   });
 
@@ -196,7 +226,7 @@ export default function Leads() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border/50 bg-secondary/30">
-              {["Empresa", "Telefone", "Criado", "Pasta", ""].map((h) => (
+              {["Empresa", "Telefone", "Criado", "Pasta", "Ações"].map((h) => (
                 <th
                   key={h}
                   className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
@@ -235,7 +265,31 @@ export default function Leads() {
                     {lead.folder_name || "Sem pasta"}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <MoreHorizontal className="h-4 w-4 text-muted-foreground cursor-pointer hover:text-foreground" />
+                    <div className="flex items-center justify-end gap-2">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() =>
+                          setEditingLead({
+                            id: lead.id,
+                            company: lead.company,
+                            phone: lead.phone,
+                            folder_id: lead.folder_id,
+                          })
+                        }
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-destructive"
+                        onClick={() => deleteLead.mutate(lead.id)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ))
@@ -243,6 +297,87 @@ export default function Leads() {
           </tbody>
         </table>
       </div>
+
+      {/* Dialog de edição de lead */}
+      {editingLead && (
+        <Dialog open onOpenChange={(open) => !open && setEditingLead(null)}>
+          <DialogContent className="bg-card border-border/50 max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Editar lead</DialogTitle>
+            </DialogHeader>
+            <div className="grid grid-cols-2 gap-3 mt-4">
+              <div>
+                <Label className="text-xs text-muted-foreground">Empresa</Label>
+                <Input
+                  className="mt-1 bg-secondary border-border/50"
+                  value={editingLead.company}
+                  onChange={(e) =>
+                    setEditingLead((prev) =>
+                      prev ? { ...prev, company: e.target.value } : prev,
+                    )
+                  }
+                />
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">Telefone</Label>
+                <Input
+                  className="mt-1 bg-secondary border-border/50"
+                  value={editingLead.phone}
+                  onChange={(e) =>
+                    setEditingLead((prev) =>
+                      prev ? { ...prev, phone: e.target.value } : prev,
+                    )
+                  }
+                />
+              </div>
+              <div className="col-span-2">
+                <Label className="text-xs text-muted-foreground">Pasta</Label>
+                <Select
+                  value={
+                    editingLead.folder_id ? String(editingLead.folder_id) : "none"
+                  }
+                  onValueChange={(val) =>
+                    setEditingLead((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            folder_id: val === "none" ? null : Number(val),
+                          }
+                        : prev,
+                    )
+                  }
+                >
+                  <SelectTrigger className="w-full bg-secondary border-border/50 mt-1">
+                    <SelectValue placeholder="Sem pasta" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-popover border-border/50">
+                    <SelectItem value="none">Sem pasta</SelectItem>
+                    {foldersQuery.data?.map((folder) => (
+                      <SelectItem key={folder.id} value={String(folder.id)}>
+                        {folder.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <Button
+              className="mt-4 w-full"
+              disabled={!editingLead.company || !editingLead.phone}
+              onClick={() =>
+                updateLead.mutate({
+                  id: editingLead.id,
+                  company: editingLead.company,
+                  phone: editingLead.phone,
+                  folder_id: editingLead.folder_id,
+                })
+              }
+            >
+              Salvar alterações
+            </Button>
+          </DialogContent>
+        </Dialog>
+      )}
 
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span>Página 1 / 1 · {leads.length} leads</span>

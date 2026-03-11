@@ -112,6 +112,12 @@ export const api = {
   deleteLead: (id: number) =>
     request<{ ok: true }>(`/leads?id=${id}`, { method: "DELETE" }),
 
+  updateLead: (id: number, payload: { company: string; phone: string; folder_id: number | null }) =>
+    request<{ ok: true }>(`/leads?id=${id}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+
   getCampaigns: () => request<any[]>("/campaigns"),
   createCampaign: (payload: any) =>
     request<any>("/campaigns", {
@@ -145,6 +151,12 @@ export const api = {
   moveCrmLead: (payload: { id: number; column_id: number; position: number }) =>
     request<{ ok: true }>("/crm/leads", {
       method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+
+  createCrmLead: (payload: { lead_id: number; column_id: number }) =>
+    request<{ ok: true; id: number }>("/crm/leads", {
+      method: "POST",
       body: JSON.stringify(payload),
     }),
 

@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { GripVertical, User } from "lucide-react";
+import { GripVertical, User, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 
 interface CrmColumn {
   id: number;
@@ -26,6 +29,9 @@ export default function Funnels() {
   const queryClient = useQueryClient();
   const [draggingId, setDraggingId] = useState<number | null>(null);
   const initializedRef = useRef(false);
+  const [selectedColumnForNewLead, setSelectedColumnForNewLead] = useState<number | null>(null);
+  const [newCompany, setNewCompany] = useState("");
+  const [newPhone, setNewPhone] = useState("");
 
   const columnsQuery = useQuery({
     queryKey: ["crm-columns"],
@@ -48,6 +54,24 @@ export default function Funnels() {
     mutationFn: api.moveCrmLead,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["crm-leads"] });
+    },
+  });
+
+  const createLeadInCrm = useMutation({
+    mutationFn: async (payload: { column_id: number; company: string; phone: string }) => {
+      // cria lead simples sem pasta e vincula ao CRM
+      const lead = await api.createLead({
+        company: payload.company,
+        phone: payload.phone,
+        folder_id: null,
+      });
+      await api.createCrmLead({ lead_id: lead.id, column_id: payload.column_id });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["crm-leads"] });
+      setSelectedColumnForNewLead(null);
+      setNewCompany("");
+      setNewPhone("");
     },
   });
 
@@ -107,9 +131,65 @@ export default function Funnels() {
                 <span className="text-sm font-medium text-foreground">
                   {column.name}
                 </span>
-                <Badge variant="secondary" className="text-[10px] bg-secondary">
-                  {(leadsByColumn[column.id] || []).length}
-                </Badge>
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary" className="text-[10px] bg-secondary">
+                    {(leadsByColumn[column.id] || []).length}
+                  </Badge>
+                  <Dialog
+                    open={selectedColumnForNewLead === column.id}
+                    onOpenChange={(open) => {
+                      if (open) {
+                        setSelectedColumnForNewLead(column.id);
+                      } else {
+                        setSelectedColumnForNewLead(null);
+                      }
+                    }}
+                  >
+                    <DialogTrigger asChild>
+                      <button className="h-6 w-6 rounded-full border border-border/50 flex items-center justify-center text-muted-foreground hover:text-foreground hover:border-primary/60 text-xs">
+                        <Plus className="h-3 w-3" />
+                      </button>
+                    </DialogTrigger>
+                    <DialogContent className="bg-card border-border/50 max-w-sm">
+                      <DialogHeader>
+                        <DialogTitle>Adicionar lead em "{column.name}"</DialogTitle>
+                      </DialogHeader>
+                      <div className="mt-4 space-y-3">
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Empresa</Label>
+                          <Input
+                            className="mt-1 bg-secondary border-border/50"
+                            value={newCompany}
+                            onChange={(e) => setNewCompany(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Telefone</Label>
+                          <Input
+                            className="mt-1 bg-secondary border-border/50"
+                            value={newPhone}
+                            onChange={(e) => setNewPhone(e.target.value)}
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          className="mt-2 w-full inline-flex items-center justify-center rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                          disabled={!newCompany || !newPhone || createLeadInCrm.isPending}
+                          onClick={() =>
+                            selectedColumnForNewLead &&
+                            createLeadInCrm.mutate({
+                              column_id: selectedColumnForNewLead,
+                              company: newCompany,
+                              phone: newPhone,
+                            })
+                          }
+                        >
+                          {createLeadInCrm.isPending ? "Salvando..." : "Adicionar lead"}
+                        </button>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                </div>
               </div>
               <div className="p-2 space-y-2 max-h-[500px] overflow-y-auto">
                 {(leadsByColumn[column.id] || []).map((lead) => (

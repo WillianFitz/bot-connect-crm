@@ -37,8 +37,7 @@ function getTenantId(request: Request): string {
   // - subdomínio, etc.
   const header = request.headers.get("x-tenant-id");
   if (!header) {
-    // Em produção, você pode retornar 401/400.
-    // Aqui usamos um tenant de exemplo para simplificar.
+    // Tenant anônimo para testes, será criado automaticamente se não existir.
     return "tenant_demo";
   }
   return header;
@@ -54,6 +53,15 @@ async function hashPassword(password: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", data);
   const hashArray = Array.from(new Uint8Array(digest));
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function ensureTenant(env: Env, tenantId: string) {
+  // Garante que o tenant exista para evitar erros de chave estrangeira
+  await env.DB.prepare(
+    "INSERT OR IGNORE INTO tenants (id, name) VALUES (?, ?)",
+  )
+    .bind(tenantId, tenantId)
+    .run();
 }
 
 async function handleAdminCreateTenantUser(request: Request, env: Env): Promise<Response> {
@@ -152,6 +160,7 @@ async function handleClientLogin(request: Request, env: Env): Promise<Response> 
 
 async function handleWhatsappConnection(request: Request, env: Env, method: string, url: URL) {
   const tenantId = getTenantId(request);
+  await ensureTenant(env, tenantId);
 
   if (method === "GET") {
     const row = await env.DB.prepare(
@@ -199,6 +208,7 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
 
 async function handleLeadFolders(request: Request, env: Env, method: string, url: URL) {
   const tenantId = getTenantId(request);
+  await ensureTenant(env, tenantId);
 
   if (method === "GET") {
     const folders = await env.DB.prepare(
@@ -243,6 +253,7 @@ async function handleLeadFolders(request: Request, env: Env, method: string, url
 
 async function handleLeads(request: Request, env: Env, method: string, url: URL) {
   const tenantId = getTenantId(request);
+  await ensureTenant(env, tenantId);
 
   if (method === "GET") {
     const search = url.searchParams.get("q") || "";
@@ -302,6 +313,23 @@ async function handleLeads(request: Request, env: Env, method: string, url: URL)
     return json(lead, { status: 201 });
   }
 
+  if (method === "PUT") {
+    const id = url.searchParams.get("id");
+    if (!id) return json({ error: "ID obrigatório" }, { status: 400 });
+    const body = await readBody<{ company?: string; phone?: string; folder_id?: number | null }>(request);
+    if (!body.company || !body.phone) {
+      return json({ error: "Empresa e telefone são obrigatórios" }, { status: 400 });
+    }
+
+    await env.DB.prepare(
+      "UPDATE leads SET company = ?, phone = ?, folder_id = ? WHERE id = ? AND tenant_id = ?",
+    )
+      .bind(body.company, body.phone, body.folder_id ?? null, id, tenantId)
+      .run();
+
+    return json({ ok: true });
+  }
+
   if (method === "DELETE") {
     const id = url.searchParams.get("id");
     if (!id) return json({ error: "ID obrigatório" }, { status: 400 });
@@ -318,6 +346,7 @@ async function handleAgents(request: Request, env: Env, method: string, url: URL
   const pathname = url.pathname;
   const parts = pathname.split("/").filter(Boolean);
   const tenantId = getTenantId(request);
+  await ensureTenant(env, tenantId);
 
   // /api/agents
   if (parts.length === 2) {
@@ -425,6 +454,7 @@ async function handleAgents(request: Request, env: Env, method: string, url: URL
 
 async function handleCampaigns(request: Request, env: Env, method: string, url: URL) {
   const tenantId = getTenantId(request);
+  await ensureTenant(env, tenantId);
 
   if (method === "GET") {
     const res = await env.DB.prepare(
@@ -482,6 +512,7 @@ async function handleCRM(request: Request, env: Env, method: string, url: URL) {
   const pathname = url.pathname;
   const parts = pathname.split("/").filter(Boolean);
   const tenantId = getTenantId(request);
+  await ensureTenant(env, tenantId);
 
   // /api/crm/columns
   if (parts.length === 3 && parts[2] === "columns") {
@@ -527,6 +558,22 @@ async function handleCRM(request: Request, env: Env, method: string, url: URL) {
       return json(res.results || []);
     }
 
+    if (method === "POST") {
+      const body = await readBody<{ lead_id?: number; column_id?: number }>(request);
+      if (!body.lead_id || !body.column_id) {
+        return json({ error: "lead_id e column_id são obrigatórios" }, { status: 400 });
+      }
+
+      const res = await env.DB.prepare(
+        `INSERT INTO crm_leads (tenant_id, lead_id, column_id, position)
+         VALUES (?, ?, ?, COALESCE((SELECT MAX(position) + 1 FROM crm_leads WHERE tenant_id = ? AND column_id = ?), 0))`,
+      )
+        .bind(tenantId, body.lead_id, body.column_id, tenantId, body.column_id)
+        .run();
+
+      return json({ ok: true, id: res.lastRowId }, { status: 201 });
+    }
+
     if (method === "PUT") {
       const body = await readBody<{ id: number; column_id: number; position: number }>(request);
       if (!body.id) return json({ error: "ID obrigatório" }, { status: 400 });
@@ -565,28 +612,36 @@ export default {
 
     let response: Response;
 
-    if (pathname === "/api/admin/create-tenant-user" && method === "POST") {
-      response = await handleAdminCreateTenantUser(request, env);
-    } else if (pathname === "/api/admin/users" && method === "GET") {
-      response = await handleAdminListUsers(request, env);
-    } else if (pathname === "/api/admin/users" && method === "DELETE") {
-      response = await handleAdminDeleteUser(request, env, url);
-    } else if (pathname === "/api/auth/login" && method === "POST") {
-      response = await handleClientLogin(request, env);
-    } else if (pathname.startsWith("/api/connections/whatsapp")) {
-      response = await handleWhatsappConnection(request, env, method, url);
-    } else if (pathname.startsWith("/api/lead-folders")) {
-      response = await handleLeadFolders(request, env, method, url);
-    } else if (pathname.startsWith("/api/leads")) {
-      response = await handleLeads(request, env, method, url);
-    } else if (pathname.startsWith("/api/agents")) {
-      response = await handleAgents(request, env, method, url);
-    } else if (pathname.startsWith("/api/campaigns")) {
-      response = await handleCampaigns(request, env, method, url);
-    } else if (pathname.startsWith("/api/crm")) {
-      response = await handleCRM(request, env, method, url);
-    } else {
-      response = notFound();
+    try {
+      if (pathname === "/api/admin/create-tenant-user" && method === "POST") {
+        response = await handleAdminCreateTenantUser(request, env);
+      } else if (pathname === "/api/admin/users" && method === "GET") {
+        response = await handleAdminListUsers(request, env);
+      } else if (pathname === "/api/admin/users" && method === "DELETE") {
+        response = await handleAdminDeleteUser(request, env, url);
+      } else if (pathname === "/api/auth/login" && method === "POST") {
+        response = await handleClientLogin(request, env);
+      } else if (pathname.startsWith("/api/connections/whatsapp")) {
+        response = await handleWhatsappConnection(request, env, method, url);
+      } else if (pathname.startsWith("/api/lead-folders")) {
+        response = await handleLeadFolders(request, env, method, url);
+      } else if (pathname.startsWith("/api/leads")) {
+        response = await handleLeads(request, env, method, url);
+      } else if (pathname.startsWith("/api/agents")) {
+        response = await handleAgents(request, env, method, url);
+      } else if (pathname.startsWith("/api/campaigns")) {
+        response = await handleCampaigns(request, env, method, url);
+      } else if (pathname.startsWith("/api/crm")) {
+        response = await handleCRM(request, env, method, url);
+      } else {
+        response = notFound();
+      }
+    } catch (err: any) {
+      // Garante que mesmo erros internos retornem CORS correto
+      response = json(
+        { error: "Internal error", details: err?.message || String(err) },
+        { status: 500 },
+      );
     }
 
     const headers = new Headers(response.headers);
