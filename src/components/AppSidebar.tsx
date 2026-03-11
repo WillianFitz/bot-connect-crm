@@ -1,5 +1,14 @@
 import {
-  LayoutDashboard, Users, GitBranch, Megaphone, Bot, CalendarCheck, Settings, Zap, Link2,
+  LayoutDashboard,
+  Users,
+  GitBranch,
+  Megaphone,
+  Bot,
+  CalendarCheck,
+  Settings,
+  Zap,
+  Link2,
+  Wrench,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
@@ -13,6 +22,7 @@ const mainItems = [
   { title: "Conexões", url: "/app/connections", icon: Link2 },
   { title: "Leads", url: "/app/leads", icon: Users },
   { title: "CRM", url: "/app/crm", icon: GitBranch },
+  { title: "Ferramentas", url: "/app/tools", icon: Wrench },
   { title: "Disparos", url: "/app/campaigns", icon: Megaphone },
 ];
 

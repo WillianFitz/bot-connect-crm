@@ -136,3 +136,17 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id);
 
+-- Jobs de extração do Instagram por tenant
+CREATE TABLE IF NOT EXISTS instagram_jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  profile TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending', -- pending | running | completed | error
+  total_leads INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  error_message TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_instagram_jobs_tenant ON instagram_jobs(tenant_id);
+

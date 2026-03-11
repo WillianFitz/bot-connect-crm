@@ -239,5 +239,25 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+
+  // Ferramentas - Instagram
+  startInstagramExtraction: (payload: { profile: string }) =>
+    request<{ ok: true; jobId: number }>("/tools/instagram/start", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  listInstagramJobs: () =>
+    request<
+      Array<{
+        id: number;
+        profile: string;
+        status: string;
+        total_leads: number;
+        created_at: string;
+        updated_at: string;
+        error_message?: string | null;
+      }>
+    >("/tools/instagram/jobs"),
 };
 

@@ -3,6 +3,7 @@ export interface Env {
   BOT_SERVICE_URL: string;
   OPENAI_API_KEY: string;
   ADMIN_API_KEY: string;
+  EXTRACTOR_SERVICE_URL: string;
 }
 
 type JsonValue = Record<string, unknown> | unknown[] | null;
@@ -694,6 +695,132 @@ async function handleCRM(request: Request, env: Env, method: string, url: URL) {
   return new Response("Not found", { status: 404 });
 }
 
+async function handleInstagramTools(request: Request, env: Env, method: string, url: URL) {
+  const tenantId = getTenantId(request);
+  await ensureTenant(env, tenantId);
+
+  const pathname = url.pathname;
+  const parts = pathname.split("/").filter(Boolean);
+
+  // /api/tools/instagram/jobs
+  if (parts.length === 4 && parts[2] === "instagram" && parts[3] === "jobs") {
+    if (method === "GET") {
+      const res = await env.DB.prepare(
+        `SELECT id, profile, status, total_leads, created_at, updated_at, error_message
+         FROM instagram_jobs
+         WHERE tenant_id = ?
+         ORDER BY created_at DESC`,
+      )
+        .bind(tenantId)
+        .all();
+      return json(res.results || []);
+    }
+  }
+
+  // /api/tools/instagram/start
+  if (parts.length === 4 && parts[2] === "instagram" && parts[3] === "start") {
+    if (method !== "POST") return new Response("Method not allowed", { status: 405 });
+
+    const body = await readBody<{ profile?: string }>(request);
+    const profile = (body.profile || "").trim();
+    if (!profile) return json({ error: "Perfil é obrigatório" }, { status: 400 });
+
+    const res = await env.DB.prepare(
+      `INSERT INTO instagram_jobs (tenant_id, profile, status)
+       VALUES (?, ?, 'pending')`,
+    )
+      .bind(tenantId, profile)
+      .run();
+
+    const jobId = res.lastRowId;
+
+    // Dispara chamada opcional para o serviço externo de extração (Railway)
+    if (env.EXTRACTOR_SERVICE_URL) {
+      try {
+        await fetch(`${env.EXTRACTOR_SERVICE_URL}/api/instagram/start`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jobId,
+            tenantId,
+            profile,
+            callbackUrl: `${url.origin}/api/tools/instagram/push-leads`,
+          }),
+        });
+
+        await env.DB.prepare(
+          "UPDATE instagram_jobs SET status = 'running', updated_at = datetime('now') WHERE id = ? AND tenant_id = ?",
+        )
+          .bind(jobId, tenantId)
+          .run();
+      } catch (err: any) {
+        await env.DB.prepare(
+          "UPDATE instagram_jobs SET status = 'error', error_message = ? WHERE id = ? AND tenant_id = ?",
+        )
+          .bind(err?.message || String(err), jobId, tenantId)
+          .run();
+      }
+    }
+
+    return json({ ok: true, jobId }, { status: 201 });
+  }
+
+  // /api/tools/instagram/push-leads  (chamado pelo serviço externo)
+  if (parts.length === 4 && parts[2] === "instagram" && parts[3] === "push-leads") {
+    if (method !== "POST") return new Response("Method not allowed", { status: 405 });
+
+    const body = await readBody<{
+      jobId?: number;
+      tenantId?: string;
+      leads?: Array<{ company: string; phone: string }>;
+      done?: boolean;
+      error?: string;
+    }>(request);
+
+    const jobId = body.jobId;
+    const fromExtractorTenant = body.tenantId || tenantId;
+
+    if (!jobId || !Array.isArray(body.leads)) {
+      return json({ error: "jobId e leads são obrigatórios" }, { status: 400 });
+    }
+
+    await ensureTenant(env, fromExtractorTenant);
+
+    // Insere leads em lote
+    const leads = body.leads;
+    let inserted = 0;
+    for (const lead of leads) {
+      if (!lead.company || !lead.phone) continue;
+      await env.DB.prepare(
+        "INSERT INTO leads (tenant_id, company, phone, folder_id) VALUES (?, ?, ?, NULL)",
+      )
+        .bind(fromExtractorTenant, lead.company, lead.phone)
+        .run();
+      inserted += 1;
+    }
+
+    await env.DB.prepare(
+      `UPDATE instagram_jobs
+       SET total_leads = total_leads + ?, status = ?,
+           error_message = COALESCE(?, error_message),
+           updated_at = datetime('now')
+       WHERE id = ? AND tenant_id = ?`,
+    )
+      .bind(
+        inserted,
+        body.error ? "error" : body.done ? "completed" : "running",
+        body.error || null,
+        jobId,
+        fromExtractorTenant,
+      )
+      .run();
+
+    return json({ ok: true, inserted });
+  }
+
+  return new Response("Not found", { status: 404 });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -736,6 +863,8 @@ export default {
         response = await handleCampaigns(request, env, method, url);
       } else if (pathname.startsWith("/api/crm")) {
         response = await handleCRM(request, env, method, url);
+      } else if (pathname.startsWith("/api/tools/instagram")) {
+        response = await handleInstagramTools(request, env, method, url);
       } else if (pathname === "/api/ai/disparo" && method === "POST") {
         response = await handleAIDisparo(request, env);
       } else if (pathname === "/api/ai/atendimento" && method === "POST") {

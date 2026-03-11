@@ -16,6 +16,7 @@ import Connections from "./pages/Connections";
 import Admin from "./pages/Admin";
 import ClientLogin from "./pages/ClientLogin";
 import AdminLogin from "./pages/AdminLogin";
+import Tools from "./pages/Tools";
 
 const queryClient = new QueryClient();
 
@@ -50,6 +51,7 @@ function ProtectedAppLayout() {
         <Route path="connections" element={<Connections />} />
         <Route path="leads" element={<Leads />} />
         <Route path="crm" element={<Funnels />} />
+        <Route path="tools" element={<Tools />} />
         <Route path="campaigns" element={<Campaigns />} />
         <Route path="agents" element={<Agents />} />
         <Route path="appointments" element={<Appointments />} />
