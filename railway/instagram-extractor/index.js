@@ -54,21 +54,58 @@ app.post("/api/instagram/login/start", async (req, res) => {
     const browser = await createBrowser();
     const page = await browser.newPage();
 
+    // Deixa o User-Agent mais "real" e aumenta timeout geral
+    await page.setUserAgent(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    );
+    await page.setViewport({ width: 1280, height: 720 });
+
     await page.goto("https://www.instagram.com/accounts/login/", {
       waitUntil: "networkidle2",
+      timeout: 60000,
     });
 
-    await page.waitForSelector('input[name="username"]', { timeout: 20000 });
-    await page.type('input[name="username"]', credentials.username, {
+    // Vários seletores possíveis para o campo de usuário
+    const usernameSelectors = [
+      'input[name="username"]',
+      'input[aria-label="Phone number, username, or email"]',
+      'input[aria-label="Phone number, username, or email address"]',
+    ];
+
+    let usernameSelector = null;
+    for (const sel of usernameSelectors) {
+      try {
+        await page.waitForSelector(sel, { timeout: 15000 });
+        usernameSelector = sel;
+        break;
+      } catch {
+        // tenta o próximo
+      }
+    }
+
+    if (!usernameSelector) {
+      throw new Error(
+        "Não foi possível localizar o campo de usuário na tela de login do Instagram (página pode não ter carregado ou estar bloqueada)."
+      );
+    }
+
+    await page.type(usernameSelector, credentials.username, {
       delay: 50,
     });
     await page.type('input[name="password"]', credentials.password, {
       delay: 50,
     });
 
+    // Campo de senha (mantemos o seletor padrão)
+    await page.waitForSelector('input[name="password"]', { timeout: 30000 });
+
+    await page.type('input[name="password"]', credentials.password, {
+      delay: 50,
+    });
+
     await Promise.all([
       page.click('button[type="submit"]'),
-      page.waitForTimeout(5000),
+      page.waitForTimeout(7000),
     ]);
 
     const currentUrl = page.url();
