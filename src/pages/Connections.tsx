@@ -45,7 +45,7 @@ export default function Connections() {
         setQr(null);
         setQrError(
           res.error ||
-            "Código ainda não disponível. Abra o WhatsApp em \"Aparelhos conectados\" e tente novamente em alguns segundos.",
+            "QR ainda não disponível. Abra o painel da Evolution API para verificar a instância e tente novamente em alguns segundos.",
         );
       } else {
         setQr(res.qr);
@@ -98,9 +98,9 @@ export default function Connections() {
         <div className="space-y-3 text-sm">
           <p className="text-muted-foreground">
             Clique em{" "}
-            <span className="font-semibold">“Ver código para conectar”</span>{" "}
-            para gerar o código de pareamento da sua instância Evolution API e
-            conectar o WhatsApp Business.
+            <span className="font-semibold">“Ver QR para conectar”</span>{" "}
+            para gerar o QR code da sua instância Evolution API e conectar o
+            WhatsApp Business.
           </p>
 
           <div className="flex items-center justify-between border border-border/40 rounded-lg px-3 py-2">
@@ -175,7 +175,7 @@ export default function Connections() {
             disabled={qrLoading}
           >
             {qrLoading && <Loader2 className="h-4 w-4 animate-spin" />}
-            Ver código para conectar
+            Ver QR para conectar
           </Button>
         </div>
       </div>
@@ -183,33 +183,23 @@ export default function Connections() {
       <Dialog open={qrOpen} onOpenChange={setQrOpen}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Conectar WhatsApp via Evolution API</DialogTitle>
+            <DialogTitle>Escaneie o QR do WhatsApp</DialogTitle>
             <DialogDescription className="text-xs">
               Abra o WhatsApp Business no seu celular &gt; Dispositivos
-              conectados &gt; Conectar um dispositivo &gt;{" "}
-              <span className="font-semibold">
-                Conectar com número de telefone
-              </span>{" "}
-              e digite o código abaixo.
+              conectados &gt; Conectar um dispositivo e aponte a câmera para
+              este QR code.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col items-center justify-center gap-3 py-4">
             {qr ? (
-              <div className="flex flex-col items-center gap-2">
-                <div className="rounded-lg border border-border/60 bg-muted px-6 py-3">
-                  <p className="text-sm font-mono tracking-[0.3em] text-foreground">
-                    {qr}
-                  </p>
-                </div>
-                <p className="text-[11px] text-muted-foreground text-center max-w-xs">
-                  Se o código não funcionar de primeira, feche este diálogo e
-                  clique novamente em &quot;Ver código para conectar&quot; para
-                  gerar um novo.
-                </p>
-              </div>
+              <img
+                src={qr}
+                alt="QR Code WhatsApp"
+                className="rounded-lg border border-border/50 bg-white"
+              />
             ) : (
               <p className="text-xs text-muted-foreground">
-                Código ainda não disponível. Feche e tente novamente em alguns
+                QR ainda não disponível. Feche e tente novamente em alguns
                 segundos.
               </p>
             )}

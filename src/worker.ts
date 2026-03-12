@@ -220,8 +220,8 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
     }
 
     try {
-      // Garante que a instância exista (id = tenantId)
-      await fetch(`${baseUrl}/instance/create`, {
+      // Cria (ou tenta criar) a instância com QR code já habilitado
+      const res = await fetch(`${baseUrl}/instance/create`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -230,48 +230,42 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
         body: JSON.stringify({
           instanceName: tenantId,
           integration: "WHATSAPP-BAILEYS",
-          qrcode: false,
+          qrcode: true,
         }),
       });
 
-      // Tenta várias vezes obter o pairingCode (polling curto)
-      let lastRaw: any = null;
-      for (let i = 0; i < 8; i++) {
-        const connectRes = await fetch(`${baseUrl}/instance/connect/${tenantId}`, {
-          method: "GET",
-          headers: {
-            apikey: env.EVOLUTION_API_KEY,
+      const data = (await res.json()) as any;
+      const base64 = data?.qrcode?.base64 || null;
+
+      if (!res.ok) {
+        return json(
+          {
+            qr: null,
+            raw: data,
+            error:
+              data?.response?.message?.[0] ||
+              "Não foi possível gerar o QR. Verifique a instância na Evolution API.",
           },
-        });
-
-        if (!connectRes.ok) {
-          lastRaw = { status: connectRes.status };
-          break;
-        }
-
-        const data = (await connectRes.json()) as any;
-        lastRaw = data;
-        const pairing = data?.pairingCode || null;
-        if (pairing) {
-          return json({ qr: pairing, raw: data });
-        }
-
-        // espera 1s antes da próxima tentativa
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+          { status: res.status },
+        );
       }
 
-      return json(
-        {
-          qr: null,
-          raw: lastRaw,
-          error:
-            "Código ainda não disponível. Abra o WhatsApp em 'Aparelhos conectados' e tente novamente em alguns segundos.",
-        },
-        { status: 200 },
-      );
+      if (!base64) {
+        return json(
+          {
+            qr: null,
+            raw: data,
+            error:
+              "QR ainda não disponível. Tente novamente em alguns segundos ou confira no painel da Evolution.",
+          },
+          { status: 200 },
+        );
+      }
+
+      return json({ qr: base64, raw: data });
     } catch (err: any) {
       return json(
-        { qr: null, error: err?.message || "Erro ao buscar código de conexão" },
+        { qr: null, error: err?.message || "Erro ao criar instância/QR na Evolution API" },
         { status: 500 },
       );
     }
