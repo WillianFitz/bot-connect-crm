@@ -4,6 +4,8 @@ export interface Env {
   OPENAI_API_KEY: string;
   ADMIN_API_KEY: string;
   EXTRACTOR_SERVICE_URL: string;
+  EVOLUTION_API_URL: string;
+  EVOLUTION_API_KEY: string;
 }
 
 type JsonValue = Record<string, unknown> | unknown[] | null;
@@ -54,6 +56,13 @@ async function hashPassword(password: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", data);
   const hashArray = Array.from(new Uint8Array(digest));
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function getEvolutionBaseUrl(env: Env): string {
+  const raw = env.EVOLUTION_API_URL || "";
+  if (!raw) return "";
+  if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
+  return `https://${raw}`;
 }
 
 async function ensureTenant(env: Env, tenantId: string) {
@@ -196,26 +205,56 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
 
   const pathname = url.pathname;
 
-  // QR para conexão, proxyando o serviço do Railway
+  // Código/QR para conexão via Evolution API (self-hosted)
   if (pathname === "/api/connections/whatsapp/qr") {
     if (method !== "GET") {
       return new Response("Method not allowed", { status: 405 });
     }
 
-    if (!env.BOT_SERVICE_URL) {
-      return json({ qr: null, error: "BOT_SERVICE_URL não configurado" }, { status: 500 });
+    const baseUrl = getEvolutionBaseUrl(env);
+    if (!baseUrl || !env.EVOLUTION_API_KEY) {
+      return json(
+        { qr: null, error: "EVOLUTION_API_URL ou EVOLUTION_API_KEY não configurados" },
+        { status: 500 },
+      );
     }
 
     try {
-      const res = await fetch(`${env.BOT_SERVICE_URL}/qr`);
-      if (!res.ok) {
-        return json({ qr: null, error: "QR não disponível" }, { status: res.status });
+      // Garante que a instância exista (id = tenantId)
+      await fetch(`${baseUrl}/instance/create`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: env.EVOLUTION_API_KEY,
+        },
+        body: JSON.stringify({
+          instanceName: tenantId,
+          integration: "WHATSAPP-BAILEYS",
+          qrcode: false,
+        }),
+      });
+
+      // Pede código de pareamento (pairing code)
+      const connectRes = await fetch(`${baseUrl}/instance/connect/${tenantId}`, {
+        method: "GET",
+        headers: {
+          apikey: env.EVOLUTION_API_KEY,
+        },
+      });
+
+      if (!connectRes.ok) {
+        return json(
+          { qr: null, error: "Código ainda não disponível ou instância indisponível" },
+          { status: connectRes.status },
+        );
       }
-      const data = await res.json();
-      return json({ qr: data.qr || null });
+
+      const data = await connectRes.json() as { pairingCode?: string; code?: string };
+      const pairing = data.pairingCode || null;
+      return json({ qr: pairing });
     } catch (err: any) {
       return json(
-        { qr: null, error: err?.message || "Erro ao buscar QR do bot" },
+        { qr: null, error: err?.message || "Erro ao buscar código de conexão" },
         { status: 500 },
       );
     }

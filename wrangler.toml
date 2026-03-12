@@ -14,4 +14,6 @@ database_id = "3932c953-ad50-4977-aa3d-3eb2b5f8e892"
 [vars]
 BOT_SERVICE_URL = "https://bot-connect-crm-production.up.railway.app"
 EXTRACTOR_SERVICE_URL = "https://extrator-instagram-production.up.railway.app"
+EVOLUTION_API_URL = "evolution-api-production-9edc.up.railway.app"
+EVOLUTION_API_KEY = "Sudo@0412"
 
