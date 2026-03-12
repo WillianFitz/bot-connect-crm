@@ -597,7 +597,8 @@ async function handleLeads(request: Request, env: Env, method: string, url: URL)
   if (method === "POST") {
     const body = await readBody<{ company?: unknown; phone?: unknown; folder_id?: unknown }>(request);
     const company = typeof body.company === "string" ? body.company : "";
-    const phone = typeof body.phone === "string" ? body.phone : "";
+    const rawPhone = typeof body.phone === "string" ? body.phone : "";
+    const phone = normalizeBrazilNumber(rawPhone);
     const folderId =
       typeof body.folder_id === "number"
         ? body.folder_id
@@ -624,14 +625,15 @@ async function handleLeads(request: Request, env: Env, method: string, url: URL)
     const id = url.searchParams.get("id");
     if (!id) return json({ error: "ID obrigatório" }, { status: 400 });
     const body = await readBody<{ company?: string; phone?: string; folder_id?: number | null }>(request);
-    if (!body.company || !body.phone) {
+    const normalizedPhone = body.phone ? normalizeBrazilNumber(body.phone) : "";
+    if (!body.company || !normalizedPhone) {
       return json({ error: "Empresa e telefone são obrigatórios" }, { status: 400 });
     }
 
     await env.DB.prepare(
       "UPDATE leads SET company = ?, phone = ?, folder_id = ? WHERE id = ? AND tenant_id = ?",
     )
-      .bind(body.company, body.phone, body.folder_id ?? null, id, tenantId)
+      .bind(body.company, normalizedPhone, body.folder_id ?? null, id, tenantId)
       .run();
 
     return json({ ok: true });
