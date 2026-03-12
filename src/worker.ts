@@ -205,13 +205,14 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
 
   const pathname = url.pathname;
 
+  const baseUrl = getEvolutionBaseUrl(env);
+
   // Código/QR para conexão via Evolution API (self-hosted)
   if (pathname === "/api/connections/whatsapp/qr") {
     if (method !== "GET") {
       return new Response("Method not allowed", { status: 405 });
     }
 
-    const baseUrl = getEvolutionBaseUrl(env);
     if (!baseUrl || !env.EVOLUTION_API_KEY) {
       return json(
         { qr: null, error: "EVOLUTION_API_URL ou EVOLUTION_API_KEY não configurados" },
@@ -269,6 +270,132 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
         { status: 500 },
       );
     }
+  }
+
+  // Enviar mensagem de teste para um número informado
+  if (pathname === "/api/connections/whatsapp/test") {
+    if (method !== "POST") {
+      return new Response("Method not allowed", { status: 405 });
+    }
+
+    if (!baseUrl || !env.EVOLUTION_API_KEY) {
+      return json(
+        { ok: false, error: "EVOLUTION_API_URL ou EVOLUTION_API_KEY não configurados" },
+        { status: 500 },
+      );
+    }
+
+    const body = await readBody<{ number?: string; text?: string }>(request);
+    const number = (body.number || "").trim();
+    const text =
+      (body.text || "").trim() ||
+      "✅ Mensagem de teste enviada pelo seu painel LeadFlowAI. Se você recebeu, sua conexão Evolution API está funcionando.";
+
+    if (!number) {
+      return json({ ok: false, error: "Número é obrigatório" }, { status: 400 });
+    }
+
+    try {
+      const res = await fetch(`${baseUrl}/message/sendText/${tenantId}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: env.EVOLUTION_API_KEY,
+        },
+        body: JSON.stringify({
+          number,
+          text,
+        }),
+      });
+
+      if (!res.ok) {
+        let errMsg = res.statusText;
+        try {
+          const data = await res.json();
+          if (Array.isArray(data?.response?.message) && data.response.message[0]) {
+            errMsg = data.response.message[0];
+          }
+        } catch {
+          // ignore
+        }
+        return json({ ok: false, error: errMsg || "Falha ao enviar mensagem" }, { status: res.status });
+      }
+
+      return json({ ok: true });
+    } catch (err: any) {
+      return json(
+        { ok: false, error: err?.message || "Erro ao enviar mensagem pela Evolution API" },
+        { status: 500 },
+      );
+    }
+  }
+
+  // Logout (desconectar, mantendo instância)
+  if (pathname === "/api/connections/whatsapp/logout") {
+    if (method !== "POST") {
+      return new Response("Method not allowed", { status: 405 });
+    }
+
+    if (!baseUrl || !env.EVOLUTION_API_KEY) {
+      return json(
+        { ok: false, error: "EVOLUTION_API_URL ou EVOLUTION_API_KEY não configurados" },
+        { status: 500 },
+      );
+    }
+
+    try {
+      await fetch(`${baseUrl}/instance/logout/${tenantId}`, {
+        method: "POST",
+        headers: { apikey: env.EVOLUTION_API_KEY },
+      });
+    } catch {
+      // ignora erro de logout remoto; seguimos para marcar desconectado no D1
+    }
+
+    await env.DB.prepare(
+      `INSERT INTO connections (tenant_id, type, status, agent_enabled, reply_all)
+       VALUES (?, 'whatsapp', 'disconnected', 0, 0)
+       ON CONFLICT(tenant_id, type) DO UPDATE SET
+         status = 'disconnected',
+         agent_enabled = 0,
+         reply_all = 0,
+         updated_at = datetime('now')`,
+    )
+      .bind(tenantId)
+      .run();
+
+    return json({ ok: true });
+  }
+
+  // Delete (apagar instância para trocar de número)
+  if (pathname === "/api/connections/whatsapp/instance") {
+    if (method !== "DELETE") {
+      return new Response("Method not allowed", { status: 405 });
+    }
+
+    if (!baseUrl || !env.EVOLUTION_API_KEY) {
+      return json(
+        { ok: false, error: "EVOLUTION_API_URL ou EVOLUTION_API_KEY não configurados" },
+        { status: 500 },
+      );
+    }
+
+    try {
+      await fetch(`${baseUrl}/instance/delete/${tenantId}`, {
+        method: "DELETE",
+        headers: { apikey: env.EVOLUTION_API_KEY },
+      });
+    } catch {
+      // ignora erro remoto; limpamos o estado local mesmo assim
+    }
+
+    await env.DB.prepare(
+      "DELETE FROM connections WHERE tenant_id = ? AND type = 'whatsapp'",
+    )
+      .bind(tenantId)
+      .run();
+
+    return json({ ok: true });
   }
 
   if (method === "GET") {

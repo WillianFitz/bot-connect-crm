@@ -4,6 +4,7 @@ import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Loader2, PhoneCall } from "lucide-react";
 import {
   Dialog,
@@ -20,6 +21,8 @@ export default function Connections() {
   const [qrOpen, setQrOpen] = useState(false);
   const [qrLoading, setQrLoading] = useState(false);
   const [qrError, setQrError] = useState<string | null>(null);
+  const [testNumber, setTestNumber] = useState("");
+  const [testError, setTestError] = useState<string | null>(null);
 
   const connectionQuery = useQuery({
     queryKey: ["whatsapp-connection"],
@@ -31,6 +34,24 @@ export default function Connections() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp-connection"] });
     },
+  });
+
+  const logoutMutation = useMutation({
+    mutationFn: api.logoutWhatsappInstance,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["whatsapp-connection"] });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: api.deleteWhatsappInstance,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["whatsapp-connection"] });
+    },
+  });
+
+  const testMutation = useMutation({
+    mutationFn: (payload: { number: string }) => api.testWhatsapp(payload),
   });
 
   const data = connectionQuery.data;
@@ -124,6 +145,55 @@ export default function Connections() {
             />
           </div>
 
+          <div className="flex items-center justify-between border border-border/40 rounded-lg px-3 py-2 gap-3 flex-wrap">
+            <div className="space-y-1">
+              <p className="text-xs font-semibold text-foreground">
+                Enviar mensagem de teste
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                Digite um número WhatsApp (com DDI + DDD) para validar se a
+                conexão está funcionando.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <Input
+                className="h-8 text-xs"
+                placeholder="5511999999999"
+                value={testNumber}
+                onChange={(e) => setTestNumber(e.target.value)}
+              />
+              <Button
+                type="button"
+                size="sm"
+                className="h-8 px-3 text-xs"
+                disabled={testMutation.isPending || !testNumber.trim()}
+                onClick={async () => {
+                  setTestError(null);
+                  try {
+                    const res = await testMutation.mutateAsync({
+                      number: testNumber.trim(),
+                    });
+                    if (!res.ok && res.error) {
+                      setTestError(res.error);
+                    } else {
+                      setTestError("Mensagem de teste enviada com sucesso.");
+                    }
+                  } catch (err: any) {
+                    setTestError(err?.message || "Erro ao enviar mensagem de teste.");
+                  }
+                }}
+              >
+                {testMutation.isPending && (
+                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                )}
+                Testar
+              </Button>
+            </div>
+          </div>
+          {testError && (
+            <p className="text-[11px] text-red-500 mt-1">{testError}</p>
+          )}
+
           <div className="flex items-center justify-between border border-border/40 rounded-lg px-3 py-2">
             <div className="space-y-1">
               <p className="text-xs font-semibold text-foreground">
@@ -165,6 +235,38 @@ export default function Connections() {
             )}
             {isConnected ? "Excluir / Desconectar" : "Marcar como conectado"}
           </Button>
+
+          {isConnected && (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                disabled={logoutMutation.isPending}
+                onClick={() => logoutMutation.mutate()}
+              >
+                {logoutMutation.isPending && (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                )}
+                Desconectar (logout)
+              </Button>
+
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                className="gap-2"
+                disabled={deleteMutation.isPending}
+                onClick={() => deleteMutation.mutate()}
+              >
+                {deleteMutation.isPending && (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                )}
+                Excluir instância / trocar número
+              </Button>
+            </>
+          )}
 
           <Button
             type="button"

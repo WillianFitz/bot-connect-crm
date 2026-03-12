@@ -48,6 +48,22 @@ export const api = {
 
   getWhatsappQr: () =>
     request<{ qr: string | null; error?: string }>("/connections/whatsapp/qr"),
+
+  logoutWhatsappInstance: () =>
+    request<{ ok: boolean; error?: string }>("/connections/whatsapp/logout", {
+      method: "POST",
+    }),
+
+  deleteWhatsappInstance: () =>
+    request<{ ok: boolean; error?: string }>("/connections/whatsapp/instance", {
+      method: "DELETE",
+    }),
+
+  testWhatsapp: (payload: { number: string; text?: string }) =>
+    request<{ ok: boolean; error?: string }>("/connections/whatsapp/test", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   updateWhatsappConnection: (payload: {
     status?: string;
     agent_enabled?: boolean;
