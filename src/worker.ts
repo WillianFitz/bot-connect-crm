@@ -234,26 +234,41 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
         }),
       });
 
-      // Pede código de pareamento (pairing code)
-      const connectRes = await fetch(`${baseUrl}/instance/connect/${tenantId}`, {
-        method: "GET",
-        headers: {
-          apikey: env.EVOLUTION_API_KEY,
-        },
-      });
+      // Tenta várias vezes obter o pairingCode (polling curto)
+      let lastRaw: any = null;
+      for (let i = 0; i < 8; i++) {
+        const connectRes = await fetch(`${baseUrl}/instance/connect/${tenantId}`, {
+          method: "GET",
+          headers: {
+            apikey: env.EVOLUTION_API_KEY,
+          },
+        });
 
-      if (!connectRes.ok) {
-        return json(
-          { qr: null, error: "Código ainda não disponível ou instância indisponível" },
-          { status: connectRes.status },
-        );
+        if (!connectRes.ok) {
+          lastRaw = { status: connectRes.status };
+          break;
+        }
+
+        const data = (await connectRes.json()) as any;
+        lastRaw = data;
+        const pairing = data?.pairingCode || null;
+        if (pairing) {
+          return json({ qr: pairing, raw: data });
+        }
+
+        // espera 1s antes da próxima tentativa
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       }
 
-      const data = (await connectRes.json()) as any;
-      const pairing = data?.pairingCode || null;
-
-      // Expor também o corpo bruto para depuração futura
-      return json({ qr: pairing, raw: data });
+      return json(
+        {
+          qr: null,
+          raw: lastRaw,
+          error:
+            "Código ainda não disponível. Abra o WhatsApp em 'Aparelhos conectados' e tente novamente em alguns segundos.",
+        },
+        { status: 200 },
+      );
     } catch (err: any) {
       return json(
         { qr: null, error: err?.message || "Erro ao buscar código de conexão" },
