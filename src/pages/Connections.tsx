@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,7 @@ export default function Connections() {
   const connectionQuery = useQuery({
     queryKey: ["whatsapp-connection"],
     queryFn: api.getWhatsappConnection,
+    refetchInterval: 3000,
   });
 
   const updateMutation = useMutation({
@@ -56,6 +57,15 @@ export default function Connections() {
 
   const data = connectionQuery.data;
   const isConnected = data?.status === "connected";
+
+  // Fecha o modal de QR automaticamente quando conectar
+  useEffect(() => {
+    if (isConnected && qrOpen) {
+      setQrOpen(false);
+      setQr(null);
+      setQrError(null);
+    }
+  }, [isConnected, qrOpen]);
 
   async function handleShowQr() {
     setQrLoading(true);
@@ -158,7 +168,7 @@ export default function Connections() {
             <div className="flex items-center gap-2 w-full sm:w-auto">
               <Input
                 className="h-8 text-xs"
-                placeholder="5511999999999"
+                placeholder="DDD + número (ex.: 46991209988)"
                 value={testNumber}
                 onChange={(e) => setTestNumber(e.target.value)}
               />
@@ -217,25 +227,6 @@ export default function Connections() {
         </div>
 
         <div className="flex items-center justify-between pt-2 gap-3 flex-wrap">
-          <Button
-            className="gap-2"
-            variant={isConnected ? "outline" : "default"}
-            size="sm"
-            disabled={updateMutation.isPending}
-            onClick={() =>
-              updateMutation.mutate({
-                status: isConnected ? "disconnected" : "connected",
-                agent_enabled: !!data?.agent_enabled,
-                reply_all: !!data?.reply_all,
-              })
-            }
-          >
-            {updateMutation.isPending && (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            )}
-            {isConnected ? "Excluir / Desconectar" : "Marcar como conectado"}
-          </Button>
-
           {isConnected && (
             <>
               <Button

@@ -65,6 +65,29 @@ function getEvolutionBaseUrl(env: Env): string {
   return `https://${raw}`;
 }
 
+function normalizeBrazilNumber(input: string): string {
+  // Remove qualquer coisa que não seja dígito
+  let digits = input.replace(/\D/g, "");
+
+  // Se já começar com 55, consideramos que já está em E.164 brasileiro
+  if (digits.startsWith("55")) {
+    return digits;
+  }
+
+  // Esperamos DDD (2) + número (8 ou 9)
+  if (digits.length >= 10) {
+    // Caso clássico com 9 extra: 2 (DDD) + 9 + 8
+    if (digits.length === 11 && digits[2] === "9") {
+      // Remove o 9 logo após o DDD
+      digits = digits.slice(0, 2) + digits.slice(3);
+    }
+    return "55" + digits;
+  }
+
+  // Se for menor que isso, devolve como está (deixa Evolution/WA tratar)
+  return digits;
+}
+
 async function ensureTenant(env: Env, tenantId: string) {
   // Garante que o tenant exista para evitar erros de chave estrangeira
   await env.DB.prepare(
@@ -286,7 +309,8 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
     }
 
     const body = await readBody<{ number?: string; text?: string }>(request);
-    const number = (body.number || "").trim();
+    const rawNumber = (body.number || "").trim();
+    const number = normalizeBrazilNumber(rawNumber);
     const text =
       (body.text || "").trim() ||
       "✅ Mensagem de teste enviada pelo seu painel LeadFlowAI. Se você recebeu, sua conexão Evolution API está funcionando.";
@@ -399,9 +423,54 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
   }
 
   if (method === "GET") {
-    const row = await env.DB.prepare(
+    let row = await env.DB.prepare(
       "SELECT type, status, agent_enabled, reply_all FROM connections WHERE tenant_id = ? AND type = 'whatsapp' LIMIT 1"
-    ).bind(tenantId).first();
+    ).bind(tenantId).first<{
+      type: string;
+      status: string;
+      agent_enabled: number;
+      reply_all: number;
+    }>();
+
+    // Se Evolution estiver configurada, tenta sincronizar o estado real
+    if (baseUrl && env.EVOLUTION_API_KEY) {
+      try {
+        const res = await fetch(`${baseUrl}/instance/connectionState/${tenantId}`, {
+          method: "GET",
+          headers: { apikey: env.EVOLUTION_API_KEY },
+        });
+        if (res.ok) {
+          const data = (await res.json()) as any;
+          const state = data?.instance?.state;
+          const mappedStatus = state === "open" ? "connected" : "disconnected";
+
+          // Atualiza/insere no D1 para manter coerência
+          await env.DB.prepare(
+            `INSERT INTO connections (tenant_id, type, status, agent_enabled, reply_all)
+             VALUES (?, 'whatsapp', ?, COALESCE(?, 0), COALESCE(?, 0))
+             ON CONFLICT(tenant_id, type) DO UPDATE SET
+               status = excluded.status,
+               updated_at = datetime('now')`,
+          )
+            .bind(
+              tenantId,
+              mappedStatus,
+              row?.agent_enabled ?? 0,
+              row?.reply_all ?? 0,
+            )
+            .run();
+
+          row = {
+            type: "whatsapp",
+            status: mappedStatus,
+            agent_enabled: row?.agent_enabled ?? 0,
+            reply_all: row?.reply_all ?? 0,
+          };
+        }
+      } catch {
+        // se falhar, ignora e devolve o que tiver em D1
+      }
+    }
 
     return json(
       row || {
