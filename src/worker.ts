@@ -992,6 +992,203 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
     }
   }
 
+  // /api/tools/instagram/config (salvar credenciais para preencher tela, opcional)
+  if (parts.length === 4 && parts[2] === "instagram" && parts[3] === "config") {
+    if (method === "POST") {
+      const body = await readBody<{ username?: string; password?: string }>(request);
+      const username = (body.username || "").trim();
+      const password = (body.password || "").trim();
+
+      if (!username || !password) {
+        return json({ error: "Usuário e senha são obrigatórios" }, { status: 400 });
+      }
+
+      const config = JSON.stringify({ username, password });
+
+      await env.DB.prepare(
+        `INSERT INTO tools_extractors (tenant_id, type, name, config_json)
+         VALUES (?, 'instagram', 'default', ?)
+         ON CONFLICT(id) DO NOTHING`,
+      )
+        .bind(tenantId, config)
+        .run();
+
+      // Como não temos uma unique bem definida por (tenant_id,type), garantimos via delete/insert
+      await env.DB.prepare(
+        "DELETE FROM tools_extractors WHERE tenant_id = ? AND type = 'instagram'",
+      )
+        .bind(tenantId)
+        .run();
+
+      await env.DB.prepare(
+        `INSERT INTO tools_extractors (tenant_id, type, name, config_json)
+         VALUES (?, 'instagram', 'default', ?)`,
+      )
+        .bind(tenantId, config)
+        .run();
+
+      return json({ ok: true });
+    }
+
+    if (method === "GET") {
+      const row = await env.DB.prepare(
+        "SELECT config_json FROM tools_extractors WHERE tenant_id = ? AND type = 'instagram' LIMIT 1",
+      )
+        .bind(tenantId)
+        .first<{ config_json?: string }>();
+
+      if (!row?.config_json) {
+        return json({ username: null, hasPassword: false });
+      }
+
+      try {
+        const parsed = JSON.parse(row.config_json) as {
+          username?: string;
+          password?: string;
+        };
+        return json({
+          username: parsed.username || null,
+          hasPassword: !!parsed.password,
+        });
+      } catch {
+        return json({ username: null, hasPassword: false });
+      }
+    }
+
+    return new Response("Method not allowed", { status: 405 });
+  }
+
+  // /api/tools/instagram/login-start -> chama serviço do Railway para iniciar login (pode pedir 2FA)
+  if (parts.length === 4 && parts[2] === "instagram" && parts[3] === "login-start") {
+    if (method !== "POST") return new Response("Method not allowed", { status: 405 });
+
+    if (!env.EXTRACTOR_SERVICE_URL) {
+      return json(
+        { error: "EXTRACTOR_SERVICE_URL não configurado no Worker." },
+        { status: 500 },
+      );
+    }
+
+    const body = await readBody<{ username?: string; password?: string }>(request);
+    const username = (body.username || "").trim();
+    const password = (body.password || "").trim();
+
+    if (!username || !password) {
+      return json({ error: "Usuário e senha são obrigatórios" }, { status: 400 });
+    }
+
+    try {
+      const res = await fetch(
+        `${env.EXTRACTOR_SERVICE_URL}/api/instagram/login/start`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tenantId,
+            credentials: { username, password },
+          }),
+        },
+      );
+
+      const data = await res.json<any>();
+
+      if (!res.ok) {
+        return json(
+          {
+            error:
+              data?.error ||
+              "Falha ao iniciar login no Instagram pelo serviço de extração.",
+          },
+          { status: res.status },
+        );
+      }
+
+      // Se login foi ok, opcionalmente salvamos o username no config
+      if (data.status === "ok") {
+        const config = JSON.stringify({ username, password: "********" });
+        await env.DB.prepare(
+          "DELETE FROM tools_extractors WHERE tenant_id = ? AND type = 'instagram'",
+        )
+          .bind(tenantId)
+          .run();
+        await env.DB.prepare(
+          `INSERT INTO tools_extractors (tenant_id, type, name, config_json)
+           VALUES (?, 'instagram', 'default', ?)`,
+        )
+          .bind(tenantId, config)
+          .run();
+      }
+
+      return json(data);
+    } catch (err: any) {
+      return json(
+        {
+          error:
+            err?.message ||
+            "Erro interno ao chamar o serviço de login do Instagram.",
+        },
+        { status: 500 },
+      );
+    }
+  }
+
+  // /api/tools/instagram/login-verify -> envia código 2FA para o serviço de extração
+  if (parts.length === 4 && parts[2] === "instagram" && parts[3] === "login-verify") {
+    if (method !== "POST") return new Response("Method not allowed", { status: 405 });
+
+    if (!env.EXTRACTOR_SERVICE_URL) {
+      return json(
+        { error: "EXTRACTOR_SERVICE_URL não configurado no Worker." },
+        { status: 500 },
+      );
+    }
+
+    const body = await readBody<{ code?: string }>(request);
+    const code = (body.code || "").trim();
+
+    if (!code) {
+      return json({ error: "Código 2FA é obrigatório" }, { status: 400 });
+    }
+
+    try {
+      const res = await fetch(
+        `${env.EXTRACTOR_SERVICE_URL}/api/instagram/login/verify`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tenantId,
+            code,
+          }),
+        },
+      );
+
+      const data = await res.json<any>();
+
+      if (!res.ok) {
+        return json(
+          {
+            error:
+              data?.error ||
+              "Falha ao validar o código 2FA no serviço de extração.",
+          },
+          { status: res.status },
+        );
+      }
+
+      return json(data);
+    } catch (err: any) {
+      return json(
+        {
+          error:
+            err?.message ||
+            "Erro interno ao chamar o serviço de validação 2FA do Instagram.",
+        },
+        { status: 500 },
+      );
+    }
+  }
+
   // /api/tools/instagram/start
   if (parts.length === 4 && parts[2] === "instagram" && parts[3] === "start") {
     if (method !== "POST") return new Response("Method not allowed", { status: 405 });
@@ -999,6 +1196,30 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
     const body = await readBody<{ profile?: string }>(request);
     const profile = (body.profile || "").trim();
     if (!profile) return json({ error: "Perfil é obrigatório" }, { status: 400 });
+
+    // Busca credenciais salvas
+    const row = await env.DB.prepare(
+      "SELECT config_json FROM tools_extractors WHERE tenant_id = ? AND type = 'instagram' LIMIT 1",
+    )
+      .bind(tenantId)
+      .first<{ config_json?: string }>();
+
+    if (!row?.config_json) {
+      return json(
+        { error: "Antes de extrair, configure o login do Instagram nas Ferramentas." },
+        { status: 400 },
+      );
+    }
+
+    let credentials: any = null;
+    try {
+      credentials = JSON.parse(row.config_json);
+    } catch {
+      return json(
+        { error: "Configuração do Instagram inválida. Salve novamente o login." },
+        { status: 400 },
+      );
+    }
 
     const res = await env.DB.prepare(
       `INSERT INTO instagram_jobs (tenant_id, profile, status)
@@ -1019,6 +1240,7 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
             jobId,
             tenantId,
             profile,
+            credentials,
             callbackUrl: `${url.origin}/api/tools/instagram/push-leads`,
           }),
         });

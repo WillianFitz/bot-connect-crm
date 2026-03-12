@@ -42,6 +42,10 @@ export default function Tools() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [profile, setProfile] = useState("");
+  const [igUser, setIgUser] = useState("");
+  const [igPass, setIgPass] = useState("");
+  const [twoFaCode, setTwoFaCode] = useState("");
+  const [waiting2FA, setWaiting2FA] = useState(false);
 
   const { data: jobs, isLoading: isLoadingJobs } = useQuery({
     queryKey: ["instagramJobs"],
@@ -64,6 +68,72 @@ export default function Tools() {
       toast({
         title: "Erro ao iniciar extração",
         description: err?.message || "Tente novamente em instantes.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const igConfigQuery = useQuery({
+    queryKey: ["instagramConfig"],
+    queryFn: () => api.getInstagramConfig(),
+  });
+
+  const loginStartMutation = useMutation({
+    mutationFn: (payload: { username: string; password: string }) =>
+      api.instagramLoginStart(payload),
+    onSuccess: async (data, variables) => {
+      if (data.status === "ok") {
+        toast({
+          title: "Login concluído",
+          description: "Login no Instagram feito com sucesso.",
+        });
+        setWaiting2FA(false);
+        setTwoFaCode("");
+        setIgPass("");
+        // salva só o usuário para exibir na tela
+        try {
+          await api.saveInstagramConfig({
+            username: variables.username,
+            password: "********",
+          });
+          queryClient.invalidateQueries({ queryKey: ["instagramConfig"] });
+        } catch {
+          // ignore erro de salvar config
+        }
+      } else if (data.status === "2fa_required") {
+        toast({
+          title: "2FA necessário",
+          description:
+            data.message ||
+            "Informe o código enviado pelo Instagram para concluir o login.",
+        });
+        setWaiting2FA(true);
+      }
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Erro ao iniciar login",
+        description: err?.message || "Tente novamente.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const loginVerifyMutation = useMutation({
+    mutationFn: (payload: { code: string }) => api.instagramLoginVerify(payload),
+    onSuccess: () => {
+      toast({
+        title: "Login concluído",
+        description: "Código 2FA validado com sucesso. Sessão ativa.",
+      });
+      setWaiting2FA(false);
+      setTwoFaCode("");
+      setIgPass("");
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Erro ao validar 2FA",
+        description: err?.message || "Código inválido ou expirado.",
         variant: "destructive",
       });
     },
@@ -106,10 +176,109 @@ export default function Tools() {
           <div className="grid gap-6 md:grid-cols-[1.2fr,1.8fr]">
             <Card>
               <CardHeader>
+                <CardTitle>Login do Instagram</CardTitle>
+                <CardDescription>
+                  Informe o usuário e a senha da conta que será usada pelo
+                  extrator para fazer login no Instagram.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Usuário / e-mail</label>
+                  <Input
+                    placeholder="usuario ou email do Instagram"
+                    value={igUser}
+                    onChange={(e) => setIgUser(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Senha</label>
+                  <Input
+                    type="password"
+                    placeholder="Senha do Instagram"
+                    value={igPass}
+                    onChange={(e) => setIgPass(e.target.value)}
+                  />
+                </div>
+
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  As credenciais são enviadas para o seu serviço de extração no
+                  Railway, que faz o login direto no Instagram. Use uma conta
+                  dedicada, nunca uma conta pessoal principal.
+                </p>
+
+                <div className="flex flex-col gap-2">
+                  <Button
+                    onClick={() =>
+                      loginStartMutation.mutate({
+                        username: igUser,
+                        password: igPass,
+                      })
+                    }
+                    disabled={
+                      !igUser.trim() ||
+                      !igPass.trim() ||
+                      loginStartMutation.isPending
+                    }
+                    className="w-full md:w-auto"
+                  >
+                    {loginStartMutation.isPending && (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    )}
+                    Fazer login
+                  </Button>
+
+                  {waiting2FA && (
+                    <div className="space-y-2 border-t pt-3 mt-2">
+                      <label className="text-sm font-medium">
+                        Código 2FA (Instagram)
+                      </label>
+                      <div className="flex flex-col md:flex-row gap-2">
+                        <Input
+                          placeholder="Código recebido por SMS/app/e-mail"
+                          value={twoFaCode}
+                          onChange={(e) => setTwoFaCode(e.target.value)}
+                        />
+                        <Button
+                          variant="outline"
+                          onClick={() =>
+                            loginVerifyMutation.mutate({ code: twoFaCode })
+                          }
+                          disabled={
+                            !twoFaCode.trim() || loginVerifyMutation.isPending
+                          }
+                        >
+                          {loginVerifyMutation.isPending && (
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          )}
+                          Confirmar código
+                        </Button>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        Abra o Instagram (app ou e-mail), copie o código enviado
+                        e cole aqui para concluir o login.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {igConfigQuery.data && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Status atual:{" "}
+                    {igConfigQuery.data.username
+                      ? `Usuário configurado (${igConfigQuery.data.username}).`
+                      : "Nenhum login salvo ainda."}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
                 <CardTitle>Extrator de seguidores do Instagram</CardTitle>
                 <CardDescription>
-                  Faça login no seu serviço de extração (Railway) e dispare
-                  extrações por perfil para capturar telefones dos seguidores.
+                  Depois de configurar o login acima, escolha um perfil público
+                  para iniciar a extração dos seguidores.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -126,8 +295,8 @@ export default function Tools() {
 
                 <p className="text-xs text-muted-foreground leading-relaxed">
                   A autenticação no Instagram e a execução real da extração
-                  serão feitas pelo serviço que vamos subir no Railway. Aqui
-                  você apenas dispara o job e acompanha o status.
+                  são feitas pelo serviço no Railway. Aqui você apenas dispara
+                  o job e acompanha o status.
                 </p>
 
                 <Button

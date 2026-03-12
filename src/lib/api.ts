@@ -277,5 +277,31 @@ export const api = {
         error_message?: string | null;
       }>
     >("/tools/instagram/jobs"),
+
+  getInstagramConfig: () =>
+    request<{ username: string | null; hasPassword: boolean }>(
+      "/tools/instagram/config",
+    ),
+
+  saveInstagramConfig: (payload: { username: string; password: string }) =>
+    request<{ ok: true }>("/tools/instagram/config", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  instagramLoginStart: (payload: { username: string; password: string }) =>
+    request<{ status: "ok" | "2fa_required"; message?: string }>(
+      "/tools/instagram/login-start",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    ),
+
+  instagramLoginVerify: (payload: { code: string }) =>
+    request<{ status: "ok" }>("/tools/instagram/login-verify", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
 };
 
