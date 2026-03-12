@@ -10,15 +10,18 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, Instagram, MapPin, FileText, Users } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; variant: "outline" | "default" }> =
@@ -46,6 +49,7 @@ export default function Tools() {
   const [igPass, setIgPass] = useState("");
   const [twoFaCode, setTwoFaCode] = useState("");
   const [waiting2FA, setWaiting2FA] = useState(false);
+  const [loginOpen, setLoginOpen] = useState(false);
 
   const { data: jobs, isLoading: isLoadingJobs } = useQuery({
     queryKey: ["instagramJobs"],
@@ -176,90 +180,128 @@ export default function Tools() {
           <div className="grid gap-6 md:grid-cols-[1.2fr,1.8fr]">
             <Card>
               <CardHeader>
-                <CardTitle>Login do Instagram</CardTitle>
+                <CardTitle>Conexão Instagram</CardTitle>
                 <CardDescription>
-                  Informe o usuário e a senha da conta que será usada pelo
-                  extrator para fazer login no Instagram.
+                  Conecte uma conta de Instagram (não oficial) para usar no
+                  extrator de seguidores.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Usuário / e-mail</label>
-                  <Input
-                    placeholder="usuario ou email do Instagram"
-                    value={igUser}
-                    onChange={(e) => setIgUser(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Senha</label>
-                  <Input
-                    type="password"
-                    placeholder="Senha do Instagram"
-                    value={igPass}
-                    onChange={(e) => setIgPass(e.target.value)}
-                  />
-                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="space-y-1 text-sm">
+                    <p className="font-medium">Status da conexão</p>
+                    <p className="text-xs text-muted-foreground">
+                      {igConfigQuery.data?.username
+                        ? `Conectado como ${igConfigQuery.data.username}`
+                        : "Nenhuma conta conectada."}
+                    </p>
+                  </div>
+                  <Dialog open={loginOpen} onOpenChange={setLoginOpen}>
+                    <DialogTrigger asChild>
+                      <Button size="sm">
+                        <Instagram className="h-4 w-4 mr-2" />
+                        Conectar Instagram
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Conectar Instagram</DialogTitle>
+                        <DialogDescription>
+                          Faça login como se fosse no próprio Instagram. Usaremos
+                          essa sessão apenas para extrair seguidores.
+                        </DialogDescription>
+                      </DialogHeader>
 
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  As credenciais são enviadas para o seu serviço de extração no
-                  Railway, que faz o login direto no Instagram. Use uma conta
-                  dedicada, nunca uma conta pessoal principal.
-                </p>
+                      <div className="space-y-4 pt-2">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">
+                            Usuário / e-mail
+                          </label>
+                          <Input
+                            placeholder="usuario ou email do Instagram"
+                            value={igUser}
+                            onChange={(e) => setIgUser(e.target.value)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Senha</label>
+                          <Input
+                            type="password"
+                            placeholder="Senha do Instagram"
+                            value={igPass}
+                            onChange={(e) => setIgPass(e.target.value)}
+                          />
+                        </div>
 
-                <div className="flex flex-col gap-2">
-                  <Button
-                    onClick={() =>
-                      loginStartMutation.mutate({
-                        username: igUser,
-                        password: igPass,
-                      })
-                    }
-                    disabled={
-                      !igUser.trim() ||
-                      !igPass.trim() ||
-                      loginStartMutation.isPending
-                    }
-                    className="w-full md:w-auto"
-                  >
-                    {loginStartMutation.isPending && (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    )}
-                    Fazer login
-                  </Button>
+                        <p className="text-xs text-muted-foreground leading-relaxed">
+                          As credenciais são usadas apenas pelo serviço de
+                          extração no Railway para abrir uma sessão autenticada
+                          no Instagram. Use sempre contas não oficiais.
+                        </p>
 
-                  {waiting2FA && (
-                    <div className="space-y-2 border-t pt-3 mt-2">
-                      <label className="text-sm font-medium">
-                        Código 2FA (Instagram)
-                      </label>
-                      <div className="flex flex-col md:flex-row gap-2">
-                        <Input
-                          placeholder="Código recebido por SMS/app/e-mail"
-                          value={twoFaCode}
-                          onChange={(e) => setTwoFaCode(e.target.value)}
-                        />
-                        <Button
-                          variant="outline"
-                          onClick={() =>
-                            loginVerifyMutation.mutate({ code: twoFaCode })
-                          }
-                          disabled={
-                            !twoFaCode.trim() || loginVerifyMutation.isPending
-                          }
-                        >
-                          {loginVerifyMutation.isPending && (
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        <div className="flex flex-col gap-2">
+                          <Button
+                            onClick={() =>
+                              loginStartMutation.mutate({
+                                username: igUser,
+                                password: igPass,
+                              })
+                            }
+                            disabled={
+                              !igUser.trim() ||
+                              !igPass.trim() ||
+                              loginStartMutation.isPending
+                            }
+                            className="w-full md:w-auto"
+                          >
+                            {loginStartMutation.isPending && (
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            )}
+                            Fazer login
+                          </Button>
+
+                          {waiting2FA && (
+                            <div className="space-y-2 border-t pt-3 mt-2">
+                              <label className="text-sm font-medium">
+                                Código 2FA (Instagram)
+                              </label>
+                              <div className="flex flex-col md:flex-row gap-2">
+                                <Input
+                                  placeholder="Código recebido por SMS/app/e-mail"
+                                  value={twoFaCode}
+                                  onChange={(e) =>
+                                    setTwoFaCode(e.target.value)
+                                  }
+                                />
+                                <Button
+                                  variant="outline"
+                                  onClick={() =>
+                                    loginVerifyMutation.mutate({
+                                      code: twoFaCode,
+                                    })
+                                  }
+                                  disabled={
+                                    !twoFaCode.trim() ||
+                                    loginVerifyMutation.isPending
+                                  }
+                                >
+                                  {loginVerifyMutation.isPending && (
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                  )}
+                                  Confirmar código
+                                </Button>
+                              </div>
+                              <p className="text-[11px] text-muted-foreground">
+                                Abra o Instagram (app ou e-mail), copie o
+                                código enviado e cole aqui para concluir o
+                                login.
+                              </p>
+                            </div>
                           )}
-                          Confirmar código
-                        </Button>
+                        </div>
                       </div>
-                      <p className="text-[11px] text-muted-foreground">
-                        Abra o Instagram (app ou e-mail), copie o código enviado
-                        e cole aqui para concluir o login.
-                      </p>
-                    </div>
-                  )}
+                    </DialogContent>
+                  </Dialog>
                 </div>
 
                 {igConfigQuery.data && (
