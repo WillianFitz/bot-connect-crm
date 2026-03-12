@@ -249,9 +249,11 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
         );
       }
 
-      const data = await connectRes.json() as { pairingCode?: string; code?: string };
-      const pairing = data.pairingCode || null;
-      return json({ qr: pairing });
+      const data = (await connectRes.json()) as any;
+      const pairing = data?.pairingCode || null;
+
+      // Expor também o corpo bruto para depuração futura
+      return json({ qr: pairing, raw: data });
     } catch (err: any) {
       return json(
         { qr: null, error: err?.message || "Erro ao buscar código de conexão" },
