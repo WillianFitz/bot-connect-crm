@@ -992,44 +992,9 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
     }
   }
 
-  // /api/tools/instagram/config (salvar credenciais para preencher tela, opcional)
+  // /api/tools/instagram/config
+  // Agora usado para armazenar username (opcional) e um token de extensão por tenant
   if (parts.length === 4 && parts[2] === "instagram" && parts[3] === "config") {
-    if (method === "POST") {
-      const body = await readBody<{ username?: string; password?: string }>(request);
-      const username = (body.username || "").trim();
-      const password = (body.password || "").trim();
-
-      if (!username || !password) {
-        return json({ error: "Usuário e senha são obrigatórios" }, { status: 400 });
-      }
-
-      const config = JSON.stringify({ username, password });
-
-      await env.DB.prepare(
-        `INSERT INTO tools_extractors (tenant_id, type, name, config_json)
-         VALUES (?, 'instagram', 'default', ?)
-         ON CONFLICT(id) DO NOTHING`,
-      )
-        .bind(tenantId, config)
-        .run();
-
-      // Como não temos uma unique bem definida por (tenant_id,type), garantimos via delete/insert
-      await env.DB.prepare(
-        "DELETE FROM tools_extractors WHERE tenant_id = ? AND type = 'instagram'",
-      )
-        .bind(tenantId)
-        .run();
-
-      await env.DB.prepare(
-        `INSERT INTO tools_extractors (tenant_id, type, name, config_json)
-         VALUES (?, 'instagram', 'default', ?)`,
-      )
-        .bind(tenantId, config)
-        .run();
-
-      return json({ ok: true });
-    }
-
     if (method === "GET") {
       const row = await env.DB.prepare(
         "SELECT config_json FROM tools_extractors WHERE tenant_id = ? AND type = 'instagram' LIMIT 1",
@@ -1037,80 +1002,32 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
         .bind(tenantId)
         .first<{ config_json?: string }>();
 
-      if (!row?.config_json) {
-        return json({ username: null, hasPassword: false });
+      let username: string | null = null;
+      let extensionToken: string | null = null;
+
+      if (row?.config_json) {
+        try {
+          const parsed = JSON.parse(row.config_json) as {
+            username?: string;
+            extensionToken?: string;
+          };
+          username = parsed.username || null;
+          extensionToken = parsed.extensionToken || null;
+        } catch {
+          // se der erro de parse, vamos gerar um novo config limpo abaixo
+        }
       }
 
-      try {
-        const parsed = JSON.parse(row.config_json) as {
-          username?: string;
-          password?: string;
-        };
-        return json({
-          username: parsed.username || null,
-          hasPassword: !!parsed.password,
-        });
-      } catch {
-        return json({ username: null, hasPassword: false });
-      }
-    }
+      if (!extensionToken) {
+        extensionToken = crypto.randomUUID().replace(/-/g, "");
+        const config = JSON.stringify({ username, extensionToken });
 
-    return new Response("Method not allowed", { status: 405 });
-  }
-
-  // /api/tools/instagram/login-start -> chama serviço do Railway para iniciar login (pode pedir 2FA)
-  if (parts.length === 4 && parts[2] === "instagram" && parts[3] === "login-start") {
-    if (method !== "POST") return new Response("Method not allowed", { status: 405 });
-
-    if (!env.EXTRACTOR_SERVICE_URL) {
-      return json(
-        { error: "EXTRACTOR_SERVICE_URL não configurado no Worker." },
-        { status: 500 },
-      );
-    }
-
-    const body = await readBody<{ username?: string; password?: string }>(request);
-    const username = (body.username || "").trim();
-    const password = (body.password || "").trim();
-
-    if (!username || !password) {
-      return json({ error: "Usuário e senha são obrigatórios" }, { status: 400 });
-    }
-
-    try {
-      const res = await fetch(
-        `${env.EXTRACTOR_SERVICE_URL}/api/instagram/login/start`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            tenantId,
-            credentials: { username, password },
-          }),
-        },
-      );
-
-      const data = await res.json<any>();
-
-      if (!res.ok) {
-        return json(
-          {
-            error:
-              data?.error ||
-              "Falha ao iniciar login no Instagram pelo serviço de extração.",
-          },
-          { status: res.status },
-        );
-      }
-
-      // Se login foi ok, opcionalmente salvamos o username no config
-      if (data.status === "ok") {
-        const config = JSON.stringify({ username, password: "********" });
         await env.DB.prepare(
           "DELETE FROM tools_extractors WHERE tenant_id = ? AND type = 'instagram'",
         )
           .bind(tenantId)
           .run();
+
         await env.DB.prepare(
           `INSERT INTO tools_extractors (tenant_id, type, name, config_json)
            VALUES (?, 'instagram', 'default', ?)`,
@@ -1119,74 +1036,28 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
           .run();
       }
 
-      return json(data);
-    } catch (err: any) {
-      return json(
-        {
-          error:
-            err?.message ||
-            "Erro interno ao chamar o serviço de login do Instagram.",
-        },
-        { status: 500 },
-      );
+      return json({
+        username,
+        hasPassword: false,
+        extensionToken,
+      });
     }
+
+    return new Response("Method not allowed", { status: 405 });
+  }
+
+  // /api/tools/instagram/login-start -> chama serviço do Railway para iniciar login (pode pedir 2FA)
+  if (parts.length === 4 && parts[2] === "instagram" && parts[3] === "login-start") {
+    return new Response("Instagram login via backend desativado. Use a extensão.", {
+      status: 400,
+    });
   }
 
   // /api/tools/instagram/login-verify -> envia código 2FA para o serviço de extração
   if (parts.length === 4 && parts[2] === "instagram" && parts[3] === "login-verify") {
-    if (method !== "POST") return new Response("Method not allowed", { status: 405 });
-
-    if (!env.EXTRACTOR_SERVICE_URL) {
-      return json(
-        { error: "EXTRACTOR_SERVICE_URL não configurado no Worker." },
-        { status: 500 },
-      );
-    }
-
-    const body = await readBody<{ code?: string }>(request);
-    const code = (body.code || "").trim();
-
-    if (!code) {
-      return json({ error: "Código 2FA é obrigatório" }, { status: 400 });
-    }
-
-    try {
-      const res = await fetch(
-        `${env.EXTRACTOR_SERVICE_URL}/api/instagram/login/verify`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            tenantId,
-            code,
-          }),
-        },
-      );
-
-      const data = await res.json<any>();
-
-      if (!res.ok) {
-        return json(
-          {
-            error:
-              data?.error ||
-              "Falha ao validar o código 2FA no serviço de extração.",
-          },
-          { status: res.status },
-        );
-      }
-
-      return json(data);
-    } catch (err: any) {
-      return json(
-        {
-          error:
-            err?.message ||
-            "Erro interno ao chamar o serviço de validação 2FA do Instagram.",
-        },
-        { status: 500 },
-      );
-    }
+    return new Response("Instagram login via backend desativado. Use a extensão.", {
+      status: 400,
+    });
   }
 
   // /api/tools/instagram/start
@@ -1197,30 +1068,6 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
     const profile = (body.profile || "").trim();
     if (!profile) return json({ error: "Perfil é obrigatório" }, { status: 400 });
 
-    // Busca credenciais salvas
-    const row = await env.DB.prepare(
-      "SELECT config_json FROM tools_extractors WHERE tenant_id = ? AND type = 'instagram' LIMIT 1",
-    )
-      .bind(tenantId)
-      .first<{ config_json?: string }>();
-
-    if (!row?.config_json) {
-      return json(
-        { error: "Antes de extrair, configure o login do Instagram nas Ferramentas." },
-        { status: 400 },
-      );
-    }
-
-    let credentials: any = null;
-    try {
-      credentials = JSON.parse(row.config_json);
-    } catch {
-      return json(
-        { error: "Configuração do Instagram inválida. Salve novamente o login." },
-        { status: 400 },
-      );
-    }
-
     const res = await env.DB.prepare(
       `INSERT INTO instagram_jobs (tenant_id, profile, status)
        VALUES (?, ?, 'pending')`,
@@ -1230,34 +1077,8 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
 
     const jobId = res.lastRowId;
 
-    // Dispara chamada opcional para o serviço externo de extração (Railway)
-    if (env.EXTRACTOR_SERVICE_URL) {
-      try {
-        await fetch(`${env.EXTRACTOR_SERVICE_URL}/api/instagram/start`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            jobId,
-            tenantId,
-            profile,
-            credentials,
-            callbackUrl: `${url.origin}/api/tools/instagram/push-leads`,
-          }),
-        });
-
-        await env.DB.prepare(
-          "UPDATE instagram_jobs SET status = 'running', updated_at = datetime('now') WHERE id = ? AND tenant_id = ?",
-        )
-          .bind(jobId, tenantId)
-          .run();
-      } catch (err: any) {
-        await env.DB.prepare(
-          "UPDATE instagram_jobs SET status = 'error', error_message = ? WHERE id = ? AND tenant_id = ?",
-        )
-          .bind(err?.message || String(err), jobId, tenantId)
-          .run();
-      }
-    }
+    // No modelo com extensão, a própria extensão vai enviar os leads para o webhook.
+    // Aqui apenas registramos o job.
 
     return json({ ok: true, jobId }, { status: 201 });
   }
@@ -1265,6 +1086,38 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
   // /api/tools/instagram/push-leads  (chamado pelo serviço externo)
   if (parts.length === 4 && parts[2] === "instagram" && parts[3] === "push-leads") {
     if (method !== "POST") return new Response("Method not allowed", { status: 405 });
+
+    // Valida token da extensão por tenant
+    const extToken = request.headers.get("x-extension-token") || "";
+    const cfgRow = await env.DB.prepare(
+      "SELECT config_json FROM tools_extractors WHERE tenant_id = ? AND type = 'instagram' LIMIT 1",
+    )
+      .bind(tenantId)
+      .first<{ config_json?: string }>();
+
+    if (!cfgRow?.config_json) {
+      return json(
+        { error: "Token da extensão não configurado para este tenant." },
+        { status: 401 },
+      );
+    }
+
+    let expectedToken: string | null = null;
+    try {
+      const parsed = JSON.parse(cfgRow.config_json) as {
+        extensionToken?: string;
+      };
+      expectedToken = parsed.extensionToken || null;
+    } catch {
+      return json(
+        { error: "Configuração da ferramenta Instagram inválida para este tenant." },
+        { status: 401 },
+      );
+    }
+
+    if (!extToken || !expectedToken || extToken !== expectedToken) {
+      return json({ error: "Token da extensão inválido." }, { status: 401 });
+    }
 
     const body = await readBody<{
       jobId?: number;
@@ -1274,14 +1127,25 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
       error?: string;
     }>(request);
 
-    const jobId = body.jobId;
+    let jobId = body.jobId;
     const fromExtractorTenant = body.tenantId || tenantId;
 
-    if (!jobId || !Array.isArray(body.leads)) {
-      return json({ error: "jobId e leads são obrigatórios" }, { status: 400 });
+    if (!Array.isArray(body.leads)) {
+      return json({ error: "Leads são obrigatórios" }, { status: 400 });
     }
 
     await ensureTenant(env, fromExtractorTenant);
+
+    // Se não veio jobId, criamos um automaticamente
+    if (!jobId) {
+      const resJob = await env.DB.prepare(
+        `INSERT INTO instagram_jobs (tenant_id, profile, status)
+         VALUES (?, ?, 'running')`,
+      )
+        .bind(fromExtractorTenant, "via_extensao")
+        .run();
+      jobId = resJob.lastRowId as number;
+    }
 
     // Insere leads em lote
     const leads = body.leads;

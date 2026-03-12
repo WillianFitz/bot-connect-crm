@@ -14,14 +14,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, Instagram, MapPin, FileText, Users } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogTrigger,
-} from "@/components/ui/dialog";
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; variant: "outline" | "default" }> =
@@ -45,11 +37,6 @@ export default function Tools() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [profile, setProfile] = useState("");
-  const [igUser, setIgUser] = useState("");
-  const [igPass, setIgPass] = useState("");
-  const [twoFaCode, setTwoFaCode] = useState("");
-  const [waiting2FA, setWaiting2FA] = useState(false);
-  const [loginOpen, setLoginOpen] = useState(false);
 
   const { data: jobs, isLoading: isLoadingJobs } = useQuery({
     queryKey: ["instagramJobs"],
@@ -80,67 +67,6 @@ export default function Tools() {
   const igConfigQuery = useQuery({
     queryKey: ["instagramConfig"],
     queryFn: () => api.getInstagramConfig(),
-  });
-
-  const loginStartMutation = useMutation({
-    mutationFn: (payload: { username: string; password: string }) =>
-      api.instagramLoginStart(payload),
-    onSuccess: async (data, variables) => {
-      if (data.status === "ok") {
-        toast({
-          title: "Login concluído",
-          description: "Login no Instagram feito com sucesso.",
-        });
-        setWaiting2FA(false);
-        setTwoFaCode("");
-        setIgPass("");
-        // salva só o usuário para exibir na tela
-        try {
-          await api.saveInstagramConfig({
-            username: variables.username,
-            password: "********",
-          });
-          queryClient.invalidateQueries({ queryKey: ["instagramConfig"] });
-        } catch {
-          // ignore erro de salvar config
-        }
-      } else if (data.status === "2fa_required") {
-        toast({
-          title: "2FA necessário",
-          description:
-            data.message ||
-            "Informe o código enviado pelo Instagram para concluir o login.",
-        });
-        setWaiting2FA(true);
-      }
-    },
-    onError: (err: any) => {
-      toast({
-        title: "Erro ao iniciar login",
-        description: err?.message || "Tente novamente.",
-        variant: "destructive",
-      });
-    },
-  });
-
-  const loginVerifyMutation = useMutation({
-    mutationFn: (payload: { code: string }) => api.instagramLoginVerify(payload),
-    onSuccess: () => {
-      toast({
-        title: "Login concluído",
-        description: "Código 2FA validado com sucesso. Sessão ativa.",
-      });
-      setWaiting2FA(false);
-      setTwoFaCode("");
-      setIgPass("");
-    },
-    onError: (err: any) => {
-      toast({
-        title: "Erro ao validar 2FA",
-        description: err?.message || "Código inválido ou expirado.",
-        variant: "destructive",
-      });
-    },
   });
 
   return (
@@ -182,136 +108,91 @@ export default function Tools() {
               <CardHeader>
                 <CardTitle>Conexão Instagram</CardTitle>
                 <CardDescription>
-                  Conecte uma conta de Instagram (não oficial) para usar no
-                  extrator de seguidores.
+                  Use a extensão de navegador para capturar seguidores do
+                  Instagram e enviar diretamente para o SaaS.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="space-y-1 text-sm">
-                    <p className="font-medium">Status da conexão</p>
-                    <p className="text-xs text-muted-foreground">
-                      {igConfigQuery.data?.username
-                        ? `Conectado como ${igConfigQuery.data.username}`
-                        : "Nenhuma conta conectada."}
-                    </p>
-                  </div>
-                  <Dialog open={loginOpen} onOpenChange={setLoginOpen}>
-                    <DialogTrigger asChild>
-                      <Button size="sm">
-                        <Instagram className="h-4 w-4 mr-2" />
-                        Conectar Instagram
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent>
-                      <DialogHeader>
-                        <DialogTitle>Conectar Instagram</DialogTitle>
-                        <DialogDescription>
-                          Faça login como se fosse no próprio Instagram. Usaremos
-                          essa sessão apenas para extrair seguidores.
-                        </DialogDescription>
-                      </DialogHeader>
-
-                      <div className="space-y-4 pt-2">
-                        <div className="space-y-2">
-                          <label className="text-sm font-medium">
-                            Usuário / e-mail
-                          </label>
-                          <Input
-                            placeholder="usuario ou email do Instagram"
-                            value={igUser}
-                            onChange={(e) => setIgUser(e.target.value)}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <label className="text-sm font-medium">Senha</label>
-                          <Input
-                            type="password"
-                            placeholder="Senha do Instagram"
-                            value={igPass}
-                            onChange={(e) => setIgPass(e.target.value)}
-                          />
-                        </div>
-
-                        <p className="text-xs text-muted-foreground leading-relaxed">
-                          As credenciais são usadas apenas pelo serviço de
-                          extração no Railway para abrir uma sessão autenticada
-                          no Instagram. Use sempre contas não oficiais.
-                        </p>
-
-                        <div className="flex flex-col gap-2">
-                          <Button
-                            onClick={() =>
-                              loginStartMutation.mutate({
-                                username: igUser,
-                                password: igPass,
-                              })
-                            }
-                            disabled={
-                              !igUser.trim() ||
-                              !igPass.trim() ||
-                              loginStartMutation.isPending
-                            }
-                            className="w-full md:w-auto"
-                          >
-                            {loginStartMutation.isPending && (
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            )}
-                            Fazer login
-                          </Button>
-
-                          {waiting2FA && (
-                            <div className="space-y-2 border-t pt-3 mt-2">
-                              <label className="text-sm font-medium">
-                                Código 2FA (Instagram)
-                              </label>
-                              <div className="flex flex-col md:flex-row gap-2">
-                                <Input
-                                  placeholder="Código recebido por SMS/app/e-mail"
-                                  value={twoFaCode}
-                                  onChange={(e) =>
-                                    setTwoFaCode(e.target.value)
-                                  }
-                                />
-                                <Button
-                                  variant="outline"
-                                  onClick={() =>
-                                    loginVerifyMutation.mutate({
-                                      code: twoFaCode,
-                                    })
-                                  }
-                                  disabled={
-                                    !twoFaCode.trim() ||
-                                    loginVerifyMutation.isPending
-                                  }
-                                >
-                                  {loginVerifyMutation.isPending && (
-                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                  )}
-                                  Confirmar código
-                                </Button>
-                              </div>
-                              <p className="text-[11px] text-muted-foreground">
-                                Abra o Instagram (app ou e-mail), copie o
-                                código enviado e cole aqui para concluir o
-                                login.
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </DialogContent>
-                  </Dialog>
+                <div className="space-y-3 text-sm">
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    1. Instale a extensão do Instagram no seu navegador.{" "}
+                    <span className="font-semibold">
+                      A extensão fará o login no Instagram e enviará os
+                      seguidores diretamente para este painel.
+                    </span>
+                  </p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    2. Dentro da extensão, configure o <span className="font-semibold">Tenant ID</span>, o{" "}
+                    <span className="font-semibold">Token da extensão</span> e a{" "}
+                    <span className="font-semibold">URL do Webhook</span> abaixo.
+                  </p>
                 </div>
 
-                {igConfigQuery.data && (
-                  <p className="text-[11px] text-muted-foreground">
-                    Status atual:{" "}
-                    {igConfigQuery.data.username
-                      ? `Usuário configurado (${igConfigQuery.data.username}).`
-                      : "Nenhum login salvo ainda."}
-                  </p>
-                )}
+                <div className="space-y-2">
+                  <label className="text-xs font-medium">
+                    Token da extensão (copie e cole na extensão)
+                  </label>
+                  <div className="flex gap-2">
+                    <Input
+                      readOnly
+                      value={igConfigQuery.data?.extensionToken || ""}
+                      className="text-xs"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={() => {
+                        if (igConfigQuery.data?.extensionToken) {
+                          navigator.clipboard.writeText(
+                            igConfigQuery.data.extensionToken,
+                          );
+                          toast({
+                            title: "Token copiado",
+                            description: "Cole o token na configuração da extensão.",
+                          });
+                        }
+                      }}
+                    >
+                      <span className="text-xs">Copiar</span>
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-medium">
+                    URL do Webhook (para enviar os leads)
+                  </label>
+                  <div className="flex gap-2">
+                    <Input
+                      readOnly
+                      value={`${window.location.origin.replace(
+                        /\/$/,
+                        "",
+                      )}/api/tools/instagram/push-leads`}
+                      className="text-xs"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={() => {
+                        const url = `${window.location.origin.replace(
+                          /\/$/,
+                          "",
+                        )}/api/tools/instagram/push-leads`;
+                        navigator.clipboard.writeText(url);
+                        toast({
+                          title: "Webhook copiado",
+                          description:
+                            "Cole essa URL na configuração da extensão.",
+                        });
+                      }}
+                    >
+                      <span className="text-xs">Copiar</span>
+                    </Button>
+                  </div>
+                </div>
               </CardContent>
             </Card>
 
