@@ -63,21 +63,33 @@ function extractUsernamesFromDialog(dialogRoot, baseProfile) {
 
 function extractUsernamesFromPage(baseProfile) {
   const set = new Set();
-  const main = document.querySelector("main");
-  if (!main) return [];
 
-  // Na página /followers/ a lista costuma ficar dentro de <main> em uma lista rolável
-  const links = main.querySelectorAll("a[href^='/'][href*='/']");
+  // Varre a página toda procurando URLs do tipo "/username/"
+  const links = document.querySelectorAll("a[href^='/'][href$='/']");
 
   links.forEach((link) => {
     const href = link.getAttribute("href") || "";
-    // queremos apenas URLs simples do tipo "/username/"
     const parts = href.split("/").filter(Boolean);
     if (parts.length !== 1) return;
     const username = parts[0].trim();
     if (!username) return;
 
-    if (baseProfile && username.toLowerCase() === baseProfile.toLowerCase()) return;
+    const lower = username.toLowerCase();
+    // ignora rotas conhecidas que não são usuários
+    const blockedPrefixes = [
+      "accounts",
+      "explore",
+      "reels",
+      "direct",
+      "stories",
+      "about",
+      "p",
+      "reel",
+      "tv",
+    ];
+    if (blockedPrefixes.some((p) => lower.startsWith(p))) return;
+
+    if (baseProfile && lower === baseProfile.toLowerCase()) return;
 
     set.add(username);
   });
