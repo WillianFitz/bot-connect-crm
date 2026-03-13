@@ -31,7 +31,37 @@ async function ensureFollowersDialog() {
   return dialogRoot;
 }
 
-async function scrollFollowersList(targetCount) {
+function extractUsernamesFromDialog(dialogRoot, baseProfile) {
+  const set = new Set();
+  if (!dialogRoot) return [];
+
+  // No popup de seguidores, normalmente existe um container rolável com a lista (ul > li)
+  const scrollContainer =
+    dialogRoot.querySelector("div[role='presentation'] ul") ||
+    dialogRoot.querySelector("ul");
+
+  if (!scrollContainer) return [];
+
+  const links = scrollContainer.querySelectorAll("a[href^='/'][href$='/']");
+
+  links.forEach((link) => {
+    const href = link.getAttribute("href") || "";
+    // href no formato "/username/"
+    const parts = href.split("/").filter(Boolean);
+    if (parts.length !== 1) return;
+    const username = parts[0].trim();
+    if (!username) return;
+
+    // ignora o próprio perfil base
+    if (baseProfile && username.toLowerCase() === baseProfile.toLowerCase()) return;
+
+    set.add(username);
+  });
+
+  return Array.from(set);
+}
+
+async function scrollFollowersList(targetCount, baseProfile) {
   const dialogRoot = await ensureFollowersDialog();
   const dialogScroll =
     (dialogRoot &&
@@ -46,7 +76,7 @@ async function scrollFollowersList(targetCount) {
     container.scrollBy(0, 800);
     await sleep(1000);
 
-    const usernames = extractUsernames();
+    const usernames = extractUsernamesFromDialog(dialogRoot, baseProfile);
     if (usernames.length >= targetCount) {
       break;
     }
@@ -58,37 +88,16 @@ async function scrollFollowersList(targetCount) {
   }
 }
 
-function extractUsernames() {
-  const set = new Set();
-
-  // Seletores típicos da lista de seguidores
-  const items = document.querySelectorAll("div[role='dialog'] li, main li");
-  items.forEach((item) => {
-    const link = item.querySelector("a:not([href='#'])");
-    if (!link) return;
-    const username = (link.textContent || "").trim();
-    if (!username) return;
-    // ignora textos genéricos
-    if (username.toLowerCase().includes("seguidores")) return;
-    if (username.toLowerCase().includes("seguindo")) return;
-    set.add(username);
-  });
-
-  return Array.from(set);
-}
-
 async function captureFollowersRange(startIndex, targetCount, profile) {
   if (!location.hostname.includes("instagram.com")) {
     throw new Error("Abra o Instagram Web para iniciar a captura.");
   }
 
-  if (!profile) {
-    console.warn("Perfil não informado; usando apenas a página atual.");
-  }
-
   const desiredTotal = targetCount;
-  await scrollFollowersList(desiredTotal);
-  const allUsernames = extractUsernames();
+  await scrollFollowersList(desiredTotal, profile);
+
+  const dialogRoot = document.querySelector("div[role='dialog']");
+  const allUsernames = extractUsernamesFromDialog(dialogRoot, profile);
 
   return {
     usernames: allUsernames,
