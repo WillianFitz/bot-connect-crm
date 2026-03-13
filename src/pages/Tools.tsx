@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import JSZip from "jszip";
 import { api } from "@/lib/api";
 import {
   Card,
@@ -12,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Instagram, MapPin, FileText, Users } from "lucide-react";
+import { Loader2, Instagram, MapPin, FileText, Users, Download } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 function StatusBadge({ status }: { status: string }) {
@@ -33,10 +34,25 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+const EXTENSION_FILES = [
+  "manifest.json",
+  "background.js",
+  "content-script.js",
+  "dashboard.html",
+  "dashboard.js",
+  "popup.html",
+  "popup.js",
+];
+
 export default function Tools() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [profile, setProfile] = useState("");
+  const [downloadExtensionPending, setDownloadExtensionPending] = useState(false);
+  const tenantId =
+    (typeof window !== "undefined" &&
+      window.localStorage.getItem("tenant_id")) ||
+    "";
 
   const { data: jobs, isLoading: isLoadingJobs } = useQuery({
     queryKey: ["instagramJobs"],
@@ -68,6 +84,62 @@ export default function Tools() {
     queryKey: ["instagramConfig"],
     queryFn: () => api.getInstagramConfig(),
   });
+
+  async function handleDownloadExtension() {
+    const tid = tenantId || (typeof window !== "undefined" && window.localStorage.getItem("tenant_id"));
+    const token = igConfigQuery.data?.extensionToken;
+    if (!tid || !token) {
+      toast({
+        title: "Não foi possível gerar a extensão",
+        description: "Faça login e garanta que o Token da extensão está disponível. Recarregue a página.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const apiBase =
+      (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ||
+      window.location.origin.replace(/\/$/, "");
+    const webhookUrl = `${apiBase}/api/tools/instagram/push-leads`;
+    setDownloadExtensionPending(true);
+    try {
+      const zip = new JSZip();
+      zip.file(
+        "config.json",
+        JSON.stringify({
+          tenantId: String(tid),
+          extensionToken: String(token),
+          webhookUrl,
+        })
+      );
+      for (const name of EXTENSION_FILES) {
+        const res = await fetch(`${base}/extensions/instagram/${name}`);
+        if (res.ok) {
+          const blob = await res.blob();
+          zip.file(name, blob);
+        }
+      }
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "instagram-extractor.zip";
+      a.click();
+      URL.revokeObjectURL(url);
+      toast({
+        title: "Extensão baixada",
+        description:
+          "Descompacte o ZIP, abra o Chrome em Extensões > Modo desenvolvedor > Carregar sem compactação e selecione a pasta. A extensão já virá configurada para sua conta.",
+      });
+    } catch (e) {
+      toast({
+        title: "Erro ao gerar extensão",
+        description: (e as Error)?.message || "Tente novamente.",
+        variant: "destructive",
+      });
+    } finally {
+      setDownloadExtensionPending(false);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -113,24 +185,67 @@ export default function Tools() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Button
+                    type="button"
+                    onClick={handleDownloadExtension}
+                    disabled={downloadExtensionPending || !tenantId || !igConfigQuery.data?.extensionToken}
+                    className="w-full"
+                  >
+                    {downloadExtensionPending ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Download className="mr-2 h-4 w-4" />
+                    )}
+                    Baixar extensão (já configurada para sua conta)
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    O ZIP virá com seu Tenant e Token já preenchidos. Assim os leads
+                    não vão para outro cliente. Descompacte e carregue em Extensões
+                    (modo desenvolvedor) no Chrome.
+                  </p>
+                </div>
+
                 <div className="space-y-3 text-sm">
                   <p className="text-xs text-muted-foreground leading-relaxed">
-                    1. Instale a extensão do Instagram no seu navegador.{" "}
-                    <span className="font-semibold">
-                      A extensão fará o login no Instagram e enviará os
-                      seguidores diretamente para este painel.
-                    </span>
-                  </p>
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    2. Dentro da extensão, configure o <span className="font-semibold">Tenant ID</span>, o{" "}
-                    <span className="font-semibold">Token da extensão</span> e a{" "}
-                    <span className="font-semibold">URL do Webhook</span> abaixo.
+                    Se você já instalou a extensão por outro meio, use os dados abaixo
+                    na aba Configuração da extensão (Token e Webhook são obrigatórios).
                   </p>
                 </div>
 
                 <div className="space-y-2">
                   <label className="text-xs font-medium">
-                    Token da extensão (copie e cole na extensão)
+                    Tenant ID (já incluso no download; só altere se instalou a extensão manualmente)
+                  </label>
+                  <div className="flex gap-2">
+                    <Input
+                      readOnly
+                      value={tenantId || ""}
+                      className="text-xs"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={() => {
+                        if (tenantId) {
+                          navigator.clipboard.writeText(tenantId);
+                          toast({
+                            title: "Tenant ID copiado",
+                            description:
+                              "Cole o Tenant ID na configuração da extensão.",
+                          });
+                        }
+                      }}
+                    >
+                      <span className="text-xs">Copiar</span>
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-medium">
+                    Token da extensão (obrigatório para funcionar)
                   </label>
                   <div className="flex gap-2">
                     <Input

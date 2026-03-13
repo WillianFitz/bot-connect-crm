@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "Extrator Instagram - LeadFlowAI",
+  "version": "1.0.0",
+  "description": "Extrai seguidores do Instagram e envia como leads para o SaaS.",
+  "permissions": [
+    "storage",
+    "scripting",
+    "activeTab",
+    "tabs",
+    "downloads"
+  ],
+  "host_permissions": [
+    "https://www.instagram.com/*",
+    "http://www.instagram.com/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["injected.js"],
+      "matches": ["https://www.instagram.com/*", "http://www.instagram.com/*"]
+    }
+  ],
+  "action": {
+    "default_title": "Extrator Instagram"
+  },
+  "options_page": "dashboard.html",
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.instagram.com/*",
+        "http://www.instagram.com/*"
+      ],
+      "js": ["content-script.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

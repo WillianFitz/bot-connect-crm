@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <title>Extrator Instagram</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        margin: 12px;
+        width: 320px;
+      }
+      h1 {
+        font-size: 16px;
+        margin-bottom: 8px;
+      }
+      label {
+        display: block;
+        font-size: 11px;
+        font-weight: 600;
+        margin-bottom: 2px;
+      }
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 4px 6px;
+        font-size: 12px;
+        margin-bottom: 8px;
+      }
+      button {
+        padding: 6px 10px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .btn-primary {
+        background: #2563eb;
+        color: white;
+        border: none;
+        border-radius: 4px;
+      }
+      .btn-secondary {
+        background: #e5e7eb;
+        color: #111827;
+        border: none;
+        border-radius: 4px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        margin-top: 4px;
+      }
+      .small {
+        font-size: 11px;
+        color: #6b7280;
+      }
+      .status {
+        font-size: 11px;
+        margin-top: 6px;
+      }
+      .status-ok {
+        color: #16a34a;
+      }
+      .status-err {
+        color: #dc2626;
+      }
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+      .link {
+        font-size: 11px;
+        color: #2563eb;
+        cursor: pointer;
+        text-decoration: underline;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <h1>Extrator Instagram</h1>
+      <span id="openDashboard" class="link">Abrir dashboard</span>
+    </div>
+
+    <label for="tenantId">Tenant ID</label>
+    <input id="tenantId" type="text" placeholder="Ex.: 1" />
+
+    <label for="token">Token da extensão</label>
+    <input id="token" type="text" placeholder="Cole o token do painel" />
+
+    <label for="webhookUrl">URL do Webhook</label>
+    <input
+      id="webhookUrl"
+      type="text"
+      placeholder="https://SEU_WORKER/api/tools/instagram/push-leads"
+    />
+
+    <hr />
+
+    <label for="profile">@perfil do Instagram</label>
+    <input
+      id="profile"
+      type="text"
+      placeholder="ex.: meu_cliente_oficial (sem @)"
+    />
+
+    <label for="limit">Qtd. seguidores nesta rodada</label>
+    <input id="limit" type="number" min="1" max="100000" value="100" />
+
+    <div class="row">
+      <button id="save" class="btn-secondary">Salvar config</button>
+      <button id="start" class="btn-primary">Iniciar/Continuar</button>
+    </div>
+
+    <div class="row" style="margin-top: 6px">
+      <button id="send" class="btn-secondary">Enviar leads para o SaaS</button>
+    </div>
+
+    <p id="progress" class="small"></p>
+    <p id="status" class="status"></p>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
+
