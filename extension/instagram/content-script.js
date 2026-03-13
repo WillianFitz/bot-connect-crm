@@ -61,22 +61,59 @@ function extractUsernamesFromDialog(dialogRoot, baseProfile) {
   return Array.from(set);
 }
 
+function extractUsernamesFromPage(baseProfile) {
+  const set = new Set();
+  const main = document.querySelector("main");
+  if (!main) return [];
+
+  // Na página /followers/ a lista costuma ficar dentro de <main> em uma lista rolável
+  const links = main.querySelectorAll("a[href^='/'][href*='/']");
+
+  links.forEach((link) => {
+    const href = link.getAttribute("href") || "";
+    // queremos apenas URLs simples do tipo "/username/"
+    const parts = href.split("/").filter(Boolean);
+    if (parts.length !== 1) return;
+    const username = parts[0].trim();
+    if (!username) return;
+
+    if (baseProfile && username.toLowerCase() === baseProfile.toLowerCase()) return;
+
+    set.add(username);
+  });
+
+  return Array.from(set);
+}
+
 async function scrollFollowersList(targetCount, baseProfile) {
   const dialogRoot = await ensureFollowersDialog();
+  const hasDialog = !!dialogRoot;
+
   const dialogScroll =
     (dialogRoot &&
       (dialogRoot.querySelector("div[role='presentation']") ||
         dialogRoot.querySelector("div[style*='overflow']"))) ||
     null;
 
-  let container = dialogScroll || document.scrollingElement || document.body;
+  let container;
+  if (hasDialog && dialogScroll) {
+    container = dialogScroll;
+  } else {
+    // modo página /followers/
+    const main = document.querySelector("main");
+    container = main || document.scrollingElement || document.body;
+  }
+
   let previousCount = 0;
 
   for (let i = 0; i < 40; i++) {
     container.scrollBy(0, 800);
     await sleep(1000);
 
-    const usernames = extractUsernamesFromDialog(dialogRoot, baseProfile);
+    const usernames = hasDialog
+      ? extractUsernamesFromDialog(dialogRoot, baseProfile)
+      : extractUsernamesFromPage(baseProfile);
+
     if (usernames.length >= targetCount) {
       break;
     }
@@ -97,7 +134,11 @@ async function captureFollowersRange(startIndex, targetCount, profile) {
   await scrollFollowersList(desiredTotal, profile);
 
   const dialogRoot = document.querySelector("div[role='dialog']");
-  const allUsernames = extractUsernamesFromDialog(dialogRoot, profile);
+  const hasDialog = !!dialogRoot;
+
+  const allUsernames = hasDialog
+    ? extractUsernamesFromDialog(dialogRoot, profile)
+    : extractUsernamesFromPage(profile);
 
   return {
     usernames: allUsernames,
