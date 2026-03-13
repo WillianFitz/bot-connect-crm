@@ -36,7 +36,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // Carrega configs básicas e perfis
-  chrome.storage.sync.get(
+  chrome.storage.local.get(
     ["tenantId", "extensionToken", "webhookUrl", "lastProfile", "profiles"],
     (data) => {
       if (data.tenantId)
@@ -68,7 +68,7 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
-    chrome.storage.sync.set(
+    chrome.storage.local.set(
       { tenantId, extensionToken, webhookUrl, lastProfile: profile || "" },
       () => {
         setStatus("configStatus", "Configuração salva com sucesso.", true);
@@ -78,7 +78,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Iniciar/Continuar captura (seguidores + varredura de perfis)
   document.getElementById("startCapture").addEventListener("click", () => {
-    chrome.storage.sync.get(
+    chrome.storage.local.get(
       ["tenantId", "extensionToken", "webhookUrl", "profiles"],
       (data) => {
         const tenantId =
@@ -155,68 +155,87 @@ document.addEventListener("DOMContentLoaded", () => {
               return;
             }
 
-            setTimeout(() => {
-              chrome.tabs.sendMessage(
-                tab.id,
+            const tabId = tab.id;
+
+            const onUpdated = (updatedTabId, info) => {
+              if (updatedTabId !== tabId || info.status !== "complete") return;
+
+              chrome.tabs.onUpdated.removeListener(onUpdated);
+
+              chrome.scripting.executeScript(
                 {
-                  type: "CAPTURE_FOLLOWERS",
-                  startIndex,
-                  targetCount,
-                  profile,
+                  target: { tabId },
+                  files: ["content-script.js"],
                 },
-                (response) => {
-                  if (chrome.runtime.lastError) {
-                    setStatus(
-                      "captureStatus",
-                      "Erro ao comunicar com a aba. Verifique se o Instagram carregou.",
-                      false,
-                    );
-                    return;
-                  }
-                  if (!response || !response.ok) {
-                    setStatus(
-                      "captureStatus",
-                      response?.error ||
-                        "Não foi possível capturar seguidores. Verifique se o perfil existe.",
-                      false,
-                    );
-                    return;
-                  }
-
-                  const newUsernames = response.usernames || [];
-                  const existing = new Set(p.usernames || []);
-                  newUsernames.forEach((u) => {
-                    if (u && !existing.has(u)) existing.add(u);
-                  });
-
-                  const merged = Array.from(existing);
-                  const newLastIndex = Math.min(merged.length, targetCount);
-
-                  profiles[key] = {
-                    usernames: merged,
-                    lastIndex: newLastIndex,
-                    totalCaptured: merged.length,
-                    scanIndex: p.scanIndex || 0,
-                    leads: p.leads || [],
-                  };
-
-                  chrome.storage.sync.set({ profiles }, () => {
-                    setCaptureProgress(
-                      `Perfil @${profile}: ${merged.length} seguidores encontrados. Iniciando varredura de perfis...`,
-                    );
-                    renderProfilesTable(profiles);
-                    scanProfilesSequential(
-                      tab.id,
-                      tenantId,
+                () => {
+                  chrome.tabs.sendMessage(
+                    tabId,
+                    {
+                      type: "CAPTURE_FOLLOWERS",
+                      startIndex,
+                      targetCount,
                       profile,
-                      key,
-                      profiles,
-                      limit,
-                    );
-                  });
+                    },
+                    (response) => {
+                      if (chrome.runtime.lastError) {
+                        setStatus(
+                          "captureStatus",
+                          "Erro ao comunicar com a aba. Verifique se o Instagram carregou.",
+                          false,
+                        );
+                        return;
+                      }
+                      if (!response || !response.ok) {
+                        setStatus(
+                          "captureStatus",
+                          response?.error ||
+                            "Não foi possível capturar seguidores. Verifique se o perfil existe.",
+                          false,
+                        );
+                        return;
+                      }
+
+                      const newUsernames = response.usernames || [];
+                      const existing = new Set(p.usernames || []);
+                      newUsernames.forEach((u) => {
+                        if (u && !existing.has(u)) existing.add(u);
+                      });
+
+                      const merged = Array.from(existing);
+                      const newLastIndex = Math.min(
+                        merged.length,
+                        targetCount,
+                      );
+
+                      profiles[key] = {
+                        usernames: merged,
+                        lastIndex: newLastIndex,
+                        totalCaptured: merged.length,
+                        scanIndex: p.scanIndex || 0,
+                        leads: p.leads || [],
+                      };
+
+                      chrome.storage.local.set({ profiles }, () => {
+                        setCaptureProgress(
+                          `Perfil @${profile}: ${merged.length} seguidores encontrados. Iniciando varredura de perfis...`,
+                        );
+                        renderProfilesTable(profiles);
+                        scanProfilesSequential(
+                          tabId,
+                          tenantId,
+                          profile,
+                          key,
+                          profiles,
+                          limit,
+                        );
+                      });
+                    },
+                  );
                 },
               );
-            }, 4000);
+            };
+
+            chrome.tabs.onUpdated.addListener(onUpdated);
           },
         );
       },
@@ -225,7 +244,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Enviar para o SaaS (usa leads varridos com telefone)
   document.getElementById("sendToSaaS").addEventListener("click", () => {
-    chrome.storage.sync.get(
+    chrome.storage.local.get(
       ["tenantId", "extensionToken", "webhookUrl", "profiles"],
       async (data) => {
         const tenantId =
@@ -316,7 +335,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Exportar CSV
   document.getElementById("exportCsv").addEventListener("click", () => {
-    chrome.storage.sync.get(["tenantId", "profiles"], (data) => {
+    chrome.storage.local.get(["tenantId", "profiles"], (data) => {
       const tenantId =
         document.getElementById("tenantId").value.trim() ||
         data.tenantId?.trim();
@@ -387,9 +406,9 @@ function scanProfilesSequential(
   profiles,
   limit,
 ) {
-  chrome.storage.sync.get(["profiles"], (data) => {
+  chrome.storage.local.get(["profiles"], (data) => {
     const allProfiles = data.profiles || profiles;
-      const p = allProfiles[key];
+    const p = allProfiles[key];
     if (!p || !Array.isArray(p.usernames) || p.usernames.length === 0) {
       setStatus(
         "captureStatus",
@@ -409,7 +428,7 @@ function scanProfilesSequential(
       if (scanIndex >= p.usernames.length || scannedThisRound >= maxToScan) {
         const updated = { ...p, scanIndex, leads };
         const newProfiles = { ...allProfiles, [key]: updated };
-        chrome.storage.sync.set({ profiles: newProfiles }, () => {
+        chrome.storage.local.set({ profiles: newProfiles }, () => {
           setCaptureProgress(
             `Perfil @${profile}: ${p.totalCaptured} seguidores e ${leads.length} perfis varridos.`,
           );
@@ -438,30 +457,44 @@ function scanProfilesSequential(
         tabId,
         { url: `https://www.instagram.com/${username}/` },
         () => {
-          setTimeout(() => {
-            chrome.tabs.sendMessage(
-              tabId,
-              { type: "SCAN_PROFILE", username },
-              (resp) => {
-                if (resp && resp.ok) {
-                  leads.push({
-                    username,
-                    name: resp.displayName || "",
-                    phone: resp.phone || "",
-                  });
-                } else {
-                  leads.push({
-                    username,
-                    name: "",
-                    phone: "",
-                  });
-                }
-                scanIndex++;
-                scannedThisRound++;
-                step();
+          const onUpdated = (updatedTabId, info) => {
+            if (updatedTabId !== tabId || info.status !== "complete") return;
+
+            chrome.tabs.onUpdated.removeListener(onUpdated);
+
+            chrome.scripting.executeScript(
+              {
+                target: { tabId },
+                files: ["content-script.js"],
+              },
+              () => {
+                chrome.tabs.sendMessage(
+                  tabId,
+                  { type: "SCAN_PROFILE", username },
+                  (resp) => {
+                    if (resp && resp.ok) {
+                      leads.push({
+                        username,
+                        name: resp.displayName || "",
+                        phone: resp.phone || "",
+                      });
+                    } else {
+                      leads.push({
+                        username,
+                        name: "",
+                        phone: "",
+                      });
+                    }
+                    scanIndex++;
+                    scannedThisRound++;
+                    step();
+                  },
+                );
               },
             );
-          }, 4000);
+          };
+
+          chrome.tabs.onUpdated.addListener(onUpdated);
         },
       );
     };

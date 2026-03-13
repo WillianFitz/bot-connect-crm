@@ -42,14 +42,14 @@ function extractUsernamesFromDialog(dialogRoot, baseProfile) {
 
   if (!scrollContainer) return [];
 
-  const links = scrollContainer.querySelectorAll("a[href^='/'][href$='/']");
+  const links = scrollContainer.querySelectorAll("a[href^='/']");
 
   links.forEach((link) => {
     const href = link.getAttribute("href") || "";
-    // href no formato "/username/"
-    const parts = href.split("/").filter(Boolean);
-    if (parts.length !== 1) return;
-    const username = parts[0].trim();
+    // tenta extrair padrão "/username/" (ignorando query/fragmentos)
+    const match = href.match(/^\/([^\/?#]+)\/?/);
+    if (!match) return;
+    const username = match[1].trim();
     if (!username) return;
 
     // ignora o próprio perfil base
@@ -65,13 +65,14 @@ function extractUsernamesFromPage(baseProfile) {
   const set = new Set();
 
   // Varre a página toda procurando URLs do tipo "/username/"
-  const links = document.querySelectorAll("a[href^='/'][href$='/']");
+  const links = document.querySelectorAll("a[href^='/']");
 
   links.forEach((link) => {
     const href = link.getAttribute("href") || "";
-    const parts = href.split("/").filter(Boolean);
-    if (parts.length !== 1) return;
-    const username = parts[0].trim();
+    // tenta extrair padrão "/username/" (ignorando query/fragmentos)
+    const match = href.match(/^\/([^\/?#]+)\/?/);
+    if (!match) return;
+    const username = match[1].trim();
     if (!username) return;
 
     const lower = username.toLowerCase();
@@ -126,7 +127,10 @@ async function scrollFollowersList(targetCount, baseProfile) {
       ? extractUsernamesFromDialog(dialogRoot, baseProfile)
       : extractUsernamesFromPage(baseProfile);
 
-    if (usernames.length >= targetCount) {
+    // Se estiver usando o popup, podemos parar ao atingir o targetCount.
+    // No modo página (/followers/), continuamos até não carregar mais nada
+    // para garantir que todos os seguidores possíveis foram listados.
+    if (hasDialog && usernames.length >= targetCount) {
       break;
     }
     if (usernames.length === previousCount) {
