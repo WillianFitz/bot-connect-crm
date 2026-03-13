@@ -5,6 +5,12 @@ async function sleep(ms) {
 }
 
 async function ensureFollowersDialog() {
+  // Se já estamos na rota /followers/, não abrimos popup,
+  // pois a lista já está em página própria.
+  if (location.pathname.endsWith("/followers/")) {
+    return null;
+  }
+
   // Tenta encontrar um diálogo aberto de seguidores
   let dialogRoot = document.querySelector("div[role='dialog']");
   if (dialogRoot) return dialogRoot;
@@ -29,6 +35,19 @@ async function ensureFollowersDialog() {
   }
 
   return dialogRoot;
+}
+
+function getFollowersPageContainer() {
+  const main = document.querySelector("main");
+  if (!main) return document.scrollingElement || document.body;
+
+  // Tenta pegar o container rolável da lista de seguidores
+  const scroll =
+    main.querySelector("div[style*='overflow-y']") ||
+    main.querySelector("div[style*='overflow']") ||
+    main;
+
+  return scroll;
 }
 
 function extractUsernamesFromDialog(dialogRoot, baseProfile) {
@@ -64,8 +83,10 @@ function extractUsernamesFromDialog(dialogRoot, baseProfile) {
 function extractUsernamesFromPage(baseProfile) {
   const set = new Set();
 
-  // Varre a página toda procurando URLs do tipo "/username/"
-  const links = document.querySelectorAll("a[href^='/']");
+  const container = getFollowersPageContainer();
+
+  // Varre apenas dentro da lista de seguidores procurando URLs do tipo "/username/"
+  const links = container.querySelectorAll("a[href^='/']");
 
   links.forEach((link) => {
     const href = link.getAttribute("href") || "";
@@ -113,8 +134,7 @@ async function scrollFollowersList(targetCount, baseProfile) {
     container = dialogScroll;
   } else {
     // modo página /followers/
-    const main = document.querySelector("main");
-    container = main || document.scrollingElement || document.body;
+    container = getFollowersPageContainer();
   }
 
   let previousCount = 0;
