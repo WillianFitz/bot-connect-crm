@@ -37,19 +37,6 @@ async function ensureFollowersDialog() {
   return dialogRoot;
 }
 
-function getFollowersPageContainer() {
-  const main = document.querySelector("main");
-  if (!main) return document.scrollingElement || document.body;
-
-  // Tenta pegar o container rolável da lista de seguidores
-  const scroll =
-    main.querySelector("div[style*='overflow-y']") ||
-    main.querySelector("div[style*='overflow']") ||
-    main;
-
-  return scroll;
-}
-
 function extractUsernamesFromDialog(dialogRoot, baseProfile) {
   const set = new Set();
   if (!dialogRoot) return [];
@@ -83,10 +70,8 @@ function extractUsernamesFromDialog(dialogRoot, baseProfile) {
 function extractUsernamesFromPage(baseProfile) {
   const set = new Set();
 
-  const container = getFollowersPageContainer();
-
-  // Varre apenas dentro da lista de seguidores procurando URLs do tipo "/username/"
-  const links = container.querySelectorAll("a[href^='/']");
+  // Varre a página toda em /followers/ procurando URLs do tipo "/username/"
+  const links = document.querySelectorAll("a[href^='/']");
 
   links.forEach((link) => {
     const href = link.getAttribute("href") || "";
@@ -134,7 +119,7 @@ async function scrollFollowersList(targetCount, baseProfile) {
     container = dialogScroll;
   } else {
     // modo página /followers/
-    container = getFollowersPageContainer();
+    container = document.scrollingElement || document.body;
   }
 
   let previousCount = 0;
