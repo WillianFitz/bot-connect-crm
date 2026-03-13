@@ -142,7 +142,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
         chrome.tabs.create(
           {
-            url: `https://www.instagram.com/${profile}/followers/`,
+            // abre o perfil principal; o content-script clicará em "Seguidores"
+            url: `https://www.instagram.com/${profile}/`,
             active: false,
           },
           (tab) => {
