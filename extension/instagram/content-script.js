@@ -49,7 +49,6 @@ if (typeof window.__igExtractorLoaded === "undefined") {
   }
 
   async function waitForNextPage(timeout = 12000) {
-    // FIX: aumentado de 7000 para 12000ms — evita falsos "stale" em conexões lentas
     const marker = _lastPageTs;
     const end = Date.now() + timeout;
     while (Date.now() < end) {
@@ -80,28 +79,23 @@ if (typeof window.__igExtractorLoaded === "undefined") {
     }
   }
 
-  // Links fixos da página de perfil para excluir
   const PAGE_HREFS = new Set(["/", "/explore/", "/reels/", "/direct/inbox/", "/direct/"]);
 
-  // Pega links dos seguidores no modal (renderizado no body pelo Instagram)
   function getFollowerLinks() {
     const all = Array.from(document.querySelectorAll("a[href^='/'][role='link'], a[href^='/'][tabindex]"))
       .filter(a => {
         const href = a.getAttribute("href") || "";
         if (!href || PAGE_HREFS.has(href)) return false;
         if (href.includes("stories") || href.includes("explore") || href.includes("followers") || href.includes("following")) return false;
-        // Links de perfil: /username/ ou /username
         return /^\/[^/]+\/?$/.test(href);
       });
-    // Deduplica por href mantendo última ocorrência (a foto vem antes do nome, queremos o último)
     const seen = new Map();
     all.forEach(a => seen.set(a.getAttribute("href"), a));
     return Array.from(seen.values());
   }
 
   async function collectUsernames(targetCount, baseProfile) {
-    // Sempre começa uma rodada ZERANDO o set local e marcadores,
-    // assim respeita exatamente o limite definido nesta captura.
+    // FIX CRÍTICO: zera o set e marcadores a cada rodada nova
     _captured.clear();
     _lastPageHasMore = true;
     _lastPageTs = Date.now();
@@ -110,14 +104,14 @@ if (typeof window.__igExtractorLoaded === "undefined") {
     injectPageScript();
     await sleep(1500);
 
-    // targetCount é relativo a ESTA rodada (limit)
     console.log("[IGExtractor] Iniciando para", baseProfile, "target:", targetCount);
 
-    // 1. Abre modal
+    // 1. Aguarda página carregar e descarta popups
     await waitFor("header", 12000);
     await sleep(1500);
     await dismissPopups();
 
+    // 2. Abre modal de seguidores
     let dlg = document.querySelector("div[role='dialog']");
     if (!dlg) {
       const trigger = await waitFor(() => {
@@ -139,12 +133,11 @@ if (typeof window.__igExtractorLoaded === "undefined") {
 
     if (!dlg) throw new Error("Modal de seguidores não abriu.");
 
-    // 2. Tenta aguardar primeiro batch, mas não falha se ainda tiver 0
+    // 3. Aguarda primeiro batch (não falha se vier 0 — GraphQL pode demorar)
     await waitForGrowth(0, 10000);
     console.log("[IGExtractor] Batch inicial:", _captured.size, "users");
 
-    // 3. Loop: scrollIntoView no último link para acionar o IntersectionObserver do Instagram
-    // FIX: stale aumentado de 6 para 10 — janela minimizada precisa de mais tentativas
+    // 4. Loop de scroll para carregar mais seguidores
     let stale = 0;
     const MAX_STALE = 10;
 
@@ -157,19 +150,16 @@ if (typeof window.__igExtractorLoaded === "undefined") {
       const prevSize = _captured.size;
       const links = getFollowerLinks();
 
-      // Pega o primeiro link ABAIXO da viewport (não visível ainda)
       const viewportH = window.innerHeight;
       let targetLink = null;
       for (const a of links) {
         const rect = a.getBoundingClientRect();
         if (rect.top > viewportH - 50) { targetLink = a; break; }
       }
-      // Se todos já estão visíveis, pega o último
       if (!targetLink) targetLink = links[links.length - 1];
 
       if (targetLink) {
         targetLink.scrollIntoView({ behavior: "smooth", block: "center" });
-        // FIX: força scroll adicional no contêiner do modal para ajudar em janelas minimizadas
         const modal = targetLink.closest("div[role='dialog']");
         if (modal) {
           const scrollable = Array.from(modal.querySelectorAll("*")).find(el =>
@@ -196,7 +186,6 @@ if (typeof window.__igExtractorLoaded === "undefined") {
           console.log("[IGExtractor] Máximo de tentativas sem crescimento — fim");
           break;
         }
-        // FIX: backoff progressivo: espera mais a cada tentativa frustrada
         await sleep(2000 + stale * 500);
       } else {
         stale = 0;
@@ -210,7 +199,6 @@ if (typeof window.__igExtractorLoaded === "undefined") {
     RESERVED.forEach(r => _captured.delete(r));
     _captured.delete("");
 
-    // Retorna exatamente `targetCount` (ou menos se não houver mais)
     return Array.from(_captured).slice(0, targetCount);
   }
 
@@ -226,10 +214,8 @@ if (typeof window.__igExtractorLoaded === "undefined") {
     });
     if (!text.trim()) text = document.body.innerText || "";
 
-    // 1. wa.me links — mais confiáveis
     const waNumbers = (text.match(/wa\.me\/(\d{8,15})/g) || []).map(l => l.replace("wa.me/",""));
 
-    // 2. Números brasileiros formatados: (XX) XXXXX-XXXX ou (XX) XXXX-XXXX
     const formatted = [];
     const fmtRegex = /(?:\+55[\s.-]?)?\((\d{2})\)[\s.-]?(\d{4,5})[\s.-]?(\d{4})/g;
     let m;
@@ -240,7 +226,6 @@ if (typeof window.__igExtractorLoaded === "undefined") {
       }
     }
 
-    // 3. +55 seguido de número completo
     const withCountry = [];
     const ccRegex = /\+55[\s.-]?(\d{2})[\s.-]?(\d{4,5})[\s.-]?(\d{4})/g;
     while ((m = ccRegex.exec(text)) !== null) {
