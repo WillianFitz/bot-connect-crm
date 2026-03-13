@@ -4,12 +4,42 @@ async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function scrollFollowersList(targetCount) {
-  // Tenta rolar o diálogo de seguidores (se existir), senão rola a página inteira.
-  const dialog = document.querySelector("div[role='dialog'] div[role='presentation']") ||
-    document.querySelector("div[role='dialog'] div[style*='overflow']");
+async function ensureFollowersDialog() {
+  // Tenta encontrar um diálogo aberto de seguidores
+  let dialogRoot = document.querySelector("div[role='dialog']");
+  if (dialogRoot) return dialogRoot;
 
-  let container = dialog || document.scrollingElement || document.body;
+  // Se não houver, tenta clicar no link/botão de "Seguidores"/"Followers"
+  const candidates = Array.from(
+    document.querySelectorAll("a, button, span"),
+  ).filter((el) => {
+    const text = (el.textContent || "").toLowerCase();
+    return text.includes("seguidores") || text.includes("followers");
+  });
+
+  const trigger = candidates[0];
+  if (trigger) {
+    trigger.click();
+    // espera o diálogo aparecer
+    for (let i = 0; i < 20; i++) {
+      await sleep(500);
+      dialogRoot = document.querySelector("div[role='dialog']");
+      if (dialogRoot) break;
+    }
+  }
+
+  return dialogRoot;
+}
+
+async function scrollFollowersList(targetCount) {
+  const dialogRoot = await ensureFollowersDialog();
+  const dialogScroll =
+    (dialogRoot &&
+      (dialogRoot.querySelector("div[role='presentation']") ||
+        dialogRoot.querySelector("div[style*='overflow']"))) ||
+    null;
+
+  let container = dialogScroll || document.scrollingElement || document.body;
   let previousCount = 0;
 
   for (let i = 0; i < 40; i++) {
@@ -87,17 +117,27 @@ async function scanProfileForPhones() {
   const regex =
     /(55)?\s*\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4}/g;
   const matches = text.match(regex) || [];
-  if (!matches.length) {
-    return "";
+  let phone = "";
+  if (matches.length) {
+    const cleaned = matches.map((m) => m.replace(/[^\d]/g, ""));
+    const unique = Array.from(new Set(cleaned));
+    phone = unique[0] || "";
   }
 
-  // Normaliza: remove espaços e caracteres supérfluos
-  const cleaned = matches.map((m) =>
-    m.replace(/[^\d]/g, ""),
+  // Nome exibido no perfil (display name)
+  let displayName = "";
+  const nameCandidates = document.querySelectorAll(
+    "header h2, header h1, header span[dir='auto']",
   );
-  // Remove duplicados
-  const unique = Array.from(new Set(cleaned));
-  return unique[0] || "";
+  for (const el of nameCandidates) {
+    const t = (el.textContent || "").trim();
+    if (t && t.length > 1) {
+      displayName = t;
+      break;
+    }
+  }
+
+  return { phone, displayName };
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -119,9 +159,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "SCAN_PROFILE") {
-    scanProfileForPhones()
-      .then((phone) => {
-        sendResponse({ ok: true, phone });
+    scanProfileForPhones(message.username)
+      .then((result) => {
+        sendResponse({ ok: true, phone: result.phone, displayName: result.displayName });
       })
       .catch((err) => {
         console.error("Erro ao varrer perfil:", err);

@@ -270,7 +270,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         const leads = p.leads.map((l) => ({
-          company: l.username,
+          company: l.name || l.username,
           phone: l.phone || "",
         }));
 
@@ -343,9 +343,9 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      const rows = [["username", "phone"]];
+      const rows = [["username", "name", "phone"]];
       p.leads.forEach((lead) => {
-        rows.push([lead.username || "", lead.phone || ""]);
+        rows.push([lead.username || "", lead.name || "", lead.phone || ""]);
       });
 
       const csv = rows
@@ -389,7 +389,7 @@ function scanProfilesSequential(
 ) {
   chrome.storage.sync.get(["profiles"], (data) => {
     const allProfiles = data.profiles || profiles;
-    const p = allProfiles[key];
+      const p = allProfiles[key];
     if (!p || !Array.isArray(p.usernames) || p.usernames.length === 0) {
       setStatus(
         "captureStatus",
@@ -446,11 +446,13 @@ function scanProfilesSequential(
                 if (resp && resp.ok) {
                   leads.push({
                     username,
+                    name: resp.displayName || "",
                     phone: resp.phone || "",
                   });
                 } else {
                   leads.push({
                     username,
+                    name: "",
                     phone: "",
                   });
                 }
