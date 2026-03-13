@@ -100,11 +100,17 @@ if (typeof window.__igExtractorLoaded === "undefined") {
   }
 
   async function collectUsernames(targetCount, baseProfile) {
+    // Sempre começa uma rodada ZERANDO o set local e marcadores,
+    // assim respeita exatamente o limite definido nesta captura.
+    _captured.clear();
+    _lastPageHasMore = true;
+    _lastPageTs = Date.now();
+    _userId = null;
+
     injectPageScript();
     await sleep(1500);
 
-    // FIX: targetCount agora é sempre relativo ao que este Set local precisa capturar
-    // O dashboard passa `limit` (quantidade desta rodada), não o acumulado.
+    // targetCount é relativo a ESTA rodada (limit)
     console.log("[IGExtractor] Iniciando para", baseProfile, "target:", targetCount);
 
     // 1. Abre modal
