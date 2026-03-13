@@ -7,11 +7,18 @@
     "storage",
     "scripting",
     "activeTab",
+    "tabs",
     "downloads"
   ],
   "host_permissions": [
     "https://www.instagram.com/*",
     "http://www.instagram.com/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["injected.js"],
+      "matches": ["https://www.instagram.com/*", "http://www.instagram.com/*"]
+    }
   ],
   "action": {
     "default_title": "Extrator Instagram"
@@ -32,4 +39,3 @@
     }
   ]
 }
-
