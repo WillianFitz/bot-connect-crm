@@ -7,14 +7,16 @@
     "storage",
     "scripting",
     "activeTab",
-    "downloads"
+    "downloads",
+    "tabs"
   ],
   "host_permissions": [
     "https://www.instagram.com/*",
     "http://www.instagram.com/*"
   ],
   "action": {
-    "default_title": "Extrator Instagram"
+    "default_title": "Extrator Instagram",
+    "default_popup": "popup.html"
   },
   "options_page": "dashboard.html",
   "background": {
