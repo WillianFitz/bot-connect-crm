@@ -63,10 +63,25 @@
       .status-err {
         color: #dc2626;
       }
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+      .link {
+        font-size: 11px;
+        color: #2563eb;
+        cursor: pointer;
+        text-decoration: underline;
+      }
     </style>
   </head>
   <body>
-    <h1>Extrator Instagram</h1>
+    <div class="header">
+      <h1>Extrator Instagram</h1>
+      <span id="openDashboard" class="link">Abrir dashboard</span>
+    </div>
 
     <label for="tenantId">Tenant ID</label>
     <input id="tenantId" type="text" placeholder="Ex.: 1" />
@@ -101,12 +116,6 @@
     <div class="row" style="margin-top: 6px">
       <button id="send" class="btn-secondary">Enviar leads para o SaaS</button>
     </div>
-
-    <p class="small">
-      1. Faça login normalmente no Instagram Web (resolva o 2FA se pedir).<br />
-      2. Abra a lista de seguidores do perfil desejado.<br />
-      3. Clique em “Iniciar/Continuar”.
-    </p>
 
     <p id="progress" class="small"></p>
     <p id="status" class="status"></p>

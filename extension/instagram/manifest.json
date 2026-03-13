@@ -16,6 +16,7 @@
     "default_popup": "popup.html",
     "default_title": "Extrator Instagram"
   },
+  "options_page": "dashboard.html",
   "background": {
     "service_worker": "background.js",
     "type": "module"

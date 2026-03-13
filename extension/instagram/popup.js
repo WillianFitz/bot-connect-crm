@@ -64,9 +64,16 @@ document.getElementById("start").addEventListener("click", () => {
   chrome.storage.sync.get(
     ["tenantId", "extensionToken", "webhookUrl", "profiles"],
     (data) => {
-      const tenantId = data.tenantId?.trim();
-      const extensionToken = data.extensionToken?.trim();
-      const webhookUrl = data.webhookUrl?.trim();
+      // Sempre prioriza o que está nos campos da tela
+      const tenantId =
+        document.getElementById("tenantId").value.trim() ||
+        data.tenantId?.trim();
+      const extensionToken =
+        document.getElementById("token").value.trim() ||
+        data.extensionToken?.trim();
+      const webhookUrl =
+        document.getElementById("webhookUrl").value.trim() ||
+        data.webhookUrl?.trim();
       const profile = document.getElementById("profile").value.trim();
       const limit = parseInt(
         document.getElementById("limit").value.trim() || "0",
@@ -169,9 +176,15 @@ document.getElementById("send").addEventListener("click", () => {
   chrome.storage.sync.get(
     ["tenantId", "extensionToken", "webhookUrl", "profiles"],
     async (data) => {
-      const tenantId = data.tenantId?.trim();
-      const extensionToken = data.extensionToken?.trim();
-      const webhookUrl = data.webhookUrl?.trim();
+      const tenantId =
+        document.getElementById("tenantId").value.trim() ||
+        data.tenantId?.trim();
+      const extensionToken =
+        document.getElementById("token").value.trim() ||
+        data.extensionToken?.trim();
+      const webhookUrl =
+        document.getElementById("webhookUrl").value.trim() ||
+        data.webhookUrl?.trim();
       const profile = document.getElementById("profile").value.trim();
 
       if (!tenantId || !extensionToken || !webhookUrl) {
@@ -229,6 +242,11 @@ document.getElementById("send").addEventListener("click", () => {
       }
     },
   );
+});
+
+// Abre dashboard em nova aba
+document.getElementById("openDashboard").addEventListener("click", () => {
+  chrome.runtime.openOptionsPage();
 });
 
 

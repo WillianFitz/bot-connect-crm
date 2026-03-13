@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <title>Dashboard - Extrator Instagram</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        margin: 16px;
+        background: #f3f4f6;
+      }
+      h1 {
+        font-size: 20px;
+        margin-bottom: 4px;
+      }
+      h2 {
+        font-size: 16px;
+        margin: 16px 0 8px;
+      }
+      .card {
+        background: white;
+        border-radius: 8px;
+        padding: 12px 16px;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+        margin-bottom: 12px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      th,
+      td {
+        padding: 6px 8px;
+        border-bottom: 1px solid #e5e7eb;
+        text-align: left;
+      }
+      th {
+        font-weight: 600;
+        background: #f9fafb;
+      }
+      .small {
+        font-size: 12px;
+        color: #6b7280;
+      }
+      .badge {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 999px;
+        font-size: 10px;
+        background: #e5e7eb;
+        color: #111827;
+      }
+      .badge-ok {
+        background: #dcfce7;
+        color: #166534;
+      }
+    </style>
+  </head>
+  <body>
+    <div>
+      <h1>Dashboard do Extrator Instagram</h1>
+      <p class="small">
+        Acompanhe o progresso dos perfis e quantos seguidores já foram
+        capturados por este navegador.
+      </p>
+    </div>
+
+    <div class="card">
+      <h2>Resumo</h2>
+      <p id="summary" class="small">Carregando...</p>
+    </div>
+
+    <div class="card">
+      <h2>Perfis capturados neste navegador</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Tenant</th>
+            <th>Perfil</th>
+            <th>Total capturado</th>
+            <th>Última posição</th>
+          </tr>
+        </thead>
+        <tbody id="profilesBody">
+          <tr>
+            <td colspan="4" class="small">Nenhum dado ainda.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <script src="dashboard.js"></script>
+  </body>
+</html>
+
