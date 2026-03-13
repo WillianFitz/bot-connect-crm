@@ -5,23 +5,31 @@ async function sleep(ms) {
 }
 
 async function ensureFollowersDialog() {
-  // Tenta encontrar um diálogo aberto de seguidores
+  // 1) Se o diálogo já estiver aberto, usa ele
   let dialogRoot = document.querySelector("div[role='dialog']");
   if (dialogRoot) return dialogRoot;
 
-  // Se não houver, tenta clicar no link/botão de "Seguidores"/"Followers"
-  const candidates = Array.from(
-    document.querySelectorAll("a, button, span, div"),
-  ).filter((el) => {
-    const text = (el.textContent || "").toLowerCase();
-    return text.includes("seguidores") || text.includes("followers");
-  });
+  // 2) Tenta clicar no link de seguidores pelo href (mais confiável)
+  //    geralmente algo como "/jeferson_fitz/followers/"
+  let trigger =
+    document.querySelector("a[href$='/followers/']") ||
+    document.querySelector("a[href*='/followers/']");
 
-  const trigger = candidates[0];
+  // 3) Se não achar por href, tenta por texto "seguidores"/"followers"
+  if (!trigger) {
+    const candidates = Array.from(
+      document.querySelectorAll("a, button, span, div"),
+    ).filter((el) => {
+      const text = (el.textContent || "").toLowerCase();
+      return text.includes("seguidores") || text.includes("followers");
+    });
+    trigger = candidates[0] || null;
+  }
+
   if (trigger) {
     trigger.click();
     // espera o diálogo aparecer
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 30; i++) {
       await sleep(500);
       dialogRoot = document.querySelector("div[role='dialog']");
       if (dialogRoot) break;
