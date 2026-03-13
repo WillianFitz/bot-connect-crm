@@ -100,6 +100,7 @@ export default function Tools() {
       (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ||
       window.location.origin.replace(/\/$/, "");
     const webhookUrl = `${apiBase}/api/tools/instagram/push-leads`;
+    const frontBase = window.location.origin.replace(/\/$/, "");
     setDownloadExtensionPending(true);
     try {
       const zip = new JSZip();
@@ -112,7 +113,7 @@ export default function Tools() {
         })
       );
       for (const name of EXTENSION_FILES) {
-        const res = await fetch(`${base}/extensions/instagram/${name}`);
+        const res = await fetch(`${frontBase}/extensions/instagram/${name}`);
         if (res.ok) {
           const blob = await res.blob();
           zip.file(name, blob);
