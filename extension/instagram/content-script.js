@@ -133,10 +133,9 @@ if (typeof window.__igExtractorLoaded === "undefined") {
 
     if (!dlg) throw new Error("Modal de seguidores não abriu.");
 
-    // 2. Aguarda primeiro batch
+    // 2. Tenta aguardar primeiro batch, mas não falha se ainda tiver 0
     await waitForGrowth(0, 10000);
     console.log("[IGExtractor] Batch inicial:", _captured.size, "users");
-    if (_captured.size === 0) throw new Error("Nenhum seguidor capturado.");
 
     // 3. Loop: scrollIntoView no último link para acionar o IntersectionObserver do Instagram
     // FIX: stale aumentado de 6 para 10 — janela minimizada precisa de mais tentativas
