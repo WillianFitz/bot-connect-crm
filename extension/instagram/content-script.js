@@ -5,19 +5,13 @@ async function sleep(ms) {
 }
 
 async function ensureFollowersDialog() {
-  // Se já estamos na rota /followers/, não abrimos popup,
-  // pois a lista já está em página própria.
-  if (location.pathname.endsWith("/followers/")) {
-    return null;
-  }
-
   // Tenta encontrar um diálogo aberto de seguidores
   let dialogRoot = document.querySelector("div[role='dialog']");
   if (dialogRoot) return dialogRoot;
 
   // Se não houver, tenta clicar no link/botão de "Seguidores"/"Followers"
   const candidates = Array.from(
-    document.querySelectorAll("a, button, span"),
+    document.querySelectorAll("a, button, span, div"),
   ).filter((el) => {
     const text = (el.textContent || "").toLowerCase();
     return text.includes("seguidores") || text.includes("followers");
@@ -67,75 +61,31 @@ function extractUsernamesFromDialog(dialogRoot, baseProfile) {
   return Array.from(set);
 }
 
-function extractUsernamesFromPage(baseProfile) {
-  const set = new Set();
-
-  // Varre a página toda em /followers/ procurando URLs do tipo "/username/"
-  const links = document.querySelectorAll("a[href^='/']");
-
-  links.forEach((link) => {
-    const href = link.getAttribute("href") || "";
-    // tenta extrair padrão "/username/" (ignorando query/fragmentos)
-    const match = href.match(/^\/([^\/?#]+)\/?/);
-    if (!match) return;
-    const username = match[1].trim();
-    if (!username) return;
-
-    const lower = username.toLowerCase();
-    // ignora rotas conhecidas que não são usuários
-    const blockedPrefixes = [
-      "accounts",
-      "explore",
-      "reels",
-      "direct",
-      "stories",
-      "about",
-      "p",
-      "reel",
-      "tv",
-    ];
-    if (blockedPrefixes.some((p) => lower.startsWith(p))) return;
-
-    if (baseProfile && lower === baseProfile.toLowerCase()) return;
-
-    set.add(username);
-  });
-
-  return Array.from(set);
-}
-
 async function scrollFollowersList(targetCount, baseProfile) {
   const dialogRoot = await ensureFollowersDialog();
-  const hasDialog = !!dialogRoot;
+  if (!dialogRoot) {
+    throw new Error(
+      "Não foi possível abrir a lista de seguidores. Clique em 'Seguidores' e tente novamente.",
+    );
+  }
 
   const dialogScroll =
-    (dialogRoot &&
-      (dialogRoot.querySelector("div[role='presentation']") ||
-        dialogRoot.querySelector("div[style*='overflow']"))) ||
-    null;
+    dialogRoot.querySelector("div[role='presentation'] [style*='overflow']") ||
+    dialogRoot.querySelector("div[role='presentation']") ||
+    dialogRoot.querySelector("div[style*='overflow']") ||
+    dialogRoot;
 
-  let container;
-  if (hasDialog && dialogScroll) {
-    container = dialogScroll;
-  } else {
-    // modo página /followers/
-    container = document.scrollingElement || document.body;
-  }
+  const container = dialogScroll;
 
   let previousCount = 0;
 
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 60; i++) {
     container.scrollBy(0, 800);
-    await sleep(1000);
+    await sleep(800);
 
-    const usernames = hasDialog
-      ? extractUsernamesFromDialog(dialogRoot, baseProfile)
-      : extractUsernamesFromPage(baseProfile);
+    const usernames = extractUsernamesFromDialog(dialogRoot, baseProfile);
 
-    // Se estiver usando o popup, podemos parar ao atingir o targetCount.
-    // No modo página (/followers/), continuamos até não carregar mais nada
-    // para garantir que todos os seguidores possíveis foram listados.
-    if (hasDialog && usernames.length >= targetCount) {
+    if (usernames.length >= targetCount) {
       break;
     }
     if (usernames.length === previousCount) {
@@ -154,12 +104,8 @@ async function captureFollowersRange(startIndex, targetCount, profile) {
   const desiredTotal = targetCount;
   await scrollFollowersList(desiredTotal, profile);
 
-  const dialogRoot = document.querySelector("div[role='dialog']");
-  const hasDialog = !!dialogRoot;
-
-  const allUsernames = hasDialog
-    ? extractUsernamesFromDialog(dialogRoot, profile)
-    : extractUsernamesFromPage(profile);
+  const dialogRoot = await ensureFollowersDialog();
+  const allUsernames = extractUsernamesFromDialog(dialogRoot, profile);
 
   return {
     usernames: allUsernames,
