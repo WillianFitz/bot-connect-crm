@@ -204,6 +204,23 @@ function pushLead(resp, username, leads) {
    INIT
    ══════════════════════════════════════════════════════════ */
 document.addEventListener("DOMContentLoaded", () => {
+  /* ── Auto-config via URL params do SaaS ──
+     O SaaS pode abrir: dashboard.html?tid=X&tok=Y&wh=https://...
+     Isso configura a extensão automaticamente sem intervenção do usuário. */
+  (function autoConfigFromURL() {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const tid = p.get("tid") || p.get("tenantId");
+      const tok = p.get("tok") || p.get("token") || p.get("extensionToken");
+      const wh  = p.get("wh")  || p.get("webhook") || p.get("webhookUrl");
+      if (tid && tok && wh) {
+        chrome.storage.local.set({ tenantId: tid, extensionToken: tok, webhookUrl: decodeURIComponent(wh) }, () => {
+          console.log("[IGExtractor] Config automática recebida via URL params.");
+          history.replaceState({}, "", location.pathname); // limpa URL para não expor token
+        });
+      }
+    } catch(e) {}
+  })();
 
   /* Navegação */
   document.querySelectorAll(".nav-item").forEach(btn => {

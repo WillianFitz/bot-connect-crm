@@ -18,12 +18,14 @@ if (typeof window.__igExtractorLoaded === "undefined") {
     }
   });
 
+  // Injeta injected.js no contexto da página (necessário para interceptar fetch/XHR do Instagram)
+  // Usa window.__igFetchPatched como guard real — não depende do elemento no DOM
   function injectPageScript() {
-    if (document.getElementById("__ig_injected")) return;
+    if (window.__igFetchPatched) return; // já interceptado, não precisa reinjetar
     const s = document.createElement("script");
-    s.id = "__ig_injected";
     s.src = chrome.runtime.getURL("injected.js");
-    s.onload = () => s.remove();
+    s.onload  = () => { console.log("[IGExtractor] injected.js carregado OK"); s.remove(); };
+    s.onerror = () => { console.error("[IGExtractor] ERRO ao carregar injected.js — verifique web_accessible_resources no manifest"); };
     (document.head || document.documentElement || document.body).appendChild(s);
   }
 
@@ -86,7 +88,8 @@ if (typeof window.__igExtractorLoaded === "undefined") {
       .filter(a => {
         const href = a.getAttribute("href") || "";
         if (!href || PAGE_HREFS.has(href)) return false;
-        if (href.includes("stories") || href.includes("explore") || href.includes("followers") || href.includes("following")) return false;
+        if (href.includes("stories") || href.includes("explore") ||
+            href.includes("followers") || href.includes("following")) return false;
         return /^\/[^/]+\/?$/.test(href);
       });
     const seen = new Map();
@@ -95,23 +98,30 @@ if (typeof window.__igExtractorLoaded === "undefined") {
   }
 
   async function collectUsernames(targetCount, baseProfile) {
-    // FIX CRÍTICO: zera o set e marcadores a cada rodada nova
+    // Zera tudo a cada rodada
     _captured.clear();
     _lastPageHasMore = true;
     _lastPageTs = Date.now();
     _userId = null;
 
+    // Injeta e aguarda o interceptor estar ativo
     injectPageScript();
-    await sleep(1500);
+    await sleep(2000); // tempo para injected.js carregar e patchear o fetch
 
-    console.log("[IGExtractor] Iniciando para", baseProfile, "target:", targetCount);
+    // Se não carregou, tenta novamente
+    if (!window.__igFetchPatched) {
+      console.warn("[IGExtractor] injected.js não carregou na primeira tentativa, retentando...");
+      injectPageScript();
+      await sleep(2000);
+    }
 
-    // 1. Aguarda página carregar e descarta popups
+    console.log("[IGExtractor] Iniciando para", baseProfile, "target:", targetCount,
+                "| fetchPatched:", !!window.__igFetchPatched);
+
     await waitFor("header", 12000);
     await sleep(1500);
     await dismissPopups();
 
-    // 2. Abre modal de seguidores
     let dlg = document.querySelector("div[role='dialog']");
     if (!dlg) {
       const trigger = await waitFor(() => {
@@ -133,17 +143,15 @@ if (typeof window.__igExtractorLoaded === "undefined") {
 
     if (!dlg) throw new Error("Modal de seguidores não abriu.");
 
-    // 3. Aguarda primeiro batch (não falha se vier 0 — GraphQL pode demorar)
     await waitForGrowth(0, 10000);
     console.log("[IGExtractor] Batch inicial:", _captured.size, "users");
 
-    // 4. Loop de scroll para carregar mais seguidores
     let stale = 0;
     const MAX_STALE = 10;
 
     while (_captured.size < targetCount) {
       if (!_lastPageHasMore) {
-        console.log("[IGExtractor] Instagram sinalizou fim da lista (hasMore=false)");
+        console.log("[IGExtractor] Fim da lista (hasMore=false)");
         break;
       }
 
@@ -167,25 +175,22 @@ if (typeof window.__igExtractorLoaded === "undefined") {
           );
           if (scrollable) scrollable.scrollTop = scrollable.scrollHeight;
         }
-        console.log(`[IGExtractor] scrollIntoView | links: ${links.length} | total: ${_captured.size}/${targetCount}`);
+        console.log(`[IGExtractor] scroll | links: ${links.length} | total: ${_captured.size}/${targetCount}`);
       } else {
         document.documentElement.scrollTop = document.documentElement.scrollHeight;
-        console.log(`[IGExtractor] scroll HTML fallback | total: ${_captured.size}/${targetCount}`);
+        console.log(`[IGExtractor] scroll fallback | total: ${_captured.size}/${targetCount}`);
       }
 
       const pageArrived = await waitForNextPage(12000);
       await sleep(900 + Math.floor(Math.random() * 600));
 
       const grew = _captured.size > prevSize;
-      console.log(`[IGExtractor] | grew: ${grew} | pageArrived: ${pageArrived} | total: ${_captured.size}`);
+      console.log(`[IGExtractor] grew: ${grew} | pageArrived: ${pageArrived} | total: ${_captured.size}`);
 
       if (!grew && !pageArrived) {
         stale++;
         console.log(`[IGExtractor] stale: ${stale}/${MAX_STALE}`);
-        if (stale >= MAX_STALE) {
-          console.log("[IGExtractor] Máximo de tentativas sem crescimento — fim");
-          break;
-        }
+        if (stale >= MAX_STALE) { console.log("[IGExtractor] Max stale — fim"); break; }
         await sleep(2000 + stale * 500);
       } else {
         stale = 0;
@@ -221,32 +226,28 @@ if (typeof window.__igExtractorLoaded === "undefined") {
     let m;
     while ((m = fmtRegex.exec(text)) !== null) {
       const ddd = parseInt(m[1], 10);
-      if (ddd >= 11 && ddd <= 99) {
+      if (ddd >= 11 && ddd <= 99)
         formatted.push((m[1] + m[2] + m[3]).replace(/\D/g, ""));
-      }
     }
 
     const withCountry = [];
     const ccRegex = /\+55[\s.-]?(\d{2})[\s.-]?(\d{4,5})[\s.-]?(\d{4})/g;
-    while ((m = ccRegex.exec(text)) !== null) {
+    while ((m = ccRegex.exec(text)) !== null)
       withCountry.push(("55" + m[1] + m[2] + m[3]).replace(/\D/g, ""));
-    }
 
-    const allCandidates = [...waNumbers, ...withCountry, ...formatted];
     const cleaned = Array.from(new Set(
-      allCandidates
+      [...waNumbers, ...withCountry, ...formatted]
         .map(n => n.replace(/\D/g, ""))
         .filter(n => n.length >= 10 && n.length <= 13)
         .filter(n => !/^(19|20)\d{2}$/.test(n))
     ));
-    const phone = cleaned[0] || "";
 
     let displayName = "";
     for (const el of document.querySelectorAll("header h1,header h2,header span[dir='auto'],section h1,section h2")) {
       const t = (el.textContent || "").trim();
       if (t && t.length > 1 && t.length < 80) { displayName = t; break; }
     }
-    return { phone, displayName };
+    return { phone: cleaned[0] || "", displayName };
   }
 
   chrome.runtime.onMessage.addListener((msg, _, sendResponse) => {
