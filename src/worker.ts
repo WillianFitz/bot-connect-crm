@@ -59,7 +59,7 @@ async function hashPassword(password: string): Promise<string> {
 }
 
 function getEvolutionBaseUrl(env: Env): string {
-  const raw = env.EVOLUTION_API_URL || "";
+  const raw = (env.EVOLUTION_API_URL || "").trim().replace(/\/+$/, "");
   if (!raw) return "";
   if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
   return `https://${raw}`;
@@ -858,7 +858,7 @@ async function sendWhatsAppMessage(
   number: string,
   text: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  const baseUrl = (env.EVOLUTION_API_URL || "").replace(/\/$/, "");
+  const baseUrl = getEvolutionBaseUrl(env);
   if (!baseUrl || !env.EVOLUTION_API_KEY) {
     return { ok: false, error: "Evolution API não configurada" };
   }
