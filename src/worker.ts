@@ -830,6 +830,216 @@ async function handleAIAgent(
   return json({ resposta: content });
 }
 
+async function generateDisparoMessage(env: Env, tenantId: string, company: string): Promise<string> {
+  const row = await env.DB.prepare(
+    "SELECT base_prompt, default_message FROM agents WHERE tenant_id = ? AND id = 'disparo' LIMIT 1",
+  )
+    .bind(tenantId)
+    .first<{ base_prompt?: string; default_message?: string }>();
+  const basePrompt =
+    row?.base_prompt ||
+    `Você é um agente de disparo automático. Gere uma saudação curta e natural para o lead. Responda EXCLUSIVAMENTE em JSON: {"mensagem": "texto"}.`;
+  const userPrompt = `Gere uma mensagem de abertura para este lead: nome/empresa = "${company}". Uma única mensagem curta e humana.`;
+  try {
+    const content = await callOpenAI(env, [
+      { role: "system", content: basePrompt },
+      { role: "user", content: userPrompt },
+    ]);
+    const parsed = JSON.parse(content) as { mensagem?: string };
+    return (parsed?.mensagem || content).trim() || (row?.default_message || "Olá! Tudo bem?");
+  } catch {
+    return (row?.default_message || "Olá! Tudo bem?").trim();
+  }
+}
+
+async function sendWhatsAppMessage(
+  env: Env,
+  tenantId: string,
+  number: string,
+  text: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const baseUrl = (env.EVOLUTION_API_URL || "").replace(/\/$/, "");
+  if (!baseUrl || !env.EVOLUTION_API_KEY) {
+    return { ok: false, error: "Evolution API não configurada" };
+  }
+  const body = JSON.stringify({ number, text });
+  try {
+    const res = await fetch(`${baseUrl}/message/sendText/${tenantId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: env.EVOLUTION_API_KEY },
+      body,
+    });
+    if (!res.ok) {
+      let errMsg = res.statusText;
+      try {
+        const data = await res.json();
+        if (Array.isArray(data?.response?.message) && data.response.message[0])
+          errMsg = data.response.message[0];
+      } catch {
+        // ignore
+      }
+      return { ok: false, error: errMsg };
+    }
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || "Erro de rede" };
+  }
+}
+
+const BR_DAY_MAP: Record<string, string> = { dom: "Dom", seg: "Seg", ter: "Ter", qua: "Qua", qui: "Qui", sex: "Sex", sáb: "Sáb", sab: "Sáb" };
+
+async function handleCampaignRun(env: Env, tenantId: string): Promise<Response> {
+  const now = new Date();
+  const dayNames = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+  let nowTimeStr: string;
+  let todayName: string;
+  try {
+    const timeFmt = new Intl.DateTimeFormat("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+    const dayFmt = new Intl.DateTimeFormat("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+      weekday: "short",
+    });
+    nowTimeStr = timeFmt.format(now).replace(/\s/g, "");
+    const dayStr = dayFmt.format(now).toLowerCase().replace(/\./g, "");
+    todayName = BR_DAY_MAP[dayStr] || dayNames[now.getUTCDay()];
+  } catch {
+    const utcHour = now.getUTCHours();
+    const utcMin = now.getUTCMinutes();
+    nowTimeStr = `${String(utcHour).padStart(2, "0")}:${String(utcMin).padStart(2, "0")}`;
+    todayName = dayNames[now.getUTCDay()];
+  }
+
+  const campaigns = await env.DB.prepare(
+    "SELECT id, name, time_from, time_to, days_blocked, delay_min, delay_max FROM campaigns WHERE tenant_id = ? AND status = 'active'",
+  )
+    .bind(tenantId)
+    .all<{ id: number; name: string; time_from: string; time_to: string; days_blocked: string; delay_min: number; delay_max: number }>();
+
+  const list = (campaigns.results || []) as Array<{
+    id: number;
+    name: string;
+    time_from: string;
+    time_to: string;
+    days_blocked: string;
+    delay_min: number;
+    delay_max: number;
+  }>;
+
+  let processed = 0;
+  const runResult: { campaignId: number; sent: number; errors: number }[] = [];
+
+  for (const camp of list) {
+    let blocked: string[] = [];
+    try {
+      blocked = JSON.parse(camp.days_blocked || "[]");
+    } catch {
+      blocked = [];
+    }
+    if (blocked.includes(todayName)) continue;
+    const from = (camp.time_from || "00:00").slice(0, 5);
+    const to = (camp.time_to || "23:59").slice(0, 5);
+    if (nowTimeStr < from || nowTimeStr > to) continue;
+
+    const pending = await env.DB.prepare(
+      `SELECT l.id, l.company, l.phone FROM leads l
+       WHERE l.tenant_id = ?
+         AND l.phone IS NOT NULL AND trim(l.phone) != ''
+         AND NOT EXISTS (SELECT 1 FROM campaign_sends cs WHERE cs.campaign_id = ? AND cs.lead_id = l.id)
+       ORDER BY l.id ASC LIMIT 5`,
+    )
+      .bind(tenantId, camp.id)
+      .all<{ id: number; company: string; phone: string }>();
+
+    const rows = (pending.results || []) as Array<{ id: number; company: string; phone: string }>;
+    let sent = 0;
+    let errs = 0;
+    let noWa = 0;
+
+    for (const lead of rows) {
+      const phone = normalizeBrazilNumber(lead.phone || "");
+      if (!phone) {
+        noWa++;
+        await env.DB.prepare(
+          "INSERT OR IGNORE INTO campaign_sends (campaign_id, lead_id, status, error_message) VALUES (?, ?, 'error', ?)",
+        )
+          .bind(camp.id, lead.id, "Sem telefone")
+          .run();
+        await env.DB.prepare(
+          "UPDATE campaigns SET no_whatsapp = no_whatsapp + 1 WHERE id = ? AND tenant_id = ?",
+        )
+          .bind(camp.id, tenantId)
+          .run();
+        processed++;
+        continue;
+      }
+
+      let text: string;
+      try {
+        text = await generateDisparoMessage(env, tenantId, lead.company || lead.phone);
+      } catch {
+        text = "Olá! Tudo bem?";
+      }
+
+      const result = await sendWhatsAppMessage(env, tenantId, phone, text);
+
+      if (result.ok) {
+        await env.DB.prepare(
+          "INSERT OR IGNORE INTO campaign_sends (campaign_id, lead_id, status) VALUES (?, ?, 'sent')",
+        )
+          .bind(camp.id, lead.id)
+          .run();
+        await env.DB.prepare(
+          "UPDATE campaigns SET sent = sent + 1 WHERE id = ? AND tenant_id = ?",
+        )
+          .bind(camp.id, tenantId)
+          .run();
+        sent++;
+      } else {
+        await env.DB.prepare(
+          "INSERT OR IGNORE INTO campaign_sends (campaign_id, lead_id, status, error_message) VALUES (?, ?, 'error', ?)",
+        )
+          .bind(camp.id, lead.id, result.error || "Erro")
+          .run();
+        await env.DB.prepare(
+          "UPDATE campaigns SET errors = errors + 1 WHERE id = ? AND tenant_id = ?",
+        )
+          .bind(camp.id, tenantId)
+          .run();
+        errs++;
+      }
+      processed++;
+    }
+
+    const totalSent = await env.DB.prepare(
+      "SELECT COUNT(*) as c FROM campaign_sends WHERE campaign_id = ? AND status = 'sent'",
+    )
+      .bind(camp.id)
+      .first<{ c: number }>();
+    const totalLeads = await env.DB.prepare(
+      "SELECT total_leads FROM campaigns WHERE id = ? AND tenant_id = ?",
+    )
+      .bind(camp.id, tenantId)
+      .first<{ total_leads: number }>();
+    const total = Number(totalLeads?.total_leads ?? 0);
+    if (total > 0 && Number(totalSent?.c ?? 0) >= total) {
+      await env.DB.prepare(
+        "UPDATE campaigns SET status = 'completed' WHERE id = ? AND tenant_id = ?",
+      )
+        .bind(camp.id, tenantId)
+        .run();
+    }
+
+    runResult.push({ campaignId: camp.id, sent, errors: errs });
+  }
+
+  return json({ ok: true, processed, campaigns: runResult });
+}
+
 async function handleCampaigns(request: Request, env: Env, method: string, url: URL) {
   const tenantId = getTenantId(request);
   await ensureTenant(env, tenantId);
@@ -838,6 +1048,11 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
   const idParam = parts.length >= 3 ? parts[2] : null;
   const isSingle = idParam && /^\d+$/.test(idParam);
   const campaignId = isSingle ? Number(idParam) : null;
+
+  if (method === "POST" && parts[2] === "run") {
+    const result = await handleCampaignRun(env, tenantId);
+    return result;
+  }
 
   if (method === "GET") {
     if (isSingle && campaignId) {
@@ -909,6 +1124,7 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
       time_from,
       time_to,
       days_blocked,
+      status: newStatus,
     } = body;
 
     const existing = await env.DB.prepare(
@@ -943,6 +1159,20 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
     if (days_blocked !== undefined) {
       updates.push("days_blocked = ?");
       params.push(JSON.stringify(Array.isArray(days_blocked) ? days_blocked : []));
+    }
+    if (newStatus !== undefined && ["draft", "active", "paused", "completed"].includes(String(newStatus))) {
+      updates.push("status = ?");
+      params.push(String(newStatus));
+      if (newStatus === "active") {
+        const countRow = await env.DB.prepare(
+          "SELECT COUNT(*) as total FROM leads WHERE tenant_id = ? AND phone IS NOT NULL AND trim(phone) != ''",
+        )
+          .bind(tenantId)
+          .first<{ total: number }>();
+        const total = Number(countRow?.total ?? 0);
+        updates.push("total_leads = ?");
+        params.push(total);
+      }
     }
     if (updates.length === 0) return json({ error: "Nenhum campo para atualizar" }, { status: 400 });
     params.push(campaignId, tenantId);

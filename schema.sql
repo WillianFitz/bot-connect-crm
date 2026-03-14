@@ -123,6 +123,18 @@ CREATE TABLE IF NOT EXISTS campaigns (
 
 CREATE INDEX IF NOT EXISTS idx_campaigns_tenant ON campaigns(tenant_id);
 
+-- Controle de envios por campanha (evita reenviar ao mesmo lead)
+CREATE TABLE IF NOT EXISTS campaign_sends (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+  lead_id INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  sent_at TEXT NOT NULL DEFAULT (datetime('now')),
+  status TEXT NOT NULL DEFAULT 'sent',
+  error_message TEXT,
+  UNIQUE (campaign_id, lead_id)
+);
+CREATE INDEX IF NOT EXISTS idx_campaign_sends_campaign ON campaign_sends(campaign_id);
+
 -- Configurações por tenant (ex.: número para notificação de campanhas)
 CREATE TABLE IF NOT EXISTS tenant_settings (
   tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,

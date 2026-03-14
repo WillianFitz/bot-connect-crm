@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Phone, CalendarClock, Pencil } from "lucide-react";
+import { Plus, Phone, CalendarClock, Pencil, Play, Pause } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -101,6 +101,38 @@ export default function Campaigns() {
     },
     onError: (err: Error) => {
       toast({ title: "Erro ao atualizar campanha", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const setCampaignStatus = useMutation({
+    mutationFn: ({ id, status }: { id: number; status: string }) =>
+      api.updateCampaign(id, { status }),
+    onSuccess: (_, { status }) => {
+      queryClient.invalidateQueries({ queryKey: ["campaigns"] });
+      toast({
+        title: status === "active" ? "Campanha ativada." : "Campanha pausada.",
+        description: status === "active"
+          ? "Os disparos serão processados no horário configurado. Use «Processar agora» para enviar um lote imediatamente."
+          : undefined,
+      });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Erro ao alterar status", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const runCampaigns = useMutation({
+    mutationFn: api.runCampaigns,
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["campaigns"] });
+      const total = data?.campaigns?.reduce((s, c) => s + c.sent + c.errors, 0) ?? 0;
+      toast({
+        title: "Processamento executado",
+        description: total > 0 ? `${data.processed} lead(s) processado(s).` : "Nenhum lead pendente no horário das campanhas ativas.",
+      });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Erro ao processar", description: err.message, variant: "destructive" });
     },
   });
 
@@ -255,7 +287,7 @@ export default function Campaigns() {
             <div className="space-y-3">
               <div>
                 <Label className="text-xs text-muted-foreground flex items-center gap-1">
-                  Disparar entre às
+                  Disparar entre às (horário de Brasília)
                   <span className="text-[10px] text-muted-foreground">
                     (pode variar até 3 min para iniciar)
                   </span>
@@ -274,7 +306,7 @@ export default function Campaigns() {
               </div>
               <div>
                 <Label className="text-xs text-muted-foreground flex items-center gap-1">
-                  Com término às
+                  Com término às (horário de Brasília)
                   <span className="text-[10px] text-muted-foreground">
                     (pode variar até 3 min para finalizar)
                   </span>
@@ -332,19 +364,30 @@ export default function Campaigns() {
       </div>
 
       <div className="rounded-xl border border-border/50 bg-card p-5 space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-2">
           <h2 className="text-sm font-semibold text-foreground">
             Minhas campanhas
           </h2>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() =>
-              queryClient.invalidateQueries({ queryKey: ["campaigns"] })
-            }
-          >
-            Atualizar
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={runCampaigns.isPending}
+              onClick={() => runCampaigns.mutate()}
+              title="Envia um lote de mensagens agora (respeitando horário das campanhas ativas)"
+            >
+              {runCampaigns.isPending ? "Processando..." : "Processar agora"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                queryClient.invalidateQueries({ queryKey: ["campaigns"] })
+              }
+            >
+              Atualizar
+            </Button>
+          </div>
         </div>
 
         <div className="border border-border/30 rounded-lg overflow-hidden">
@@ -412,15 +455,39 @@ export default function Campaigns() {
                       {c.no_whatsapp}
                     </td>
                     <td className="px-3 py-2 text-xs text-right">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                        onClick={() => openEdit(c)}
-                        title="Editar campanha"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Button>
+                      <div className="flex items-center justify-end gap-0.5">
+                        {(c.status === "draft" || c.status === "paused") && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-500/10"
+                            onClick={() => setCampaignStatus.mutate({ id: c.id, status: "active" })}
+                            title="Ativar campanha"
+                          >
+                            <Play className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        {c.status === "active" && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-amber-600 hover:text-amber-700 hover:bg-amber-500/10"
+                            onClick={() => setCampaignStatus.mutate({ id: c.id, status: "paused" })}
+                            title="Pausar campanha"
+                          >
+                            <Pause className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                          onClick={() => openEdit(c)}
+                          title="Editar campanha"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -468,7 +535,7 @@ export default function Campaigns() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label className="text-xs text-muted-foreground">Das</Label>
+                <Label className="text-xs text-muted-foreground">Das (horário de Brasília)</Label>
                 <Input
                   type="time"
                   className="mt-1 bg-secondary border-border/50"
@@ -477,7 +544,7 @@ export default function Campaigns() {
                 />
               </div>
               <div>
-                <Label className="text-xs text-muted-foreground">Até</Label>
+                <Label className="text-xs text-muted-foreground">Até (horário de Brasília)</Label>
                 <Input
                   type="time"
                   className="mt-1 bg-secondary border-border/50"

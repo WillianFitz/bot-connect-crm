@@ -152,6 +152,11 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
+  runCampaigns: () =>
+    request<{ ok: boolean; processed: number; campaigns: Array<{ campaignId: number; sent: number; errors: number }> }>(
+      "/campaigns/run",
+      { method: "POST" },
+    ),
 
   getSettings: () =>
     request<{ notification_whatsapp_phone: string }>("/settings"),
