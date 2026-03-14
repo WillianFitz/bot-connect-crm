@@ -957,14 +957,29 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
       if (nowTimeStr < from || nowTimeStr > to) continue;
     }
 
+    const delayMin = Math.max(0, Number(camp.delay_min) ?? 0);
+    const delayMax = Math.max(delayMin, Number(camp.delay_max) ?? delayMin || 5);
+    const lastSent = await env.DB.prepare(
+      "SELECT sent_at FROM campaign_sends WHERE campaign_id = ? AND status = 'sent' ORDER BY sent_at DESC LIMIT 1",
+    )
+      .bind(camp.id)
+      .first<{ sent_at: string }>();
+    if (lastSent?.sent_at && (delayMin > 0 || delayMax > 0)) {
+      const last = new Date(lastSent.sent_at).getTime();
+      const elapsedMin = (Date.now() - last) / (60 * 1000);
+      const requiredMin = delayMin + Math.random() * (delayMax - delayMin);
+      if (elapsedMin < requiredMin) continue;
+    }
+
+    const limitPerRun = delayMin > 0 || delayMax > 0 ? 1 : 5;
     const pending = await env.DB.prepare(
       `SELECT l.id, l.company, l.phone FROM leads l
        WHERE l.tenant_id = ?
          AND l.phone IS NOT NULL AND trim(l.phone) != ''
          AND NOT EXISTS (SELECT 1 FROM campaign_sends cs WHERE cs.campaign_id = ? AND cs.lead_id = l.id)
-       ORDER BY l.id ASC LIMIT 5`,
+       ORDER BY l.id ASC LIMIT ?`,
     )
-      .bind(tenantId, camp.id)
+      .bind(tenantId, camp.id, limitPerRun)
       .all<{ id: number; company: string; phone: string }>();
 
     const rows = (pending.results || []) as Array<{ id: number; company: string; phone: string }>;
@@ -1651,6 +1666,18 @@ export default {
       status: response.status,
       headers,
     });
+  },
+
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    const tenants = await env.DB.prepare("SELECT id FROM tenants").all<{ id: string }>();
+    const list = (tenants.results || []) as Array<{ id: string }>;
+    for (const row of list) {
+      try {
+        await handleCampaignRun(env, row.id, false);
+      } catch (err) {
+        console.error("[cron] campaign run for tenant", row.id, err);
+          }
+    }
   },
 } satisfies ExportedHandler<Env>;
 

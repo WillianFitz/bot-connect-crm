@@ -276,7 +276,13 @@ export default function Campaigns() {
         </div>
 
         {showForm && (
-          <div className="mt-3 grid gap-4 md:grid-cols-2">
+          <div className="mt-3 space-y-4">
+            <p className="text-xs text-muted-foreground bg-muted/50 rounded-lg p-3 border border-border/30">
+              <strong>Horário (Das / Até):</strong> em que horas do dia a campanha pode enviar (ex.: 09:00 às 18:00, horário de Brasília). Fora desse intervalo o cron não dispara.
+              <br />
+              <strong>Intervalo (Delay min–max):</strong> tempo em minutos entre uma mensagem e a próxima. Ex.: 30 min = envia para o 1º lead, só após 30 min envia para o 2º (o cron roda a cada 2 min e respeita esse intervalo).
+            </p>
+            <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-3">
               <div>
                 <Label className="text-xs text-muted-foreground">
@@ -391,6 +397,7 @@ export default function Campaigns() {
                   {createCampaign.isPending ? "Criando..." : "Criar campanha"}
                 </Button>
               </div>
+            </div>
             </div>
           </div>
         )}
