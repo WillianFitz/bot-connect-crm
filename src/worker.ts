@@ -1091,16 +1091,14 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
       } catch {
         text = "Olá! Tudo bem?";
       }
-
-      const result = await sendWhatsAppMessage(env, tenantId, phone, text);
+      const result = await sendWhatsAppButtons(env, tenantId, phone, {
+        title: "Mensagem",
+        description: text,
+        footer: "",
+        buttons: [{ type: "reply", displayText: "Tenho interesse sim", id: "interesse_sim" }],
+      });
 
       if (result.ok) {
-        await sendWhatsAppButtons(env, tenantId, phone, {
-          title: "Resposta rápida",
-          description: "Clique no botão abaixo se tiver interesse.",
-          footer: "",
-          buttons: [{ type: "reply", displayText: "Tenho interesse sim", id: "interesse_sim" }],
-        });
         await env.DB.prepare(
           "INSERT OR IGNORE INTO campaign_sends (campaign_id, lead_id, status) VALUES (?, ?, 'sent')",
         )
