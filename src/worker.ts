@@ -940,7 +940,8 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
   }>;
 
   let processed = 0;
-  const runResult: { campaignId: number; sent: number; errors: number }[] = [];
+  const runResult: { campaignId: number; name: string; sent: number; errors: number; errorDetails: string[] }[] = [];
+  const globalErrors: string[] = [];
 
   for (const camp of list) {
     if (!ignoreWindow) {
@@ -970,6 +971,7 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
     let sent = 0;
     let errs = 0;
     let noWa = 0;
+    const campaignErrors: string[] = [];
 
     for (const lead of rows) {
       const phone = normalizeBrazilNumber(lead.phone || "");
@@ -1011,10 +1013,13 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
           .run();
         sent++;
       } else {
+        const errMsg = result.error || "Erro ao enviar";
+        campaignErrors.push(errMsg);
+        globalErrors.push(errMsg);
         await env.DB.prepare(
           "INSERT OR IGNORE INTO campaign_sends (campaign_id, lead_id, status, error_message) VALUES (?, ?, 'error', ?)",
         )
-          .bind(camp.id, lead.id, result.error || "Erro")
+          .bind(camp.id, lead.id, errMsg)
           .run();
         await env.DB.prepare(
           "UPDATE campaigns SET errors = errors + 1 WHERE id = ? AND tenant_id = ?",
@@ -1025,6 +1030,14 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
       }
       processed++;
     }
+
+    runResult.push({
+      campaignId: camp.id,
+      name: camp.name,
+      sent,
+      errors: errs,
+      errorDetails: campaignErrors,
+    });
 
     const totalSent = await env.DB.prepare(
       "SELECT COUNT(*) as c FROM campaign_sends WHERE campaign_id = ? AND status = 'sent'",
@@ -1045,10 +1058,14 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
         .run();
     }
 
-    runResult.push({ campaignId: camp.id, sent, errors: errs });
   }
 
-  return json({ ok: true, processed, campaigns: runResult });
+  return json({
+    ok: true,
+    processed,
+    campaigns: runResult,
+    errorSummary: globalErrors.length > 0 ? globalErrors.slice(0, 3) : undefined,
+  });
 }
 
 async function handleCampaigns(request: Request, env: Env, method: string, url: URL) {
@@ -1200,6 +1217,19 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
       .bind(campaignId, tenantId)
       .first();
     return json(updated);
+  }
+
+  if (method === "DELETE" && isSingle && campaignId) {
+    const existing = await env.DB.prepare(
+      "SELECT id FROM campaigns WHERE id = ? AND tenant_id = ?",
+    )
+      .bind(campaignId, tenantId)
+      .first();
+    if (!existing) return json({ error: "Campanha não encontrada" }, { status: 404 });
+    await env.DB.prepare("DELETE FROM campaigns WHERE id = ? AND tenant_id = ?")
+      .bind(campaignId, tenantId)
+      .run();
+    return json({ ok: true });
   }
 
   return new Response("Method not allowed", { status: 405 });

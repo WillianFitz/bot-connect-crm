@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Phone, CalendarClock, Pencil, Play, Pause } from "lucide-react";
+import { Plus, Phone, CalendarClock, Pencil, Play, Pause, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,6 +12,15 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { api } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 
@@ -38,6 +47,7 @@ export default function Campaigns() {
   const [whatsappNumber, setWhatsappNumber] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null);
+  const [campaignToDelete, setCampaignToDelete] = useState<Campaign | null>(null);
 
   const [name, setName] = useState("");
   const [delayMin, setDelayMin] = useState(6);
@@ -121,18 +131,37 @@ export default function Campaigns() {
     },
   });
 
+  const deleteCampaign = useMutation({
+    mutationFn: (id: number) => api.deleteCampaign(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["campaigns"] });
+      setCampaignToDelete(null);
+      toast({ title: "Campanha excluída." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Erro ao excluir", description: err.message, variant: "destructive" });
+    },
+  });
+
   const runCampaigns = useMutation({
     mutationFn: (ignoreWindow?: boolean) => api.runCampaigns({ ignoreWindow }),
     onSuccess: (data, ignoreWindow) => {
       queryClient.invalidateQueries({ queryKey: ["campaigns"] });
       const total = data?.campaigns?.reduce((s, c) => s + c.sent + c.errors, 0) ?? 0;
+      const hasErrors = (data?.campaigns?.some((c) => c.errors > 0) ?? false) || (data?.errorSummary?.length ?? 0) > 0;
+      const errorMsg = data?.errorSummary?.length
+        ? data.errorSummary[0] + (data.errorSummary.length > 1 ? ` (+${data.errorSummary.length - 1} mais)` : "")
+        : null;
       toast({
-        title: "Processamento executado",
+        title: hasErrors ? "Processado com erros" : "Processamento executado",
         description: total > 0
-          ? `${data.processed} lead(s) processado(s).`
+          ? hasErrors && errorMsg
+            ? `${data.processed} processado(s). Erro: ${errorMsg}`
+            : `${data.processed} lead(s) processado(s).`
           : ignoreWindow
             ? "Nenhum lead pendente para enviar (ou todos já foram processados)."
             : "Nenhum lead pendente no horário das campanhas ativas.",
+        variant: hasErrors ? "destructive" : "default",
       });
     },
     onError: (err: Error) => {
@@ -491,6 +520,15 @@ export default function Campaigns() {
                         >
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-500/10"
+                          onClick={() => setCampaignToDelete(c)}
+                          title="Excluir campanha"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
                       </div>
                     </td>
                   </tr>
@@ -590,6 +628,27 @@ export default function Campaigns() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!campaignToDelete} onOpenChange={(open) => !open && setCampaignToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir campanha</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir a campanha &quot;{campaignToDelete?.name}&quot;? Os registros de envio desta campanha também serão removidos. Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteCampaign.isPending}>Cancelar</AlertDialogCancel>
+            <Button
+              variant="destructive"
+              onClick={() => campaignToDelete && deleteCampaign.mutate(campaignToDelete.id)}
+              disabled={deleteCampaign.isPending}
+            >
+              {deleteCampaign.isPending ? "Excluindo..." : "Excluir"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

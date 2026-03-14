@@ -152,11 +152,15 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
+  deleteCampaign: (id: number) =>
+    request<{ ok: true }>(`/campaigns/${id}`, { method: "DELETE" }),
   runCampaigns: (options?: { ignoreWindow?: boolean }) =>
-    request<{ ok: boolean; processed: number; campaigns: Array<{ campaignId: number; sent: number; errors: number }> }>(
-      `/campaigns/run${options?.ignoreWindow ? "?ignoreWindow=1" : ""}`,
-      { method: "POST" },
-    ),
+    request<{
+      ok: boolean;
+      processed: number;
+      campaigns: Array<{ campaignId: number; name: string; sent: number; errors: number; errorDetails: string[] }>;
+      errorSummary?: string[];
+    }>(`/campaigns/run${options?.ignoreWindow ? "?ignoreWindow=1" : ""}`, { method: "POST" }),
 
   getSettings: () =>
     request<{ notification_whatsapp_phone: string }>("/settings"),
