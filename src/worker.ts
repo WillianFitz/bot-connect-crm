@@ -781,9 +781,7 @@ async function handleAIDisparo(request: Request, env: Env): Promise<Response> {
     .bind(tenantId)
     .first<{ base_prompt?: string }>();
 
-  const basePrompt = row?.base_prompt || `Você é um agente de disparo automático.
-Gere uma saudação curta, natural e humana para iniciar uma conversa com um lead.
-Responda EXCLUSIVAMENTE em JSON no formato {"mensagem": "texto"}.`;
+  const basePrompt = row?.base_prompt || `Você gera a primeira mensagem que a EMPRESA envia para um LEAD (prospecção). A empresa está entrando em contato com o lead — não use "Como posso ajudar?". Use saudação de quem inicia o contato. Use o nome da empresa LeadFlowAI e peça 1 minuto para uma proposta. Pode usar o nome do lead. Responda EXCLUSIVAMENTE em JSON: {"mensagem": "texto"}.`;
 
   const content = await callOpenAI(env, [
     { role: "system", content: basePrompt },
@@ -838,8 +836,8 @@ async function generateDisparoMessage(env: Env, tenantId: string, company: strin
     .first<{ base_prompt?: string; default_message?: string }>();
   const basePrompt =
     row?.base_prompt ||
-    `Você gera a primeira mensagem que a EMPRESA envia para um LEAD (prospecção). A empresa está entrando em contato com o lead — não use "Como posso ajudar?" (isso é quando o cliente te chama). Use saudação de quem inicia o contato. Responda EXCLUSIVAMENTE em JSON: {"mensagem": "texto"}.`;
-  const userPrompt = `Gere uma mensagem de abertura que a empresa envia para este lead. Nome/empresa do lead: "${company}". Uma única mensagem curta, como quem está iniciando o contato (não como atendimento).`;
+    `Você gera a primeira mensagem que a EMPRESA envia para um LEAD (prospecção). A empresa está entrando em contato com o lead — não use "Como posso ajudar?". Use saudação de quem inicia o contato. Use o nome da empresa LeadFlowAI e peça 1 minuto para uma proposta. Pode usar o nome do lead. Responda EXCLUSIVAMENTE em JSON: {"mensagem": "texto"}.`;
+  const userPrompt = `Nome/empresa do lead: "${company}". Gere a mensagem seguindo exatamente as instruções do sistema acima. Responda só em JSON: {"mensagem": "sua mensagem"}.`;
   try {
     const content = await callOpenAI(env, [
       { role: "system", content: basePrompt },
