@@ -1196,7 +1196,7 @@ export default {
         headers: {
           "Access-Control-Allow-Origin": origin,
           "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type, Authorization, x-admin-key, x-tenant-id",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization, x-admin-key, x-tenant-id, x-extension-token",
         },
       });
     }
@@ -1246,7 +1246,7 @@ export default {
     const headers = new Headers(response.headers);
     headers.set("Access-Control-Allow-Origin", origin);
     headers.set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-    headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-admin-key, x-tenant-id");
+    headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-admin-key, x-tenant-id, x-extension-token");
 
     return new Response(response.body, {
       status: response.status,
