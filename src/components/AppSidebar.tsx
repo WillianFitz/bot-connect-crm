@@ -11,7 +11,8 @@ import {
   Wrench,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
-import { useLocation } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api";
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel,
   SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarHeader, SidebarFooter, useSidebar,
@@ -63,6 +64,12 @@ function SidebarSection({ label, items }: { label: string; items: typeof mainIte
 export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
+  const { data: countData } = useQuery({
+    queryKey: ["leads-count"],
+    queryFn: () => api.getLeadsCount(),
+    staleTime: 60_000,
+  });
+  const leadsCount = countData?.count ?? 0;
 
   return (
     <Sidebar collapsible="icon" className="border-r border-border/50">
@@ -82,9 +89,14 @@ export function AppSidebar() {
       <SidebarFooter className="p-4">
         {!collapsed && (
           <div className="rounded-lg border border-border/50 bg-secondary/50 p-3">
-            <p className="text-[11px] text-muted-foreground">Plano Pro • 1.247 leads</p>
+            <p className="text-[11px] text-muted-foreground">
+              Plano Pro • {leadsCount.toLocaleString("pt-BR")} leads
+            </p>
             <div className="mt-1.5 h-1.5 rounded-full bg-muted">
-              <div className="h-1.5 rounded-full bg-primary" style={{ width: '62%' }} />
+              <div
+                className="h-1.5 rounded-full bg-primary"
+                style={{ width: `${Math.min(100, (leadsCount / 2000) * 100)}%` }}
+              />
             </div>
           </div>
         )}

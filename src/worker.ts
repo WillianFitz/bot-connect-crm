@@ -563,6 +563,7 @@ async function handleLeads(request: Request, env: Env, method: string, url: URL)
   if (method === "GET") {
     const search = url.searchParams.get("q") || "";
     const folderId = url.searchParams.get("folderId");
+    const countOnly = url.searchParams.get("countOnly") === "1";
 
     const conditions: string[] = ["l.tenant_id = ?"];
     const params: unknown[] = [tenantId];
@@ -581,6 +582,15 @@ async function handleLeads(request: Request, env: Env, method: string, url: URL)
     }
 
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    if (countOnly) {
+      const countRes = await env.DB.prepare(
+        `SELECT COUNT(*) as total FROM leads l ${where}`,
+      )
+        .bind(...params)
+        .first<{ total: number }>();
+      return json({ count: Number(countRes?.total ?? 0) });
+    }
 
     const query = `
       SELECT l.id, l.company, l.phone, l.folder_id, lf.name as folder_name, l.created_at
@@ -1144,21 +1154,28 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
       )
         .bind(fromExtractorTenant, "via_extensao")
         .run();
-      jobId = resJob.lastRowId as number;
+      const raw = resJob as { meta?: { last_row_id?: number }; lastRowId?: number };
+      jobId = raw.meta?.last_row_id ?? raw.lastRowId ?? 0;
     }
 
-    // Insere leads em lote
+    // Insere leads em lote (D1 não aceita undefined em .bind())
     const leads = body.leads;
     let inserted = 0;
     for (const lead of leads) {
-      if (!lead.company || !lead.phone) continue;
+      const company = lead?.company != null ? String(lead.company) : "";
+      const phone = lead?.phone != null ? String(lead.phone) : "";
+      if (!company.trim() || !phone.trim()) continue;
       await env.DB.prepare(
         "INSERT INTO leads (tenant_id, company, phone, folder_id) VALUES (?, ?, ?, NULL)",
       )
-        .bind(fromExtractorTenant, lead.company, lead.phone)
+        .bind(fromExtractorTenant, company, phone)
         .run();
       inserted += 1;
     }
+
+    const statusStr = body.error ? "error" : body.done ? "completed" : "running";
+    const errMsg = body.error != null ? String(body.error) : null;
+    const jobIdNum = Number(jobId) || 0;
 
     await env.DB.prepare(
       `UPDATE instagram_jobs
@@ -1167,13 +1184,7 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
            updated_at = datetime('now')
        WHERE id = ? AND tenant_id = ?`,
     )
-      .bind(
-        inserted,
-        body.error ? "error" : body.done ? "completed" : "running",
-        body.error || null,
-        jobId,
-        fromExtractorTenant,
-      )
+      .bind(inserted, statusStr, errMsg, jobIdNum, fromExtractorTenant)
       .run();
 
     return json({ ok: true, inserted });

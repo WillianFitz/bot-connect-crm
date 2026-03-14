@@ -65,6 +65,7 @@ export default function Leads() {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["leads"] });
+      queryClient.invalidateQueries({ queryKey: ["leads-count"] });
       setNewLeadCompany("");
       setNewLeadPhone("");
       setIsCreateOpen(false);
@@ -88,6 +89,7 @@ export default function Leads() {
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["leads"] });
+      queryClient.invalidateQueries({ queryKey: ["leads-count"] });
       setEditingLead(null);
       toast({
         title: "Lead atualizado",
@@ -100,6 +102,7 @@ export default function Leads() {
     mutationFn: (id: number) => api.deleteLead(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["leads"] });
+      queryClient.invalidateQueries({ queryKey: ["leads-count"] });
       toast({
         title: "Lead excluído",
         description: "O lead foi removido da sua lista.",

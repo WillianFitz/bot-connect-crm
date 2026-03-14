@@ -94,6 +94,9 @@ export const api = {
       method: "DELETE",
     }),
 
+  getLeadsCount: () =>
+    request<{ count: number }>("/leads?countOnly=1"),
+
   getLeads: (params: { q?: string; folderId?: string | null } = {}) => {
     const sp = new URLSearchParams();
     if (params.q) sp.set("q", params.q);
