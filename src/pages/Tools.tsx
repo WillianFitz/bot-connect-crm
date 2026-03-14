@@ -38,6 +38,7 @@ const EXTENSION_FILES = [
   "manifest.json",
   "background.js",
   "content-script.js",
+  "injected.js",
   "dashboard.html",
   "dashboard.js",
   "popup.html",
