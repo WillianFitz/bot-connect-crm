@@ -1030,7 +1030,7 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
     const pendingCountCheck = await env.DB.prepare(
       `SELECT COUNT(*) as c FROM leads l
        WHERE l.tenant_id = ? AND l.phone IS NOT NULL AND trim(l.phone) != ''
-         AND NOT EXISTS (SELECT 1 FROM campaign_sends cs WHERE cs.campaign_id = ? AND cs.lead_id = l.id)`,
+         AND NOT EXISTS (SELECT 1 FROM campaign_sends cs WHERE cs.campaign_id = ? AND cs.lead_id = l.id AND cs.status = 'sent')`,
     )
       .bind(tenantId, camp.id)
       .first<{ c: number }>();
@@ -1060,7 +1060,7 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
       `SELECT l.id, l.company, l.phone FROM leads l
        WHERE l.tenant_id = ?
          AND l.phone IS NOT NULL AND trim(l.phone) != ''
-         AND NOT EXISTS (SELECT 1 FROM campaign_sends cs WHERE cs.campaign_id = ? AND cs.lead_id = l.id)
+         AND NOT EXISTS (SELECT 1 FROM campaign_sends cs WHERE cs.campaign_id = ? AND cs.lead_id = l.id AND cs.status = 'sent')
        ORDER BY l.id ASC LIMIT ?`,
     )
       .bind(tenantId, camp.id, limitPerRun)
@@ -1106,7 +1106,8 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
 
       if (result.ok) {
         await env.DB.prepare(
-          "INSERT OR IGNORE INTO campaign_sends (campaign_id, lead_id, status) VALUES (?, ?, 'sent')",
+          `INSERT INTO campaign_sends (campaign_id, lead_id, status) VALUES (?, ?, 'sent')
+           ON CONFLICT(campaign_id, lead_id) DO UPDATE SET status = 'sent', sent_at = datetime('now'), error_message = NULL`,
         )
           .bind(camp.id, lead.id)
           .run();
@@ -1151,7 +1152,7 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
     const pendingCount = await env.DB.prepare(
       `SELECT COUNT(*) as c FROM leads l
        WHERE l.tenant_id = ? AND l.phone IS NOT NULL AND trim(l.phone) != ''
-         AND NOT EXISTS (SELECT 1 FROM campaign_sends cs WHERE cs.campaign_id = ? AND cs.lead_id = l.id)`,
+         AND NOT EXISTS (SELECT 1 FROM campaign_sends cs WHERE cs.campaign_id = ? AND cs.lead_id = l.id AND cs.status = 'sent')`,
     )
       .bind(tenantId, camp.id)
       .first<{ c: number }>();
