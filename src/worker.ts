@@ -1182,10 +1182,13 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
   return new Response("Not found", { status: 404 });
 }
 
-/** Pathname normalizado para roteamento: se a URL tiver /api/ em qualquer lugar (ex.: base path), usa a partir daí. */
+/** Pathname normalizado para roteamento: usa /api/... e colapsa /api/api/ em /api/. */
 function normalisePathname(pathname: string): string {
   const i = pathname.indexOf("/api/");
-  return i >= 0 ? pathname.slice(i) : pathname;
+  if (i < 0) return pathname;
+  let p = pathname.slice(i);
+  while (p.startsWith("/api/api/")) p = p.replace(/^\/api\/api/, "/api");
+  return p;
 }
 
 export default {

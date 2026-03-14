@@ -100,7 +100,8 @@ export default function Tools() {
     const apiBase =
       (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ||
       window.location.origin.replace(/\/$/, "");
-    const webhookUrl = `${apiBase}/api/tools/instagram/push-leads`;
+    const baseWithoutApi = apiBase.replace(/\/api\/?$/, "") || apiBase;
+    const webhookUrl = `${baseWithoutApi}/api/tools/instagram/push-leads`;
     const frontBase = window.location.origin.replace(/\/$/, "");
     setDownloadExtensionPending(true);
     try {
