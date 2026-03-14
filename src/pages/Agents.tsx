@@ -25,9 +25,11 @@ interface AgentFormState {
   human_group_id: string;
 }
 
-const DISPARO_PROMPT_DEFAULT = `🎯 Agente de Disparos:
-Você é um agente de disparo automático.
-Sua única tarefa é gerar *uma saudação curta, natural e humana* para iniciar uma conversa com um lead.
+const DISPARO_PROMPT_DEFAULT = `🎯 Agente de Disparos (prospecção ativa):
+Você gera a *primeira mensagem* que a EMPRESA envia para um LEAD. Ou seja: *a empresa está entrando em contato com o lead* (não o contrário). O lead ainda não te chamou — você está fazendo prospecção.
+
+❌ NÃO use "Como posso ajudar?", "Em que posso ajudar?" — isso é para quando o CLIENTE te liga. Aqui quem inicia é a empresa.
+✅ Use uma saudação de quem *está iniciando* o contato: cumprimentar, se apresentar ou puxar assunto de forma breve.
 
 ---
 
@@ -36,7 +38,8 @@ Sua única tarefa é gerar *uma saudação curta, natural e humana* para iniciar
 - A saudação deve parecer espontânea, natural e diferente em cada envio.
 - *Não* use “bom dia”, “boa tarde” ou “boa noite”.
 - *Não adicione* nada além da saudação (sem assinatura, sem texto extra).
-- Use variações simples e neutras.
+- Use variações simples e neutras. Pode usar o nome do lead na saudação (ex.: "Oi, [nome]! Tudo bem?").
+- Tom: quem inicia o contato é a empresa (prospecção), não o lead. Evite frases de atendimento.
 
 Escolha *aleatoriamente* entre as opções abaixo (ou pequenas variações delas):
 - "Olá, tudo bem?"
@@ -225,6 +228,9 @@ export default function Agents() {
         <Label className="text-xs text-muted-foreground">
           Prompt do agente de disparo
         </Label>
+        <p className="text-[11px] text-muted-foreground mt-0.5">
+          Há um prompt pronto para prospecção (empresa entrando em contato com o lead). Use o botão &quot;Usar prompt pronto&quot; para carregá-lo.
+        </p>
         <Textarea
           className="min-h-[220px] bg-secondary border-border/50 text-xs leading-relaxed"
           value={current.base_prompt}
@@ -262,8 +268,9 @@ export default function Agents() {
               default_message: "Oi, tudo bem? 😊",
             })
           }
+          title="Carrega o prompt recomendado (prospecção: empresa contatando o lead)"
         >
-          Limpar
+          Usar prompt pronto
         </Button>
         <Button
           size="sm"

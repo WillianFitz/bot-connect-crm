@@ -838,8 +838,8 @@ async function generateDisparoMessage(env: Env, tenantId: string, company: strin
     .first<{ base_prompt?: string; default_message?: string }>();
   const basePrompt =
     row?.base_prompt ||
-    `Você é um agente de disparo automático. Gere uma saudação curta e natural para o lead. Responda EXCLUSIVAMENTE em JSON: {"mensagem": "texto"}.`;
-  const userPrompt = `Gere uma mensagem de abertura para este lead: nome/empresa = "${company}". Uma única mensagem curta e humana.`;
+    `Você gera a primeira mensagem que a EMPRESA envia para um LEAD (prospecção). A empresa está entrando em contato com o lead — não use "Como posso ajudar?" (isso é quando o cliente te chama). Use saudação de quem inicia o contato. Responda EXCLUSIVAMENTE em JSON: {"mensagem": "texto"}.`;
+  const userPrompt = `Gere uma mensagem de abertura que a empresa envia para este lead. Nome/empresa do lead: "${company}". Uma única mensagem curta, como quem está iniciando o contato (não como atendimento).`;
   try {
     const content = await callOpenAI(env, [
       { role: "system", content: basePrompt },
