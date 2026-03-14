@@ -104,15 +104,16 @@ if (typeof window.__igExtractorLoaded === "undefined") {
     _lastPageTs = Date.now();
     _userId = null;
 
-    // Injeta e aguarda o interceptor estar ativo
+    // Injeta e aguarda o interceptor estar ativo (poll até 5s)
     injectPageScript();
-    await sleep(2000); // tempo para injected.js carregar e patchear o fetch
+    const patchDeadline = Date.now() + 5000;
+    while (!window.__igFetchPatched && Date.now() < patchDeadline) await sleep(200);
 
-    // Se não carregou, tenta novamente
     if (!window.__igFetchPatched) {
       console.warn("[IGExtractor] injected.js não carregou na primeira tentativa, retentando...");
       injectPageScript();
-      await sleep(2000);
+      const retryDeadline = Date.now() + 4000;
+      while (!window.__igFetchPatched && Date.now() < retryDeadline) await sleep(200);
     }
 
     console.log("[IGExtractor] Iniciando para", baseProfile, "target:", targetCount,
