@@ -902,24 +902,19 @@ async function sendWhatsAppMessage(
   }
 }
 
-async function sendWhatsAppButtons(
+async function sendWhatsAppList(
   env: Env,
   tenantId: string,
   number: string,
-  payload: { title: string; description: string; footer: string; buttons: Array<{ title?: string; type?: string; displayText: string; id: string }> },
+  payload: { title: string; description: string; footer: string; buttonText: string; sections: Array<{ title: string; rows: Array<{ title: string; rowId: string; description?: string }> }> },
 ): Promise<{ ok: boolean; error?: string }> {
   const baseUrl = getEvolutionBaseUrl(env);
   if (!baseUrl || !env.EVOLUTION_API_KEY) {
     return { ok: false, error: "Evolution API não configurada" };
   }
-  const buttons = payload.buttons.map((b) => ({
-    ...(b.title != null ? { title: b.title } : { type: b.type ?? "reply" }),
-    displayText: b.displayText,
-    id: b.id,
-  }));
-  const body = JSON.stringify({ number, ...payload, buttons });
+  const body = JSON.stringify({ number, ...payload });
   try {
-    const res = await fetch(`${baseUrl}/message/sendButtons/${tenantId}`, {
+    const res = await fetch(`${baseUrl}/message/sendList/${tenantId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: env.EVOLUTION_API_KEY },
       body,
@@ -1097,14 +1092,17 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
         text = "Olá! Tudo bem?";
       }
 
-      const result = await sendWhatsAppMessage(env, tenantId, phone, text);
+      const result = await sendWhatsAppList(env, tenantId, phone, {
+        title: "Resposta rápida",
+        description: text,
+        footer: "Clique abaixo para responder",
+        buttonText: "Ver opções",
+        sections: [{
+          title: "Opções",
+          rows: [{ title: "Tenho interesse sim", rowId: "interesse_sim", description: "Clique para confirmar interesse" }],
+        }],
+      });
       if (result.ok) {
-        sendWhatsAppButtons(env, tenantId, phone, {
-          title: "Resposta rápida",
-          description: "Clique no botão abaixo se tiver interesse.",
-          footer: "",
-          buttons: [{ type: "reply", displayText: "Tenho interesse sim", id: "interesse_sim" }],
-        }).catch(() => {});
         await env.DB.prepare(
           `INSERT INTO campaign_sends (campaign_id, lead_id, status) VALUES (?, ?, 'sent')
            ON CONFLICT(campaign_id, lead_id) DO UPDATE SET status = 'sent', sent_at = datetime('now'), error_message = NULL`,
