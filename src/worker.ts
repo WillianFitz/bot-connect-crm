@@ -924,10 +924,10 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
   }
 
   const campaigns = await env.DB.prepare(
-    "SELECT id, name, time_from, time_to, days_blocked, delay_min, delay_max FROM campaigns WHERE tenant_id = ? AND status = 'active'",
+    "SELECT id, name, time_from, time_to, days_blocked, delay_min, delay_max, status FROM campaigns WHERE tenant_id = ? AND (status = 'active' OR status = 'completed')",
   )
     .bind(tenantId)
-    .all<{ id: number; name: string; time_from: string; time_to: string; days_blocked: string; delay_min: number; delay_max: number }>();
+    .all<{ id: number; name: string; time_from: string; time_to: string; days_blocked: string; delay_min: number; delay_max: number; status: string }>();
 
   const list = (campaigns.results || []) as Array<{
     id: number;
@@ -937,6 +937,7 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
     days_blocked: string;
     delay_min: number;
     delay_max: number;
+    status: string;
   }>;
 
   let processed = 0;
@@ -970,6 +971,34 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
       const requiredSec = delayMin + Math.random() * (delayMax - delayMin);
       if (elapsedSec < requiredSec) continue;
     }
+
+    const pendingCountCheck = await env.DB.prepare(
+      `SELECT COUNT(*) as c FROM leads l
+       WHERE l.tenant_id = ? AND l.phone IS NOT NULL AND trim(l.phone) != ''
+         AND NOT EXISTS (SELECT 1 FROM campaign_sends cs WHERE cs.campaign_id = ? AND cs.lead_id = l.id)`,
+    )
+      .bind(tenantId, camp.id)
+      .first<{ c: number }>();
+    if (Number(pendingCountCheck?.c ?? 0) === 0) continue;
+
+    if (camp.status === "completed") {
+      await env.DB.prepare(
+        "UPDATE campaigns SET status = 'active' WHERE id = ? AND tenant_id = ?",
+      )
+        .bind(camp.id, tenantId)
+        .run();
+    }
+
+    const totalLeadsNow = await env.DB.prepare(
+      "SELECT COUNT(*) as c FROM leads WHERE tenant_id = ? AND phone IS NOT NULL AND trim(phone) != ''",
+    )
+      .bind(tenantId)
+      .first<{ c: number }>();
+    await env.DB.prepare(
+      "UPDATE campaigns SET total_leads = ? WHERE id = ? AND tenant_id = ?",
+    )
+      .bind(Math.max(0, Number(totalLeadsNow?.c ?? 0)), camp.id, tenantId)
+      .run();
 
     const limitPerRun = 5;
     const pending = await env.DB.prepare(
@@ -1059,18 +1088,14 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
       errorDetails: campaignErrors,
     });
 
-    const totalSent = await env.DB.prepare(
-      "SELECT COUNT(*) as c FROM campaign_sends WHERE campaign_id = ? AND status = 'sent'",
+    const pendingCount = await env.DB.prepare(
+      `SELECT COUNT(*) as c FROM leads l
+       WHERE l.tenant_id = ? AND l.phone IS NOT NULL AND trim(l.phone) != ''
+         AND NOT EXISTS (SELECT 1 FROM campaign_sends cs WHERE cs.campaign_id = ? AND cs.lead_id = l.id)`,
     )
-      .bind(camp.id)
+      .bind(tenantId, camp.id)
       .first<{ c: number }>();
-    const totalLeads = await env.DB.prepare(
-      "SELECT total_leads FROM campaigns WHERE id = ? AND tenant_id = ?",
-    )
-      .bind(camp.id, tenantId)
-      .first<{ total_leads: number }>();
-    const total = Number(totalLeads?.total_leads ?? 0);
-    if (total > 0 && Number(totalSent?.c ?? 0) >= total) {
+    if (Number(pendingCount?.c ?? 0) === 0) {
       await env.DB.prepare(
         "UPDATE campaigns SET status = 'completed' WHERE id = ? AND tenant_id = ?",
       )

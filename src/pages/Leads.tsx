@@ -66,13 +66,15 @@ export default function Leads() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["leads"] });
       queryClient.invalidateQueries({ queryKey: ["leads-count"] });
+      queryClient.invalidateQueries({ queryKey: ["campaigns"] });
       setNewLeadCompany("");
       setNewLeadPhone("");
       setIsCreateOpen(false);
       toast({
         title: "Lead cadastrado",
-        description: "O lead foi salvo com sucesso.",
+        description: "O lead foi salvo. Se houver campanha ativa, ele entrará na fila de disparo.",
       });
+      api.runCampaigns({ ignoreWindow: true }).catch(() => {});
     },
   });
 
