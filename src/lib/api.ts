@@ -140,9 +140,24 @@ export const api = {
     }),
 
   getCampaigns: () => request<any[]>("/campaigns"),
+  getCampaign: (id: number) =>
+    request<any>(`/campaigns/${id}`),
   createCampaign: (payload: any) =>
     request<any>("/campaigns", {
       method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updateCampaign: (id: number, payload: any) =>
+    request<any>(`/campaigns/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+
+  getSettings: () =>
+    request<{ notification_whatsapp_phone: string }>("/settings"),
+  updateSettings: (payload: { notification_whatsapp_phone: string }) =>
+    request<{ notification_whatsapp_phone: string }>("/settings", {
+      method: "PUT",
       body: JSON.stringify(payload),
     }),
 

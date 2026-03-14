@@ -123,6 +123,16 @@ CREATE TABLE IF NOT EXISTS campaigns (
 
 CREATE INDEX IF NOT EXISTS idx_campaigns_tenant ON campaigns(tenant_id);
 
+-- Configurações por tenant (ex.: número para notificação de campanhas)
+CREATE TABLE IF NOT EXISTS tenant_settings (
+  tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  key TEXT NOT NULL,
+  value TEXT,
+  PRIMARY KEY (tenant_id, key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tenant_settings_tenant ON tenant_settings(tenant_id);
+
 -- Usuários (login) por tenant
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

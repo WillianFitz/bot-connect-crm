@@ -833,15 +833,29 @@ async function handleAIAgent(
 async function handleCampaigns(request: Request, env: Env, method: string, url: URL) {
   const tenantId = getTenantId(request);
   await ensureTenant(env, tenantId);
+  const pathname = url.pathname;
+  const parts = pathname.split("/").filter(Boolean);
+  const idParam = parts.length >= 3 ? parts[2] : null;
+  const isSingle = idParam && /^\d+$/.test(idParam);
+  const campaignId = isSingle ? Number(idParam) : null;
 
   if (method === "GET") {
+    if (isSingle && campaignId) {
+      const row = await env.DB.prepare(
+        "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, status, total_leads, sent, errors, no_whatsapp, created_at FROM campaigns WHERE id = ? AND tenant_id = ?",
+      )
+        .bind(campaignId, tenantId)
+        .first();
+      if (!row) return json({ error: "Campanha não encontrada" }, { status: 404 });
+      return json(row);
+    }
     const res = await env.DB.prepare(
       "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, status, total_leads, sent, errors, no_whatsapp, created_at FROM campaigns WHERE tenant_id = ? ORDER BY created_at DESC",
     ).bind(tenantId).all();
     return json(res.results || []);
   }
 
-  if (method === "POST") {
+  if (method === "POST" && !isSingle) {
     const body = await readBody<any>(request);
     const {
       name,
@@ -868,19 +882,109 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
         delay_max ?? 15,
         time_from ?? "09:00",
         time_to ?? "18:00",
-        JSON.stringify(days_blocked),
-        funnel_id,
-        crm_column_id,
+        JSON.stringify(Array.isArray(days_blocked) ? days_blocked : []),
+        funnel_id ?? null,
+        crm_column_id ?? null,
       )
       .run();
 
+    const raw = res as { meta?: { last_row_id?: number }; lastRowId?: number };
+    const lastId = raw.meta?.last_row_id ?? raw.lastRowId ?? 0;
     const created = await env.DB.prepare(
-      "SELECT * FROM campaigns WHERE id = ? AND tenant_id = ?",
+      "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, status, total_leads, sent, errors, no_whatsapp, created_at FROM campaigns WHERE id = ? AND tenant_id = ?",
     )
-      .bind(res.lastRowId, tenantId)
+      .bind(lastId, tenantId)
       .first();
 
+    if (!created) return json({ error: "Campanha criada mas não encontrada" }, { status: 500 });
     return json(created, { status: 201 });
+  }
+
+  if (method === "PUT" && isSingle && campaignId) {
+    const body = await readBody<any>(request);
+    const {
+      name,
+      delay_min,
+      delay_max,
+      time_from,
+      time_to,
+      days_blocked,
+    } = body;
+
+    const existing = await env.DB.prepare(
+      "SELECT id FROM campaigns WHERE id = ? AND tenant_id = ?",
+    )
+      .bind(campaignId, tenantId)
+      .first();
+    if (!existing) return json({ error: "Campanha não encontrada" }, { status: 404 });
+
+    const updates: string[] = [];
+    const params: unknown[] = [];
+    if (name !== undefined) {
+      updates.push("name = ?");
+      params.push(String(name));
+    }
+    if (delay_min !== undefined) {
+      updates.push("delay_min = ?");
+      params.push(Number(delay_min));
+    }
+    if (delay_max !== undefined) {
+      updates.push("delay_max = ?");
+      params.push(Number(delay_max));
+    }
+    if (time_from !== undefined) {
+      updates.push("time_from = ?");
+      params.push(String(time_from));
+    }
+    if (time_to !== undefined) {
+      updates.push("time_to = ?");
+      params.push(String(time_to));
+    }
+    if (days_blocked !== undefined) {
+      updates.push("days_blocked = ?");
+      params.push(JSON.stringify(Array.isArray(days_blocked) ? days_blocked : []));
+    }
+    if (updates.length === 0) return json({ error: "Nenhum campo para atualizar" }, { status: 400 });
+    params.push(campaignId, tenantId);
+    await env.DB.prepare(
+      `UPDATE campaigns SET ${updates.join(", ")} WHERE id = ? AND tenant_id = ?`,
+    )
+      .bind(...params)
+      .run();
+
+    const updated = await env.DB.prepare(
+      "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, status, total_leads, sent, errors, no_whatsapp, created_at FROM campaigns WHERE id = ? AND tenant_id = ?",
+    )
+      .bind(campaignId, tenantId)
+      .first();
+    return json(updated);
+  }
+
+  return new Response("Method not allowed", { status: 405 });
+}
+
+async function handleSettings(request: Request, env: Env, method: string) {
+  const tenantId = getTenantId(request);
+  await ensureTenant(env, tenantId);
+
+  if (method === "GET") {
+    const row = await env.DB.prepare(
+      "SELECT value FROM tenant_settings WHERE tenant_id = ? AND key = ?",
+    )
+      .bind(tenantId, "notification_whatsapp_phone")
+      .first<{ value: string | null }>();
+    return json({ notification_whatsapp_phone: row?.value ?? "" });
+  }
+
+  if (method === "PUT") {
+    const body = await readBody<{ notification_whatsapp_phone?: string }>(request);
+    const value = body.notification_whatsapp_phone != null ? String(body.notification_whatsapp_phone).trim() : "";
+    await env.DB.prepare(
+      "INSERT OR REPLACE INTO tenant_settings (tenant_id, key, value) VALUES (?, ?, ?)",
+    )
+      .bind(tenantId, "notification_whatsapp_phone", value)
+      .run();
+    return json({ notification_whatsapp_phone: value });
   }
 
   return new Response("Method not allowed", { status: 405 });
@@ -1233,6 +1337,8 @@ export default {
         response = await handleAdminDeleteUser(request, env, urlForRouting);
       } else if (pathname === "/api/auth/login" && method === "POST") {
         response = await handleClientLogin(request, env);
+      } else if (pathname === "/api/settings" && (method === "GET" || method === "PUT")) {
+        response = await handleSettings(request, env, method);
       } else if (pathname.startsWith("/api/connections/whatsapp")) {
         response = await handleWhatsappConnection(request, env, method, urlForRouting);
       } else if (pathname.startsWith("/api/lead-folders")) {

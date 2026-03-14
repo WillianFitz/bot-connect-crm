@@ -1,11 +1,19 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Phone, CalendarClock } from "lucide-react";
+import { Plus, Phone, CalendarClock, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { api } from "@/lib/api";
+import { useToast } from "@/hooks/use-toast";
 
 interface Campaign {
   id: number;
@@ -26,8 +34,10 @@ const weekDays = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
 export default function Campaigns() {
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [whatsappNumber, setWhatsappNumber] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null);
 
   const [name, setName] = useState("");
   const [delayMin, setDelayMin] = useState(6);
@@ -35,6 +45,28 @@ export default function Campaigns() {
   const [timeFrom, setTimeFrom] = useState("09:00");
   const [timeTo, setTimeTo] = useState("18:00");
   const [blockedDays, setBlockedDays] = useState<string[]>([]);
+
+  const settingsQuery = useQuery({
+    queryKey: ["settings"],
+    queryFn: api.getSettings,
+  });
+  useEffect(() => {
+    if (settingsQuery.data?.notification_whatsapp_phone != null)
+      setWhatsappNumber(settingsQuery.data.notification_whatsapp_phone);
+  }, [settingsQuery.data?.notification_whatsapp_phone]);
+
+  const saveSettings = useMutation({
+    mutationFn: (value: string) =>
+      api.updateSettings({ notification_whatsapp_phone: value }),
+    onSuccess: (_, value) => {
+      queryClient.invalidateQueries({ queryKey: ["settings"] });
+      setWhatsappNumber(value);
+      toast({ title: "Número salvo.", description: "Você receberá notificações neste número." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Erro ao salvar", description: err.message, variant: "destructive" });
+    },
+  });
 
   const campaignsQuery = useQuery({
     queryKey: ["campaigns"],
@@ -52,6 +84,23 @@ export default function Campaigns() {
       setTimeTo("18:00");
       setBlockedDays([]);
       setShowForm(false);
+      toast({ title: "Campanha criada." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Erro ao criar campanha", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const updateCampaign = useMutation({
+    mutationFn: ({ id, payload }: { id: number; payload: any }) =>
+      api.updateCampaign(id, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["campaigns"] });
+      setEditingCampaign(null);
+      toast({ title: "Campanha atualizada." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Erro ao atualizar campanha", description: err.message, variant: "destructive" });
     },
   });
 
@@ -70,6 +119,35 @@ export default function Campaigns() {
       time_from: timeFrom,
       time_to: timeTo,
       days_blocked: blockedDays,
+    });
+  };
+
+  const openEdit = (c: Campaign) => {
+    setEditingCampaign(c);
+    const days = typeof c.days_blocked === "string"
+      ? (() => { try { return JSON.parse(c.days_blocked); } catch { return []; } })()
+      : (c.days_blocked || []);
+    setName(c.name);
+    setDelayMin(c.delay_min ?? 6);
+    setDelayMax(c.delay_max ?? 15);
+    setTimeFrom(c.time_from ?? "09:00");
+    setTimeTo(c.time_to ?? "18:00");
+    setBlockedDays(Array.isArray(days) ? days : []);
+  };
+
+  const handleSaveEdit = () => {
+    if (!editingCampaign) return;
+    if (!name) return;
+    updateCampaign.mutate({
+      id: editingCampaign.id,
+      payload: {
+        name,
+        delay_min: delayMin,
+        delay_max: delayMax,
+        time_from: timeFrom,
+        time_to: timeTo,
+        days_blocked: blockedDays,
+      },
     });
   };
 
@@ -105,8 +183,13 @@ export default function Campaigns() {
               onChange={(e) => setWhatsappNumber(e.target.value)}
             />
           </div>
-          <Button variant="outline" className="mt-5">
-            Salvar
+          <Button
+            variant="outline"
+            className="mt-5"
+            disabled={saveSettings.isPending}
+            onClick={() => saveSettings.mutate(whatsappNumber)}
+          >
+            {saveSettings.isPending ? "Salvando..." : "Salvar"}
           </Button>
         </div>
       </div>
@@ -328,8 +411,16 @@ export default function Campaigns() {
                     <td className="px-3 py-2 text-xs text-muted-foreground">
                       {c.no_whatsapp}
                     </td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground text-right">
-                      <CalendarClock className="h-3.5 w-3.5 inline-block text-muted-foreground" />
+                    <td className="px-3 py-2 text-xs text-right">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                        onClick={() => openEdit(c)}
+                        title="Editar campanha"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
                     </td>
                   </tr>
                 ))
@@ -338,6 +429,96 @@ export default function Campaigns() {
           </table>
         </div>
       </div>
+
+      <Dialog open={!!editingCampaign} onOpenChange={(open) => !open && setEditingCampaign(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Editar campanha</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <Label className="text-xs text-muted-foreground">Nome da campanha</Label>
+              <Input
+                className="mt-1 bg-secondary border-border/50"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs text-muted-foreground">Delay mínimo (min)</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  className="mt-1 bg-secondary border-border/50"
+                  value={delayMin}
+                  onChange={(e) => setDelayMin(Number(e.target.value) || 0)}
+                />
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">Delay máximo (min)</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  className="mt-1 bg-secondary border-border/50"
+                  value={delayMax}
+                  onChange={(e) => setDelayMax(Number(e.target.value) || 0)}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs text-muted-foreground">Das</Label>
+                <Input
+                  type="time"
+                  className="mt-1 bg-secondary border-border/50"
+                  value={timeFrom}
+                  onChange={(e) => setTimeFrom(e.target.value)}
+                />
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">Até</Label>
+                <Input
+                  type="time"
+                  className="mt-1 bg-secondary border-border/50"
+                  value={timeTo}
+                  onChange={(e) => setTimeTo(e.target.value)}
+                />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs text-muted-foreground">Não disparar nos dias</Label>
+              <div className="flex flex-wrap gap-2 mt-1">
+                {weekDays.map((day) => (
+                  <button
+                    key={day}
+                    type="button"
+                    onClick={() => toggleDay(day)}
+                    className={`px-2 py-1 rounded-full text-[11px] border ${
+                      blockedDays.includes(day)
+                        ? "bg-secondary text-foreground border-border/70"
+                        : "bg-background text-muted-foreground border-border/40"
+                    }`}
+                  >
+                    {day}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingCampaign(null)}>
+              Cancelar
+            </Button>
+            <Button
+              disabled={!name || updateCampaign.isPending}
+              onClick={handleSaveEdit}
+            >
+              {updateCampaign.isPending ? "Salvando..." : "Salvar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
