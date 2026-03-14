@@ -100,18 +100,21 @@ async function ensureTenant(env: Env, tenantId: string) {
 async function callOpenAI(
   env: Env,
   messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
+  options?: { temperature?: number; top_p?: number },
 ) {
+  const body: Record<string, unknown> = {
+    model: "gpt-4o-mini",
+    messages,
+    temperature: options?.temperature ?? 0.7,
+  };
+  if (options?.top_p != null) body.top_p = options.top_p;
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${env.OPENAI_API_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      model: "gpt-4o-mini",
-      messages,
-      temperature: 0.7,
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {
@@ -783,10 +786,15 @@ async function handleAIDisparo(request: Request, env: Env): Promise<Response> {
 
   const basePrompt = row?.base_prompt || `Você gera a primeira mensagem que a EMPRESA envia para um LEAD (prospecção). A empresa está entrando em contato com o lead — não use "Como posso ajudar?". Use saudação de quem inicia o contato. Use o nome da empresa LeadFlowAI e peça 1 minuto para uma proposta. Pode usar o nome do lead. Responda EXCLUSIVAMENTE em JSON: {"mensagem": "texto"}.`;
 
-  const content = await callOpenAI(env, [
-    { role: "system", content: basePrompt },
-    { role: "user", content: "Gere uma saudação válida conforme as regras." },
-  ]);
+  const disparoOptions = { temperature: 0.9, top_p: 0.95 };
+  const content = await callOpenAI(
+    env,
+    [
+      { role: "system", content: basePrompt },
+      { role: "user", content: "Gere uma saudação válida conforme as regras." },
+    ],
+    disparoOptions,
+  );
 
   // Tentamos devolver JSON parseado; se falhar, devolvemos como string.
   try {
@@ -843,11 +851,16 @@ async function generateDisparoMessage(env: Env, tenantId: string, company: strin
     savedPrompt ||
     `Você gera a primeira mensagem que a EMPRESA envia para um LEAD (prospecção). A empresa está entrando em contato com o lead. Responda EXCLUSIVAMENTE em JSON: {"mensagem": "texto"}.`;
   const userPrompt = `Nome/empresa do lead: "${company}". Gere a mensagem seguindo exatamente as instruções do sistema acima. Responda só em JSON: {"mensagem": "sua mensagem"}.`;
+  const disparoOptions = { temperature: 0.9, top_p: 0.95 };
   try {
-    const content = await callOpenAI(env, [
-      { role: "system", content: basePrompt },
-      { role: "user", content: userPrompt },
-    ]);
+    const content = await callOpenAI(
+      env,
+      [
+        { role: "system", content: basePrompt },
+        { role: "user", content: userPrompt },
+      ],
+      disparoOptions,
+    );
     const parsed = JSON.parse(content) as { mensagem?: string };
     return (parsed?.mensagem || content).trim() || defaultMsg;
   } catch {
