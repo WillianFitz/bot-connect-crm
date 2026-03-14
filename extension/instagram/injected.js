@@ -122,4 +122,6 @@
     PatchedXHR.prototype = OrigXHR.prototype;
     window.XMLHttpRequest = PatchedXHR;
   }
+
+  try { window.postMessage({ type: "__IG_EXTRACTOR_READY" }, "*"); } catch(e) {}
 })();

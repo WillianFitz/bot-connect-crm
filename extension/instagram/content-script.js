@@ -16,6 +16,10 @@ if (typeof window.__igExtractorLoaded === "undefined") {
       _lastPageTs = Date.now();
       _lastPageHasMore = ev.data.hasMore;
     }
+    if (ev.data?.type === "__IG_EXTRACTOR_READY" && window.__igInjectedReadyResolve) {
+      window.__igInjectedReadyResolve();
+      window.__igInjectedReadyResolve = null;
+    }
   });
 
   // Injeta injected.js no contexto da página (necessário para interceptar fetch/XHR do Instagram)
@@ -104,20 +108,33 @@ if (typeof window.__igExtractorLoaded === "undefined") {
     _lastPageTs = Date.now();
     _userId = null;
 
-    // Injeta e aguarda o interceptor estar ativo (poll até 5s)
-    injectPageScript();
-    const patchDeadline = Date.now() + 5000;
-    while (!window.__igFetchPatched && Date.now() < patchDeadline) await sleep(200);
-
-    if (!window.__igFetchPatched) {
-      console.warn("[IGExtractor] injected.js não carregou na primeira tentativa, retentando...");
-      injectPageScript();
-      const retryDeadline = Date.now() + 4000;
-      while (!window.__igFetchPatched && Date.now() < retryDeadline) await sleep(200);
+    // Injeta e aguarda mensagem __IG_EXTRACTOR_READY (injected roda na página, content-script não vê seu window)
+    function waitInjectedReady(timeoutMs) {
+      return new Promise((resolve) => {
+        let done = false;
+        const t = setTimeout(() => {
+          if (done) return;
+          done = true;
+          window.__igInjectedReadyResolve = null;
+          resolve(false);
+        }, timeoutMs);
+        window.__igInjectedReadyResolve = () => {
+          if (done) return;
+          done = true;
+          clearTimeout(t);
+          window.__igInjectedReadyResolve = null;
+          resolve(true);
+        };
+      });
     }
-
-    console.log("[IGExtractor] Iniciando para", baseProfile, "target:", targetCount,
-                "| fetchPatched:", !!window.__igFetchPatched);
+    injectPageScript();
+    let ready = await waitInjectedReady(6000);
+    if (!ready) {
+      console.warn("[IGExtractor] injected.js não respondeu na primeira tentativa, retentando...");
+      injectPageScript();
+      ready = await waitInjectedReady(5000);
+    }
+    console.log("[IGExtractor] Iniciando para", baseProfile, "target:", targetCount, "| injected:", ready);
 
     await waitFor("header", 12000);
     await sleep(1500);

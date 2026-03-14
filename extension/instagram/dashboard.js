@@ -204,6 +204,27 @@ function pushLead(resp, username, leads) {
    INIT
    ══════════════════════════════════════════════════════════ */
 document.addEventListener("DOMContentLoaded", () => {
+  /* ── Pré-config do config.json (ZIP baixado pelo painel do SaaS) ──
+     Só existe quando a extensão foi instalada a partir do ZIP "Baixar extensão já configurada".
+     Não busca token/tenant/webhook de nenhum servidor — apenas lê o arquivo local config.json. */
+  function loadConfigJson() {
+    return fetch(chrome.runtime.getURL("config.json"))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((cfg) => {
+        if (!cfg || !cfg.tenantId || !cfg.extensionToken || !cfg.webhookUrl) return;
+        chrome.storage.local.set({
+          tenantId: String(cfg.tenantId),
+          extensionToken: String(cfg.extensionToken),
+          webhookUrl: String(cfg.webhookUrl),
+          preConfigured: true,
+        }, () => {
+          const el = document.getElementById("tenantId");
+          if (el) { el.readOnly = true; el.title = "Pré-configurado pelo painel (somente leitura)."; }
+        });
+      })
+      .catch(() => {});
+  }
+
   /* ── Auto-config via URL params do SaaS ──
      O SaaS pode abrir: dashboard.html?tid=X&tok=Y&wh=https://...
      Isso configura a extensão automaticamente sem intervenção do usuário. */
@@ -231,23 +252,28 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  /* Carrega config + atualiza stats do perfil salvo */
-  chrome.storage.local.get(
-    ["tenantId", "extensionToken", "webhookUrl", "lastProfile", "profiles"],
-    (data) => {
-      if (data.tenantId)       document.getElementById("tenantId").value = data.tenantId;
-      if (data.extensionToken) document.getElementById("token").value = data.extensionToken;
-      if (data.webhookUrl)     document.getElementById("webhookUrl").value = data.webhookUrl;
-      if (data.lastProfile)    document.getElementById("profile").value = data.lastProfile;
-      renderProfilesTable(data.profiles || {});
+  /* Carrega config + atualiza stats do perfil salvo (após config.json ter chance de preencher) */
+  loadConfigJson().then(() => {
+    chrome.storage.local.get(
+      ["tenantId", "extensionToken", "webhookUrl", "lastProfile", "profiles", "preConfigured"],
+      (data) => {
+        if (data.tenantId)       document.getElementById("tenantId").value = data.tenantId;
+        if (data.extensionToken) document.getElementById("token").value = data.extensionToken;
+        if (data.webhookUrl)     document.getElementById("webhookUrl").value = data.webhookUrl;
+        if (data.lastProfile)    document.getElementById("profile").value = data.lastProfile;
+        if (data.preConfigured) {
+          const el = document.getElementById("tenantId");
+          if (el) { el.readOnly = true; el.title = "Pré-configurado pelo painel (somente leitura)."; }
+        }
+        renderProfilesTable(data.profiles || {});
 
-      // Atualiza stats do último perfil capturado
-      if (data.lastProfile && data.tenantId && data.profiles) {
-        const key = getProfileKey(data.tenantId, data.lastProfile);
-        updateStats(data.profiles[key]);
+        if (data.lastProfile && data.tenantId && data.profiles) {
+          const key = getProfileKey(data.tenantId, data.lastProfile);
+          updateStats(data.profiles[key]);
+        }
       }
-    }
-  );
+    );
+  });
 
   /* Atualiza stats ao mudar o campo perfil */
   document.getElementById("profile").addEventListener("change", () => {
