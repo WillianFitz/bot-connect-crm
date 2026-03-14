@@ -1182,10 +1182,17 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
   return new Response("Not found", { status: 404 });
 }
 
+/** Pathname normalizado para roteamento: se a URL tiver /api/ em qualquer lugar (ex.: base path), usa a partir daí. */
+function normalisePathname(pathname: string): string {
+  const i = pathname.indexOf("/api/");
+  return i >= 0 ? pathname.slice(i) : pathname;
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    const { pathname } = url;
+    const pathname = normalisePathname(url.pathname);
+    const urlForRouting = pathname !== url.pathname ? new URL(pathname + url.search, request.url) : url;
     const method = request.method.toUpperCase();
 
     // CORS simples para desenvolvimento
@@ -1209,23 +1216,23 @@ export default {
       } else if (pathname === "/api/admin/users" && method === "GET") {
         response = await handleAdminListUsers(request, env);
       } else if (pathname === "/api/admin/users" && method === "DELETE") {
-        response = await handleAdminDeleteUser(request, env, url);
+        response = await handleAdminDeleteUser(request, env, urlForRouting);
       } else if (pathname === "/api/auth/login" && method === "POST") {
         response = await handleClientLogin(request, env);
       } else if (pathname.startsWith("/api/connections/whatsapp")) {
-        response = await handleWhatsappConnection(request, env, method, url);
+        response = await handleWhatsappConnection(request, env, method, urlForRouting);
       } else if (pathname.startsWith("/api/lead-folders")) {
-        response = await handleLeadFolders(request, env, method, url);
+        response = await handleLeadFolders(request, env, method, urlForRouting);
       } else if (pathname.startsWith("/api/leads")) {
-        response = await handleLeads(request, env, method, url);
+        response = await handleLeads(request, env, method, urlForRouting);
       } else if (pathname.startsWith("/api/agents")) {
-        response = await handleAgents(request, env, method, url);
+        response = await handleAgents(request, env, method, urlForRouting);
       } else if (pathname.startsWith("/api/campaigns")) {
-        response = await handleCampaigns(request, env, method, url);
+        response = await handleCampaigns(request, env, method, urlForRouting);
       } else if (pathname.startsWith("/api/crm")) {
-        response = await handleCRM(request, env, method, url);
+        response = await handleCRM(request, env, method, urlForRouting);
       } else if (pathname.startsWith("/api/tools/instagram")) {
-        response = await handleInstagramTools(request, env, method, url);
+        response = await handleInstagramTools(request, env, method, urlForRouting);
       } else if (pathname === "/api/ai/disparo" && method === "POST") {
         response = await handleAIDisparo(request, env);
       } else if (pathname === "/api/ai/atendimento" && method === "POST") {
