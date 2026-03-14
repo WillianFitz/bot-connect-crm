@@ -958,7 +958,7 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
     }
 
     const delayMin = Math.max(0, Number(camp.delay_min) ?? 0);
-    const delayMax = Math.max(delayMin, Number(camp.delay_max) ?? delayMin || 5);
+    const delayMax = Math.max(delayMin, (Number(camp.delay_max) ?? delayMin ?? 5));
     const lastSent = await env.DB.prepare(
       "SELECT sent_at FROM campaign_sends WHERE campaign_id = ? AND status = 'sent' ORDER BY sent_at DESC LIMIT 1",
     )
