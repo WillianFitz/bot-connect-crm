@@ -966,12 +966,12 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
       .first<{ sent_at: string }>();
     if (lastSent?.sent_at && (delayMin > 0 || delayMax > 0)) {
       const last = new Date(lastSent.sent_at).getTime();
-      const elapsedMin = (Date.now() - last) / (60 * 1000);
-      const requiredMin = delayMin + Math.random() * (delayMax - delayMin);
-      if (elapsedMin < requiredMin) continue;
+      const elapsedSec = (Date.now() - last) / 1000;
+      const requiredSec = delayMin + Math.random() * (delayMax - delayMin);
+      if (elapsedSec < requiredSec) continue;
     }
 
-    const limitPerRun = delayMin > 0 || delayMax > 0 ? 1 : 5;
+    const limitPerRun = 5;
     const pending = await env.DB.prepare(
       `SELECT l.id, l.company, l.phone FROM leads l
        WHERE l.tenant_id = ?
@@ -1027,6 +1027,11 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
           .bind(camp.id, tenantId)
           .run();
         sent++;
+        const isLastLead = rows.indexOf(lead) === rows.length - 1;
+        if (!isLastLead && (delayMin > 0 || delayMax > 0)) {
+          const waitSec = delayMin + Math.random() * (delayMax - delayMin);
+          await new Promise((r) => setTimeout(r, Math.min(waitSec * 1000, 60000)));
+        }
       } else {
         const errMsg = result.error || "Erro ao enviar";
         campaignErrors.push(errMsg);

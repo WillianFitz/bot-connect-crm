@@ -278,9 +278,9 @@ export default function Campaigns() {
         {showForm && (
           <div className="mt-3 space-y-4">
             <p className="text-xs text-muted-foreground bg-muted/50 rounded-lg p-3 border border-border/30">
-              <strong>Horário (Das / Até):</strong> em que horas do dia a campanha pode enviar (ex.: 09:00 às 18:00, horário de Brasília). Fora desse intervalo o cron não dispara.
+              <strong>Horário (Das / Até):</strong> em que horas do dia a campanha pode enviar (ex.: 10:00 às 18:00, horário de Brasília).
               <br />
-              <strong>Intervalo (Delay min–max):</strong> tempo em minutos entre uma mensagem e a próxima. Ex.: 30 min = envia para o 1º lead, só após 30 min envia para o 2º (o cron roda a cada 2 min e respeita esse intervalo).
+              <strong>Intervalo (Delay min–max em segundos):</strong> tempo aleatório entre uma mensagem e a próxima. Ex.: 6 e 15 = espera entre 6 e 15 segundos (às vezes 7, às vezes 11, etc.) antes de enviar a próxima.
             </p>
             <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-3">
@@ -298,26 +298,28 @@ export default function Campaigns() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label className="text-xs text-muted-foreground">
-                    Delay mínimo (minutos)
+                    Delay mínimo (segundos)
                   </Label>
                   <Input
                     type="number"
-                    min={1}
+                    min={0}
                     className="mt-1 bg-secondary border-border/50"
                     value={delayMin}
                     onChange={(e) => setDelayMin(Number(e.target.value) || 0)}
+                    placeholder="6"
                   />
                 </div>
                 <div>
                   <Label className="text-xs text-muted-foreground">
-                    Delay máximo (minutos)
+                    Delay máximo (segundos)
                   </Label>
                   <Input
                     type="number"
-                    min={1}
+                    min={0}
                     className="mt-1 bg-secondary border-border/50"
                     value={delayMax}
                     onChange={(e) => setDelayMax(Number(e.target.value) || 0)}
+                    placeholder="15"
                   />
                 </div>
               </div>
@@ -562,7 +564,7 @@ export default function Campaigns() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label className="text-xs text-muted-foreground">Delay mínimo (min)</Label>
+                <Label className="text-xs text-muted-foreground">Delay mínimo (segundos)</Label>
                 <Input
                   type="number"
                   min={1}
@@ -572,7 +574,7 @@ export default function Campaigns() {
                 />
               </div>
               <div>
-                <Label className="text-xs text-muted-foreground">Delay máximo (min)</Label>
+                <Label className="text-xs text-muted-foreground">Delay máximo (segundos)</Label>
                 <Input
                   type="number"
                   min={1}
