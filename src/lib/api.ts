@@ -152,9 +152,9 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
-  runCampaigns: () =>
+  runCampaigns: (options?: { ignoreWindow?: boolean }) =>
     request<{ ok: boolean; processed: number; campaigns: Array<{ campaignId: number; sent: number; errors: number }> }>(
-      "/campaigns/run",
+      `/campaigns/run${options?.ignoreWindow ? "?ignoreWindow=1" : ""}`,
       { method: "POST" },
     ),
 

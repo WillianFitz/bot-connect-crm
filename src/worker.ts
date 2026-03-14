@@ -888,7 +888,15 @@ async function sendWhatsAppMessage(
 
 const BR_DAY_MAP: Record<string, string> = { dom: "Dom", seg: "Seg", ter: "Ter", qua: "Qua", qui: "Qui", sex: "Sex", sáb: "Sáb", sab: "Sáb" };
 
-async function handleCampaignRun(env: Env, tenantId: string): Promise<Response> {
+function normalizeTimeToHHMM(s: string): string {
+  const match = (s || "").match(/^\s*(\d{1,2})\s*[:\h]\s*(\d{1,2})/);
+  if (!match) return "00:00";
+  const h = Math.min(23, Math.max(0, parseInt(match[1], 10)));
+  const m = Math.min(59, Math.max(0, parseInt(match[2], 10)));
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = false): Promise<Response> {
   const now = new Date();
   const dayNames = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
   let nowTimeStr: string;
@@ -904,7 +912,8 @@ async function handleCampaignRun(env: Env, tenantId: string): Promise<Response> 
       timeZone: "America/Sao_Paulo",
       weekday: "short",
     });
-    nowTimeStr = timeFmt.format(now).replace(/\s/g, "");
+    const raw = timeFmt.format(now).replace(/\s/g, "");
+    nowTimeStr = normalizeTimeToHHMM(raw);
     const dayStr = dayFmt.format(now).toLowerCase().replace(/\./g, "");
     todayName = BR_DAY_MAP[dayStr] || dayNames[now.getUTCDay()];
   } catch {
@@ -934,16 +943,18 @@ async function handleCampaignRun(env: Env, tenantId: string): Promise<Response> 
   const runResult: { campaignId: number; sent: number; errors: number }[] = [];
 
   for (const camp of list) {
-    let blocked: string[] = [];
-    try {
-      blocked = JSON.parse(camp.days_blocked || "[]");
-    } catch {
-      blocked = [];
+    if (!ignoreWindow) {
+      let blocked: string[] = [];
+      try {
+        blocked = JSON.parse(camp.days_blocked || "[]");
+      } catch {
+        blocked = [];
+      }
+      if (blocked.includes(todayName)) continue;
+      const from = normalizeTimeToHHMM(camp.time_from || "00:00");
+      const to = normalizeTimeToHHMM(camp.time_to || "23:59");
+      if (nowTimeStr < from || nowTimeStr > to) continue;
     }
-    if (blocked.includes(todayName)) continue;
-    const from = (camp.time_from || "00:00").slice(0, 5);
-    const to = (camp.time_to || "23:59").slice(0, 5);
-    if (nowTimeStr < from || nowTimeStr > to) continue;
 
     const pending = await env.DB.prepare(
       `SELECT l.id, l.company, l.phone FROM leads l
@@ -1050,7 +1061,8 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
   const campaignId = isSingle ? Number(idParam) : null;
 
   if (method === "POST" && parts[2] === "run") {
-    const result = await handleCampaignRun(env, tenantId);
+    const ignoreWindow = url.searchParams.get("ignoreWindow") === "1";
+    const result = await handleCampaignRun(env, tenantId, ignoreWindow);
     return result;
   }
 

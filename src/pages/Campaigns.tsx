@@ -122,13 +122,17 @@ export default function Campaigns() {
   });
 
   const runCampaigns = useMutation({
-    mutationFn: api.runCampaigns,
-    onSuccess: (data) => {
+    mutationFn: (ignoreWindow?: boolean) => api.runCampaigns({ ignoreWindow }),
+    onSuccess: (data, ignoreWindow) => {
       queryClient.invalidateQueries({ queryKey: ["campaigns"] });
       const total = data?.campaigns?.reduce((s, c) => s + c.sent + c.errors, 0) ?? 0;
       toast({
         title: "Processamento executado",
-        description: total > 0 ? `${data.processed} lead(s) processado(s).` : "Nenhum lead pendente no horário das campanhas ativas.",
+        description: total > 0
+          ? `${data.processed} lead(s) processado(s).`
+          : ignoreWindow
+            ? "Nenhum lead pendente para enviar (ou todos já foram processados)."
+            : "Nenhum lead pendente no horário das campanhas ativas.",
       });
     },
     onError: (err: Error) => {
@@ -373,8 +377,8 @@ export default function Campaigns() {
               variant="outline"
               size="sm"
               disabled={runCampaigns.isPending}
-              onClick={() => runCampaigns.mutate()}
-              title="Envia um lote de mensagens agora (respeitando horário das campanhas ativas)"
+              onClick={() => runCampaigns.mutate(true)}
+              title="Envia um lote de mensagens agora (ignora horário configurado)"
             >
               {runCampaigns.isPending ? "Processando..." : "Processar agora"}
             </Button>
