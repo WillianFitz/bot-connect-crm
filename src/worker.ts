@@ -1096,15 +1096,15 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
       } catch {
         text = "Olá! Tudo bem?";
       }
-      const description = text.length > 1024 ? text.slice(0, 1021) + "..." : text;
-      const result = await sendWhatsAppButtons(env, tenantId, phone, {
-        title: "Mensagem",
-        description,
-        footer: "",
-        buttons: [{ title: "reply", displayText: "Tenho interesse sim", id: "interesse_sim" }],
-      });
 
+      const result = await sendWhatsAppMessage(env, tenantId, phone, text);
       if (result.ok) {
+        sendWhatsAppButtons(env, tenantId, phone, {
+          title: "Resposta rápida",
+          description: "Clique no botão abaixo se tiver interesse.",
+          footer: "",
+          buttons: [{ type: "reply", displayText: "Tenho interesse sim", id: "interesse_sim" }],
+        }).catch(() => {});
         await env.DB.prepare(
           `INSERT INTO campaign_sends (campaign_id, lead_id, status) VALUES (?, ?, 'sent')
            ON CONFLICT(campaign_id, lead_id) DO UPDATE SET status = 'sent', sent_at = datetime('now'), error_message = NULL`,
