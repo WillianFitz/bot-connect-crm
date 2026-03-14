@@ -23,6 +23,9 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       const data = await res.json();
       if (data && typeof data.error === "string") {
         message = data.error;
+        if (data.details && typeof data.details === "string") {
+          message = `${message}: ${data.details}`;
+        }
       }
     } catch {
       // ignore

@@ -906,13 +906,18 @@ async function sendWhatsAppButtons(
   env: Env,
   tenantId: string,
   number: string,
-  payload: { title: string; description: string; footer: string; buttons: Array<{ type: string; displayText: string; id: string }> },
+  payload: { title: string; description: string; footer: string; buttons: Array<{ title?: string; type?: string; displayText: string; id: string }> },
 ): Promise<{ ok: boolean; error?: string }> {
   const baseUrl = getEvolutionBaseUrl(env);
   if (!baseUrl || !env.EVOLUTION_API_KEY) {
     return { ok: false, error: "Evolution API não configurada" };
   }
-  const body = JSON.stringify({ number, ...payload });
+  const buttons = payload.buttons.map((b) => ({
+    ...(b.title != null ? { title: b.title } : { type: b.type ?? "reply" }),
+    displayText: b.displayText,
+    id: b.id,
+  }));
+  const body = JSON.stringify({ number, ...payload, buttons });
   try {
     const res = await fetch(`${baseUrl}/message/sendButtons/${tenantId}`, {
       method: "POST",
@@ -1091,11 +1096,12 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
       } catch {
         text = "Olá! Tudo bem?";
       }
+      const description = text.length > 1024 ? text.slice(0, 1021) + "..." : text;
       const result = await sendWhatsAppButtons(env, tenantId, phone, {
         title: "Mensagem",
-        description: text,
+        description,
         footer: "",
-        buttons: [{ type: "reply", displayText: "Tenho interesse sim", id: "interesse_sim" }],
+        buttons: [{ title: "reply", displayText: "Tenho interesse sim", id: "interesse_sim" }],
       });
 
       if (result.ok) {
@@ -1178,8 +1184,15 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
 
   if (method === "POST" && parts[2] === "run") {
     const ignoreWindow = url.searchParams.get("ignoreWindow") === "1";
-    const result = await handleCampaignRun(env, tenantId, ignoreWindow);
-    return result;
+    try {
+      return await handleCampaignRun(env, tenantId, ignoreWindow);
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      return json(
+        { ok: false, processed: 0, campaigns: [], errorSummary: [msg] },
+        { status: 200 },
+      );
+    }
   }
 
   if (method === "GET") {
