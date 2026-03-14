@@ -902,6 +902,40 @@ async function sendWhatsAppMessage(
   }
 }
 
+async function sendWhatsAppButtons(
+  env: Env,
+  tenantId: string,
+  number: string,
+  payload: { title: string; description: string; footer: string; buttons: Array<{ type: string; displayText: string; id: string }> },
+): Promise<{ ok: boolean; error?: string }> {
+  const baseUrl = getEvolutionBaseUrl(env);
+  if (!baseUrl || !env.EVOLUTION_API_KEY) {
+    return { ok: false, error: "Evolution API não configurada" };
+  }
+  const body = JSON.stringify({ number, ...payload });
+  try {
+    const res = await fetch(`${baseUrl}/message/sendButtons/${tenantId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: env.EVOLUTION_API_KEY },
+      body,
+    });
+    if (!res.ok) {
+      let errMsg = res.statusText;
+      try {
+        const data = await res.json();
+        if (Array.isArray(data?.response?.message) && data.response.message[0])
+          errMsg = data.response.message[0];
+      } catch {
+        // ignore
+      }
+      return { ok: false, error: errMsg };
+    }
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || "Erro de rede" };
+  }
+}
+
 const BR_DAY_MAP: Record<string, string> = { dom: "Dom", seg: "Seg", ter: "Ter", qua: "Qua", qui: "Qui", sex: "Sex", sáb: "Sáb", sab: "Sáb" };
 
 function normalizeTimeToHHMM(s: string): string {
@@ -1061,6 +1095,12 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
       const result = await sendWhatsAppMessage(env, tenantId, phone, text);
 
       if (result.ok) {
+        await sendWhatsAppButtons(env, tenantId, phone, {
+          title: "Resposta rápida",
+          description: "Clique no botão abaixo se tiver interesse.",
+          footer: "",
+          buttons: [{ type: "reply", displayText: "Tenho interesse sim", id: "interesse_sim" }],
+        });
         await env.DB.prepare(
           "INSERT OR IGNORE INTO campaign_sends (campaign_id, lead_id, status) VALUES (?, ?, 'sent')",
         )
