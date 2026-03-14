@@ -833,10 +833,15 @@ async function generateDisparoMessage(env: Env, tenantId: string, company: strin
     "SELECT base_prompt, default_message FROM agents WHERE tenant_id = ? AND id = 'disparo' LIMIT 1",
   )
     .bind(tenantId)
-    .first<{ base_prompt?: string; default_message?: string }>();
+    .first<{ base_prompt?: string | null; default_message?: string | null }>();
+  const savedPrompt = row?.base_prompt != null ? String(row.base_prompt).trim() : "";
+  const defaultMsg = (row?.default_message != null ? String(row.default_message).trim() : "") || "Olá! Tudo bem?";
+  if (row && !savedPrompt) {
+    return defaultMsg;
+  }
   const basePrompt =
-    row?.base_prompt ||
-    `Você gera a primeira mensagem que a EMPRESA envia para um LEAD (prospecção). A empresa está entrando em contato com o lead — não use "Como posso ajudar?". Use saudação de quem inicia o contato. Use o nome da empresa LeadFlowAI e peça 1 minuto para uma proposta. Pode usar o nome do lead. Responda EXCLUSIVAMENTE em JSON: {"mensagem": "texto"}.`;
+    savedPrompt ||
+    `Você gera a primeira mensagem que a EMPRESA envia para um LEAD (prospecção). A empresa está entrando em contato com o lead. Responda EXCLUSIVAMENTE em JSON: {"mensagem": "texto"}.`;
   const userPrompt = `Nome/empresa do lead: "${company}". Gere a mensagem seguindo exatamente as instruções do sistema acima. Responda só em JSON: {"mensagem": "sua mensagem"}.`;
   try {
     const content = await callOpenAI(env, [
@@ -844,9 +849,9 @@ async function generateDisparoMessage(env: Env, tenantId: string, company: strin
       { role: "user", content: userPrompt },
     ]);
     const parsed = JSON.parse(content) as { mensagem?: string };
-    return (parsed?.mensagem || content).trim() || (row?.default_message || "Olá! Tudo bem?");
+    return (parsed?.mensagem || content).trim() || defaultMsg;
   } catch {
-    return (row?.default_message || "Olá! Tudo bem?").trim();
+    return defaultMsg;
   }
 }
 

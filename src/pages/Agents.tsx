@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, MessageCircle, CalendarClock, Loader2 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -76,6 +76,7 @@ const AGENDAMENTO_PROMPT_PLACEHOLDER =
 
 export default function Agents() {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<AgentId>("disparo");
   const [forms, setForms] = useState<Record<AgentId, AgentFormState> | null>(
     null,
@@ -95,8 +96,7 @@ export default function Agents() {
         name: "Agente de Disparo",
         type: "attendance",
         base_prompt:
-          agentsQuery.data.find((a: any) => a.id === "disparo")?.base_prompt ||
-          DISPARO_PROMPT_DEFAULT,
+          agentsQuery.data.find((a: any) => a.id === "disparo")?.base_prompt ?? "",
         default_message:
           agentsQuery.data.find((a: any) => a.id === "disparo")
             ?.default_message || "Oi, tudo bem? 😊",
@@ -190,9 +190,10 @@ export default function Agents() {
         },
       ]),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["agents"] });
       toast({
         title: "Agente salvo",
-        description: "As configurações do agente foram atualizadas.",
+        description: "Próximos disparos usarão o prompt e a mensagem padrão que você configurou.",
       });
     },
   });
@@ -232,7 +233,7 @@ export default function Agents() {
           Prompt do agente de disparo
         </Label>
         <p className="text-[11px] text-muted-foreground mt-0.5">
-          Há um prompt pronto para prospecção (empresa entrando em contato com o lead). Use o botão &quot;Usar prompt pronto&quot; para carregá-lo.
+          O que você escrever aqui é o que a IA usa para gerar a mensagem. Use o botão &quot;Usar prompt pronto&quot; para carregar um modelo de prospecção.
         </p>
         <Textarea
           className="min-h-[220px] bg-secondary border-border/50 text-xs leading-relaxed"
@@ -240,6 +241,7 @@ export default function Agents() {
           onChange={(e) =>
             updateField("disparo", { base_prompt: e.target.value })
           }
+          placeholder="Ex.: Envie apenas a mensagem: Olá! Ou descreva as regras para a IA gerar a mensagem (tom, saudação, CTA)."
         />
         <p className="text-[11px] text-muted-foreground">
           Dica: seja explícito sobre tom, limites de envio e conteúdo proibido.
