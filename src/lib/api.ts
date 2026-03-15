@@ -210,6 +210,18 @@ export const api = {
       method: "DELETE",
     }),
 
+  getDashboardStats: () =>
+    request<{
+      leadsTotal: number;
+      leadsWithPhone: number;
+      leadsLast7Days: Array<{ date: string; count: number }>;
+      campaigns: Array<{ id: number; name: string; status: string; total_leads: number; sent: number; errors: number }>;
+      campaignsActive: number;
+      campaignsTotal: number;
+      totalSent: number;
+      totalErrors: number;
+    }>("/dashboard/stats"),
+
   getAgents: () => request<any[]>("/agents"),
   saveAgents: (agents: any[]) =>
     request<{ ok: true; count: number }>("/agents", {

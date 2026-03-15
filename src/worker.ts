@@ -1265,6 +1265,70 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
   });
 }
 
+async function handleDashboardStats(request: Request, env: Env): Promise<Response> {
+  const tenantId = await getTenantId(request, env);
+  await ensureTenant(env, tenantId);
+
+  const [leadsTotalRow, leadsWithPhoneRow, leadsByDayRows, campaignsRows, campaignsCountRow] =
+    await Promise.all([
+      env.DB.prepare("SELECT COUNT(*) as c FROM leads WHERE tenant_id = ?").bind(tenantId).first<{ c: number }>(),
+      env.DB.prepare(
+        "SELECT COUNT(*) as c FROM leads WHERE tenant_id = ? AND phone IS NOT NULL AND trim(phone) != ''",
+      )
+        .bind(tenantId)
+        .first<{ c: number }>(),
+      env.DB.prepare(
+        `SELECT date(created_at) as d, COUNT(*) as c FROM leads
+         WHERE tenant_id = ? AND created_at >= date('now', '-7 days')
+         GROUP BY date(created_at) ORDER BY d ASC`,
+      )
+        .bind(tenantId)
+        .all<{ d: string; c: number }>(),
+      env.DB.prepare(
+        "SELECT id, name, status, total_leads, sent, errors FROM campaigns WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 10",
+      )
+        .bind(tenantId)
+        .all<{ id: number; name: string; status: string; total_leads: number; sent: number; errors: number }>(),
+      env.DB.prepare("SELECT COUNT(*) as c FROM campaigns WHERE tenant_id = ?").bind(tenantId).first<{ c: number }>(),
+    ]);
+
+  const leadsTotal = Number(leadsTotalRow?.c ?? 0);
+  const leadsWithPhone = Number(leadsWithPhoneRow?.c ?? 0);
+  const campaigns = (campaignsRows?.results ?? []) as Array<{
+    id: number;
+    name: string;
+    status: string;
+    total_leads: number;
+    sent: number;
+    errors: number;
+  }>;
+  const campaignsActive = campaigns.filter((c) => c.status === "active").length;
+  const campaignsTotal = Number(campaignsCountRow?.c ?? 0);
+  const totalSent = campaigns.reduce((s, c) => s + c.sent, 0);
+  const totalErrors = campaigns.reduce((s, c) => s + c.errors, 0);
+
+  const now = new Date();
+  const last7Days: { date: string; count: number }[] = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(now);
+    d.setDate(d.getDate() - i);
+    const dateStr = d.toISOString().slice(0, 10);
+    const found = (leadsByDayRows?.results ?? []).find((r: { d: string; c: number }) => r.d === dateStr);
+    last7Days.push({ date: dateStr, count: found ? Number(found.c) : 0 });
+  }
+
+  return json({
+    leadsTotal,
+    leadsWithPhone,
+    leadsLast7Days: last7Days,
+    campaigns,
+    campaignsActive,
+    campaignsTotal,
+    totalSent,
+    totalErrors,
+  });
+}
+
 async function handleCampaigns(request: Request, env: Env, method: string, url: URL) {
   const tenantId = await getTenantId(request, env);
   await ensureTenant(env, tenantId);
@@ -1812,6 +1876,8 @@ export default {
         response = await handleAdminDeleteUser(request, env, urlForRouting);
       } else if (pathname === "/api/auth/login" && method === "POST") {
         response = await handleClientLogin(request, env);
+      } else if (pathname === "/api/dashboard/stats" && method === "GET") {
+        response = await handleDashboardStats(request, env);
       } else if (pathname === "/api/settings" && (method === "GET" || method === "PUT")) {
         response = await handleSettings(request, env, method);
       } else if (pathname.startsWith("/api/connections/whatsapp")) {
