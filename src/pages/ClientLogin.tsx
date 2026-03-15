@@ -17,6 +17,9 @@ export default function ClientLogin() {
       if (typeof localStorage !== "undefined") {
         localStorage.setItem("tenant_id", data.tenantId);
         localStorage.setItem("user", data.username);
+        if (data.token) {
+          localStorage.setItem("auth_token", data.token);
+        }
       }
       navigate("/app");
     },

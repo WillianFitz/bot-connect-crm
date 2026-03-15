@@ -158,6 +158,13 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id);
 
+-- Rate limiting de login (key = login:username:ip)
+CREATE TABLE IF NOT EXISTS login_attempts (
+  key TEXT PRIMARY KEY,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  window_start TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Jobs de extração do Instagram por tenant
 CREATE TABLE IF NOT EXISTS instagram_jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -6,6 +6,8 @@ export interface Env {
   EXTRACTOR_SERVICE_URL: string;
   EVOLUTION_API_URL: string;
   EVOLUTION_API_KEY: string;
+  JWT_SECRET?: string;
+  ALLOWED_ORIGINS?: string;
 }
 
 type JsonValue = Record<string, unknown> | unknown[] | null;
@@ -34,15 +36,14 @@ async function readBody<T = any>(request: Request): Promise<T> {
   }
 }
 
-function getTenantId(request: Request): string {
-  // Para SaaS: defina de onde virá o tenant:
-  // - header "x-tenant-id"
-  // - subdomínio, etc.
-  const header = request.headers.get("x-tenant-id");
-  if (!header) {
-    // Tenant anônimo para testes, será criado automaticamente se não existir.
-    return "tenant_demo";
+async function getTenantId(request: Request, env: Env): Promise<string> {
+  const authHeader = request.headers.get("Authorization");
+  if (env.JWT_SECRET && authHeader?.startsWith("Bearer ")) {
+    const payload = await verifyJwt(authHeader.slice(7), env.JWT_SECRET);
+    if (payload) return payload.tenantId;
   }
+  const header = request.headers.get("x-tenant-id");
+  if (!header) return "tenant_demo";
   return header;
 }
 
@@ -51,11 +52,107 @@ function isAdmin(request: Request, env: Env): boolean {
   return !!key && key === env.ADMIN_API_KEY;
 }
 
+const PBKDF2_ITERATIONS = 120000;
+const SALT_LEN = 16;
+
 async function hashPassword(password: string): Promise<string> {
+  const salt = crypto.getRandomValues(new Uint8Array(SALT_LEN));
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt,
+      iterations: PBKDF2_ITERATIONS,
+      hash: "SHA-256",
+    },
+    key,
+    256,
+  );
+  const saltHex = Array.from(salt).map((b) => b.toString(16).padStart(2, "0")).join("");
+  const hashHex = Array.from(new Uint8Array(bits)).map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `pbkdf2:${PBKDF2_ITERATIONS}:${saltHex}:${hashHex}`;
+}
+
+async function verifyPassword(password: string, stored: string): Promise<boolean> {
+  if (!stored.startsWith("pbkdf2:")) {
+    const legacyHash = await legacySha256Hash(password);
+    return legacyHash === stored;
+  }
+  const [, itersStr, saltHex, hashHex] = stored.split(":");
+  const iterations = parseInt(itersStr || "0", 10) || PBKDF2_ITERATIONS;
+  const salt = new Uint8Array(saltHex!.match(/.{2}/g)!.map((h) => parseInt(h, 16)));
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt, iterations, hash: "SHA-256" },
+    key,
+    256,
+  );
+  const got = Array.from(new Uint8Array(bits)).map((b) => b.toString(16).padStart(2, "0")).join("");
+  return got === hashHex;
+}
+
+async function legacySha256Hash(password: string): Promise<string> {
   const data = new TextEncoder().encode(password);
   const digest = await crypto.subtle.digest("SHA-256", data);
   const hashArray = Array.from(new Uint8Array(digest));
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function signJwt(payload: { tenantId: string; username: string }, secret: string): Promise<string> {
+  const header = { alg: "HS256", typ: "JWT" };
+  const now = Math.floor(Date.now() / 1000);
+  const body = { ...payload, iat: now, exp: now + 60 * 60 * 24 * 7 };
+  const b64 = (b: Uint8Array) => btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const enc = (o: object) => b64(new TextEncoder().encode(JSON.stringify(o)));
+  const msg = `${enc(header)}.${enc(body)}`;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(msg));
+  return `${msg}.${b64(new Uint8Array(sig))}`;
+}
+
+async function verifyJwt(token: string, secret: string): Promise<{ tenantId: string; username: string } | null> {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const [, payloadB64] = parts;
+    const payloadJson = atob(payloadB64!.replace(/-/g, "+").replace(/_/g, "/"));
+    const payload = JSON.parse(payloadJson) as { tenantId?: string; username?: string; exp?: number };
+    if (!payload.tenantId || !payload.username || !payload.exp) return null;
+    if (payload.exp < Math.floor(Date.now() / 1000)) return null;
+    const msg = `${parts[0]}.${parts[1]}`;
+    const key = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(msg));
+    const b64 = (b: Uint8Array) => btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const expected = b64(new Uint8Array(sig));
+    if (parts[2] !== expected) return null;
+    return { tenantId: payload.tenantId, username: payload.username };
+  } catch {
+    return null;
+  }
 }
 
 function getEvolutionBaseUrl(env: Env): string {
@@ -197,10 +294,34 @@ async function handleAdminDeleteUser(request: Request, env: Env, url: URL): Prom
   return json({ ok: true });
 }
 
+const LOGIN_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_ATTEMPTS = 5;
+
 async function handleClientLogin(request: Request, env: Env): Promise<Response> {
   const body = await readBody<{ username?: string; password?: string }>(request);
   if (!body.username || !body.password) {
     return json({ error: "username e password são obrigatórios" }, { status: 400 });
+  }
+
+  const ip = request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() || "unknown";
+  const rateKey = `login:${body.username}:${ip}`;
+  const windowStart = Date.now() - LOGIN_RATE_LIMIT_WINDOW_MS;
+  await env.DB.prepare(
+    "DELETE FROM login_attempts WHERE key = ? AND window_start < ?",
+  )
+    .bind(rateKey, new Date(windowStart).toISOString())
+    .run();
+  const rateRow = await env.DB.prepare(
+    "SELECT attempts FROM login_attempts WHERE key = ? LIMIT 1",
+  )
+    .bind(rateKey)
+    .first<{ attempts: number }>();
+  const attempts = Number(rateRow?.attempts ?? 0);
+  if (attempts >= LOGIN_MAX_ATTEMPTS) {
+    return json(
+      { error: "Muitas tentativas. Aguarde alguns minutos e tente novamente." },
+      { status: 429 },
+    );
   }
 
   const row = await env.DB.prepare(
@@ -209,24 +330,40 @@ async function handleClientLogin(request: Request, env: Env): Promise<Response> 
     .bind(body.username)
     .first<{ tenant_id: string; username: string; password_hash: string }>();
 
+  const invalidCreds = async () => {
+    await env.DB.prepare(
+      `INSERT INTO login_attempts (key, attempts, window_start) VALUES (?, 1, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET attempts = attempts + 1`,
+    )
+      .bind(rateKey)
+      .run();
+    return json({ error: "Credenciais inválidas" }, { status: 401 });
+  };
+
   if (!row) {
-    return json({ error: "Credenciais inválidas" }, { status: 401 });
+    return invalidCreds();
   }
 
-  const incomingHash = await hashPassword(body.password);
-  if (incomingHash !== row.password_hash) {
-    return json({ error: "Credenciais inválidas" }, { status: 401 });
+  const ok = await verifyPassword(body.password, row.password_hash);
+  if (!ok) {
+    return invalidCreds();
   }
 
-  return json({
+  await env.DB.prepare("DELETE FROM login_attempts WHERE key = ?").bind(rateKey).run();
+
+  const out: { ok: true; tenantId: string; username: string; token?: string } = {
     ok: true,
     tenantId: row.tenant_id,
     username: row.username,
-  });
+  };
+  if (env.JWT_SECRET) {
+    out.token = await signJwt({ tenantId: row.tenant_id, username: row.username }, env.JWT_SECRET);
+  }
+  return json(out);
 }
 
 async function handleWhatsappConnection(request: Request, env: Env, method: string, url: URL) {
-  const tenantId = getTenantId(request);
+  const tenantId = await getTenantId(request, env);
   await ensureTenant(env, tenantId);
 
   const pathname = url.pathname;
@@ -247,7 +384,6 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
     }
 
     try {
-      // Cria (ou tenta criar) a instância com QR code já habilitado
       const res = await fetch(`${baseUrl}/instance/create`, {
         method: "POST",
         headers: {
@@ -262,7 +398,6 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
       });
 
       const data = (await res.json()) as any;
-      const base64 = data?.qrcode?.base64 || null;
 
       if (!res.ok) {
         return json(
@@ -277,6 +412,7 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
         );
       }
 
+      const base64 = data?.qrcode?.base64 || null;
       if (!base64) {
         return json(
           {
@@ -515,7 +651,7 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
 }
 
 async function handleLeadFolders(request: Request, env: Env, method: string, url: URL) {
-  const tenantId = getTenantId(request);
+  const tenantId = await getTenantId(request, env);
   await ensureTenant(env, tenantId);
 
   if (method === "GET") {
@@ -560,7 +696,7 @@ async function handleLeadFolders(request: Request, env: Env, method: string, url
 }
 
 async function handleLeads(request: Request, env: Env, method: string, url: URL) {
-  const tenantId = getTenantId(request);
+  const tenantId = await getTenantId(request, env);
   await ensureTenant(env, tenantId);
 
   if (method === "GET") {
@@ -667,7 +803,7 @@ async function handleLeads(request: Request, env: Env, method: string, url: URL)
 async function handleAgents(request: Request, env: Env, method: string, url: URL) {
   const pathname = url.pathname;
   const parts = pathname.split("/").filter(Boolean);
-  const tenantId = getTenantId(request);
+  const tenantId = await getTenantId(request, env);
   await ensureTenant(env, tenantId);
 
   // /api/agents
@@ -775,7 +911,7 @@ async function handleAgents(request: Request, env: Env, method: string, url: URL
 }
 
 async function handleAIDisparo(request: Request, env: Env): Promise<Response> {
-  const tenantId = getTenantId(request);
+  const tenantId = await getTenantId(request, env);
   await ensureTenant(env, tenantId);
 
   const row = await env.DB.prepare(
@@ -810,7 +946,7 @@ async function handleAIAgent(
   env: Env,
   agentId: "atendimento" | "agendamento",
 ): Promise<Response> {
-  const tenantId = getTenantId(request);
+  const tenantId = await getTenantId(request, env);
   await ensureTenant(env, tenantId);
 
   const body = await readBody<{ message?: string }>(request);
@@ -1074,8 +1210,8 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
         sent++;
         const isLastLead = rows.indexOf(lead) === rows.length - 1;
         if (!isLastLead && (delayMin > 0 || delayMax > 0)) {
-          const waitSec = delayMin + Math.random() * (delayMax - delayMin);
-          await new Promise((r) => setTimeout(r, Math.min(waitSec * 1000, 60000)));
+          const waitSec = Math.min(delayMin + Math.random() * (delayMax - delayMin), 5);
+          await new Promise((r) => setTimeout(r, Math.min(waitSec * 1000, 5000)));
         }
       } else {
         const errMsg = result.error || "Erro ao enviar";
@@ -1130,7 +1266,7 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
 }
 
 async function handleCampaigns(request: Request, env: Env, method: string, url: URL) {
-  const tenantId = getTenantId(request);
+  const tenantId = await getTenantId(request, env);
   await ensureTenant(env, tenantId);
   const pathname = url.pathname;
   const parts = pathname.split("/").filter(Boolean);
@@ -1304,7 +1440,7 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
 }
 
 async function handleSettings(request: Request, env: Env, method: string) {
-  const tenantId = getTenantId(request);
+  const tenantId = await getTenantId(request, env);
   await ensureTenant(env, tenantId);
 
   if (method === "GET") {
@@ -1333,7 +1469,7 @@ async function handleSettings(request: Request, env: Env, method: string) {
 async function handleCRM(request: Request, env: Env, method: string, url: URL) {
   const pathname = url.pathname;
   const parts = pathname.split("/").filter(Boolean);
-  const tenantId = getTenantId(request);
+  const tenantId = await getTenantId(request, env);
   await ensureTenant(env, tenantId);
 
   // /api/crm/columns
@@ -1425,7 +1561,7 @@ async function handleCRM(request: Request, env: Env, method: string, url: URL) {
 }
 
 async function handleInstagramTools(request: Request, env: Env, method: string, url: URL) {
-  const tenantId = getTenantId(request);
+  const tenantId = await getTenantId(request, env);
   await ensureTenant(env, tenantId);
 
   const pathname = url.pathname;
@@ -1582,7 +1718,7 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
     }>(request);
 
     let jobId = body.jobId;
-    const fromExtractorTenant = body.tenantId || tenantId;
+    const fromExtractorTenant = tenantId;
 
     if (!Array.isArray(body.leads)) {
       return json({ error: "Leads são obrigatórios" }, { status: 400 });
@@ -1653,17 +1789,16 @@ export default {
     const urlForRouting = pathname !== url.pathname ? new URL(pathname + url.search, request.url) : url;
     const method = request.method.toUpperCase();
 
-    // CORS simples para desenvolvimento
-    const origin = request.headers.get("Origin") || "*";
+    const allowedOrigins = (env.ALLOWED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean);
+    const origin = request.headers.get("Origin") || "";
+    const allowOrigin = allowedOrigins.length ? (allowedOrigins.includes(origin) ? origin : allowedOrigins[0]) : null;
     if (method === "OPTIONS") {
-      return new Response(null, {
-        status: 204,
-        headers: {
-          "Access-Control-Allow-Origin": origin,
-          "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type, Authorization, x-admin-key, x-tenant-id, x-extension-token",
-        },
-      });
+      const headers: Record<string, string> = {
+        "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, x-admin-key, x-tenant-id, x-extension-token",
+      };
+      if (allowOrigin) headers["Access-Control-Allow-Origin"] = allowOrigin;
+      return new Response(null, { status: 204, headers });
     }
 
     let response: Response;
@@ -1703,15 +1838,12 @@ export default {
         response = notFound();
       }
     } catch (err: any) {
-      // Garante que mesmo erros internos retornem CORS correto
-      response = json(
-        { error: "Internal error", details: err?.message || String(err) },
-        { status: 500 },
-      );
+      console.error("[worker] internal error", err?.message || err);
+      response = json({ error: "Internal error" }, { status: 500 });
     }
 
     const headers = new Headers(response.headers);
-    headers.set("Access-Control-Allow-Origin", origin);
+    if (allowOrigin) headers.set("Access-Control-Allow-Origin", allowOrigin);
     headers.set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
     headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-admin-key, x-tenant-id, x-extension-token");
 

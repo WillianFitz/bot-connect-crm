@@ -2,16 +2,16 @@ const API_BASE =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) || "/api";
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const token =
+    typeof localStorage !== "undefined" ? localStorage.getItem("auth_token") || undefined : undefined;
   const tenantId =
     (window as any)?.TENANT_ID ||
-    (typeof localStorage !== "undefined"
-      ? localStorage.getItem("tenant_id") || undefined
-      : undefined);
+    (typeof localStorage !== "undefined" ? localStorage.getItem("tenant_id") || undefined : undefined);
 
   const res = await fetch(`${API_BASE}${path}`, {
     headers: {
       "Content-Type": "application/json",
-      ...(tenantId ? { "x-tenant-id": tenantId } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : tenantId ? { "x-tenant-id": tenantId } : {}),
       ...(options.headers || {}),
     },
     ...options,
@@ -23,9 +23,6 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       const data = await res.json();
       if (data && typeof data.error === "string") {
         message = data.error;
-        if (data.details && typeof data.details === "string") {
-          message = `${message}: ${data.details}`;
-        }
       }
     } catch {
       // ignore
@@ -265,7 +262,7 @@ export const api = {
     }),
 
   clientLogin: (payload: { username: string; password: string }) =>
-    request<{ ok: true; tenantId: string; username: string }>("/auth/login", {
+    request<{ ok: true; tenantId: string; username: string; token?: string }>("/auth/login", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

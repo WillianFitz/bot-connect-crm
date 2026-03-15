@@ -20,4 +20,7 @@ BOT_SERVICE_URL = "https://bot-connect-crm-production.up.railway.app"
 EXTRACTOR_SERVICE_URL = "https://extrator-instagram-production.up.railway.app"
 EVOLUTION_API_URL = "evolution-api-production-9edc.up.railway.app"
 EVOLUTION_API_KEY = "Sudo@0412"
+# Segurança: defina em produção (ex.: secrets no painel Cloudflare)
+# JWT_SECRET = "sua-chave-secreta-longa-aqui"
+# ALLOWED_ORIGINS = "https://seu-dominio.com,https://app.seu-dominio.com"
 
