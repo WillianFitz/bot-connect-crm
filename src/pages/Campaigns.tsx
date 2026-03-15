@@ -45,7 +45,7 @@ export default function Campaigns() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [whatsappNumber, setWhatsappNumber] = useState("");
-  const [showForm, setShowForm] = useState(false);
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null);
   const [campaignToDelete, setCampaignToDelete] = useState<Campaign | null>(null);
 
@@ -93,7 +93,7 @@ export default function Campaigns() {
       setTimeFrom("09:00");
       setTimeTo("18:00");
       setBlockedDays([]);
-      setShowForm(false);
+      setShowCreateDialog(false);
       toast({ title: "Campanha criada." });
     },
     onError: (err: Error) => {
@@ -269,140 +269,19 @@ export default function Campaigns() {
           <Button
             size="sm"
             className="gap-2"
-            onClick={() => setShowForm((v) => !v)}
+            onClick={() => {
+              setName("");
+              setDelayMin(6);
+              setDelayMax(15);
+              setTimeFrom("09:00");
+              setTimeTo("18:00");
+              setBlockedDays([]);
+              setShowCreateDialog(true);
+            }}
           >
             <Plus className="h-4 w-4" /> Nova campanha
           </Button>
         </div>
-
-        {showForm && (
-          <div className="mt-3 space-y-4">
-            <p className="text-xs text-muted-foreground bg-muted/50 rounded-lg p-3 border border-border/30">
-              <strong>Horário (Das / Até):</strong> em que horas do dia a campanha pode enviar (ex.: 10:00 às 18:00, horário de Brasília).
-              <br />
-              <strong>Intervalo (Delay min–max em segundos):</strong> tempo aleatório entre uma mensagem e a próxima. Ex.: 6 e 15 = espera entre 6 e 15 segundos (às vezes 7, às vezes 11, etc.) antes de enviar a próxima.
-            </p>
-            <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-3">
-              <div>
-                <Label className="text-xs text-muted-foreground">
-                  Nome da campanha
-                </Label>
-                <Input
-                  className="mt-1 bg-secondary border-border/50"
-                  placeholder="Ex: Abertura Setembro"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label className="text-xs text-muted-foreground">
-                    Delay mínimo (segundos)
-                  </Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    className="mt-1 bg-secondary border-border/50"
-                    value={delayMin}
-                    onChange={(e) => setDelayMin(Number(e.target.value) || 0)}
-                    placeholder="6"
-                  />
-                </div>
-                <div>
-                  <Label className="text-xs text-muted-foreground">
-                    Delay máximo (segundos)
-                  </Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    className="mt-1 bg-secondary border-border/50"
-                    value={delayMax}
-                    onChange={(e) => setDelayMax(Number(e.target.value) || 0)}
-                    placeholder="15"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <Label className="text-xs text-muted-foreground flex items-center gap-1">
-                  Disparar entre às (horário de Brasília)
-                  <span className="text-[10px] text-muted-foreground">
-                    (pode variar até 3 min para iniciar)
-                  </span>
-                </Label>
-                <div className="flex items-center gap-2 mt-1">
-                  <Input
-                    type="time"
-                    className="bg-secondary border-border/50"
-                    value={timeFrom}
-                    onChange={(e) => setTimeFrom(e.target.value)}
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    Formato HH:MM
-                  </span>
-                </div>
-              </div>
-              <div>
-                <Label className="text-xs text-muted-foreground flex items-center gap-1">
-                  Com término às (horário de Brasília)
-                  <span className="text-[10px] text-muted-foreground">
-                    (pode variar até 3 min para finalizar)
-                  </span>
-                </Label>
-                <div className="flex items-center gap-2 mt-1">
-                  <Input
-                    type="time"
-                    className="bg-secondary border-border/50"
-                    value={timeTo}
-                    onChange={(e) => setTimeTo(e.target.value)}
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    Formato HH:MM
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <div className="md:col-span-2 space-y-3">
-              <div>
-                <Label className="text-xs text-muted-foreground">
-                  Não disparar nos dias da semana
-                </Label>
-                <div className="flex flex-wrap gap-2 mt-1">
-                  {weekDays.map((day) => (
-                    <button
-                      key={day}
-                      type="button"
-                      onClick={() => toggleDay(day)}
-                      className={`px-2 py-1 rounded-full text-[11px] border ${
-                        blockedDays.includes(day)
-                          ? "bg-secondary text-foreground border-border/70"
-                          : "bg-background text-muted-foreground border-border/40"
-                      }`}
-                    >
-                      {day}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex justify-end">
-                <Button
-                  size="sm"
-                  className="gap-2"
-                  disabled={!name || createCampaign.isPending}
-                  onClick={handleCreate}
-                >
-                  {createCampaign.isPending ? "Criando..." : "Criar campanha"}
-                </Button>
-              </div>
-            </div>
-            </div>
-          </div>
-        )}
       </div>
 
       <div className="rounded-xl border border-border/50 bg-card p-5 space-y-3">
@@ -547,6 +426,97 @@ export default function Campaigns() {
           </table>
         </div>
       </div>
+
+      <Dialog open={showCreateDialog} onOpenChange={(open) => !open && setShowCreateDialog(false)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Nova campanha</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <Label className="text-xs text-muted-foreground">Nome da campanha</Label>
+              <Input
+                className="mt-1 bg-secondary border-border/50"
+                placeholder="Ex: Abertura Setembro"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs text-muted-foreground">Delay mínimo (segundos)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  className="mt-1 bg-secondary border-border/50"
+                  value={delayMin}
+                  onChange={(e) => setDelayMin(Number(e.target.value) || 0)}
+                />
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">Delay máximo (segundos)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  className="mt-1 bg-secondary border-border/50"
+                  value={delayMax}
+                  onChange={(e) => setDelayMax(Number(e.target.value) || 0)}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs text-muted-foreground">Das (horário de Brasília)</Label>
+                <Input
+                  type="time"
+                  className="mt-1 bg-secondary border-border/50"
+                  value={timeFrom}
+                  onChange={(e) => setTimeFrom(e.target.value)}
+                />
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">Até (horário de Brasília)</Label>
+                <Input
+                  type="time"
+                  className="mt-1 bg-secondary border-border/50"
+                  value={timeTo}
+                  onChange={(e) => setTimeTo(e.target.value)}
+                />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs text-muted-foreground">Não disparar nos dias</Label>
+              <div className="flex flex-wrap gap-2 mt-1">
+                {weekDays.map((day) => (
+                  <button
+                    key={day}
+                    type="button"
+                    onClick={() => toggleDay(day)}
+                    className={`px-2 py-1 rounded-full text-[11px] border ${
+                      blockedDays.includes(day)
+                        ? "bg-secondary text-foreground border-border/70"
+                        : "bg-background text-muted-foreground border-border/40"
+                    }`}
+                  >
+                    {day}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
+              Cancelar
+            </Button>
+            <Button
+              disabled={!name || createCampaign.isPending}
+              onClick={handleCreate}
+            >
+              {createCampaign.isPending ? "Criando..." : "Criar campanha"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!editingCampaign} onOpenChange={(open) => !open && setEditingCampaign(null)}>
         <DialogContent className="max-w-md">
