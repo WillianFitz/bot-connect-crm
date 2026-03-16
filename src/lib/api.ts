@@ -229,43 +229,35 @@ export const api = {
         media_id: string;
         file_name: string;
         media_type: string;
+        url: string;
         created_at: string;
       }>
     >("/agents/atendimento/media"),
 
-  uploadAgentMedia: async (file: File, mediaId: string, fileName: string) => {
-    const token =
-      typeof localStorage !== "undefined" ? localStorage.getItem("auth_token") || undefined : undefined;
-    const tenantId =
-      (window as any)?.TENANT_ID ||
+  uploadAgentMedia: async (file: File, mediaId: string) => {
+    const token = typeof localStorage !== "undefined" ? localStorage.getItem("auth_token") || undefined : undefined;
+    const tenantId = (window as any)?.TENANT_ID ||
       (typeof localStorage !== "undefined" ? localStorage.getItem("tenant_id") || undefined : undefined);
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("media_id", mediaId);
-    formData.append("file_name", fileName);
+    const form = new FormData();
+    form.append("file", file);
+    form.append("media_id", mediaId);
+    form.append("file_name", file.name);
     const res = await fetch(
       `${(import.meta.env.VITE_API_BASE_URL as string | undefined) || "/api"}/agents/atendimento/media`,
       {
         method: "POST",
-        headers: {
-          ...(token
-            ? { Authorization: `Bearer ${token}` }
-            : tenantId
-              ? { "x-tenant-id": tenantId }
-              : {}),
-        },
-        body: formData,
+        headers: token
+          ? { Authorization: `Bearer ${token}` }
+          : tenantId ? { "x-tenant-id": tenantId } : {},
+        body: form,
       },
     );
     if (!res.ok) {
       let msg = res.statusText;
-      try {
-        const d = await res.json();
-        if (d?.error) msg = d.error;
-      } catch { /* ignore */ }
+      try { const d = await res.json(); if (d?.error) msg = d.error; } catch { /* noop */ }
       throw new Error(msg);
     }
-    return res.json() as Promise<{ ok: true; id: number }>;
+    return res.json() as Promise<{ ok: true; id: number; url: string }>;
   },
 
   deleteAgentMedia: (id: number) =>

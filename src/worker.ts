@@ -1,5 +1,7 @@
 export interface Env {
   DB: D1Database;
+  MEDIA_BUCKET: R2Bucket;
+  MEDIA_PUBLIC_URL: string;
   BOT_SERVICE_URL: string;
   OPENAI_API_KEY: string;
   ADMIN_API_KEY: string;
@@ -916,7 +918,7 @@ async function handleAgents(request: Request, env: Env, method: string, url: URL
     if (sub === "media") {
       if (method === "GET") {
         const res = await env.DB.prepare(
-          "SELECT id, media_id, file_name, media_type, created_at FROM agent_media WHERE tenant_id = ? ORDER BY created_at DESC",
+          "SELECT id, media_id, file_name, media_type, url, created_at FROM agent_media WHERE tenant_id = ? ORDER BY created_at DESC",
         ).bind(tenantId).all();
         return json(res.results || []);
       }
@@ -928,49 +930,68 @@ async function handleAgents(request: Request, env: Env, method: string, url: URL
         } catch {
           return json({ error: "Esperado multipart/form-data" }, { status: 400 });
         }
+
         const file = formData.get("file") as File | null;
         const mediaId = (formData.get("media_id") as string | null)?.trim();
-        const fileName = (formData.get("file_name") as string | null)?.trim();
+        const fileName = (formData.get("file_name") as string | null)?.trim() || file?.name || mediaId || "file";
 
-        if (!file || !mediaId || !fileName) {
-          return json({ error: "Campos obrigatórios: file, media_id, file_name" }, { status: 400 });
+        if (!file || !mediaId) {
+          return json({ error: "Campos obrigatórios: file, media_id" }, { status: 400 });
         }
         if (!/^[a-z0-9_\-]+$/.test(mediaId)) {
           return json({ error: "media_id inválido: use apenas a-z 0-9 _ -" }, { status: 400 });
         }
 
-        const arrayBuffer = await file.arrayBuffer();
+        // Build R2 key: tenant/mediaId.ext
+        const ext = (file.name.split(".").pop() ?? "").toLowerCase();
+        const r2Key = `${tenantId}/${mediaId}${ext ? "." + ext : ""}`;
 
-        // D1 free tier supports up to ~1MB per value; enforce a safe limit
-        if (arrayBuffer.byteLength > 3 * 1024 * 1024) {
-          return json({ error: "Arquivo muito grande. Limite: 3 MB." }, { status: 413 });
+        // Upload to R2
+        try {
+          await env.MEDIA_BUCKET.put(r2Key, file.stream(), {
+            httpMetadata: { contentType: file.type },
+          });
+        } catch (err: any) {
+          console.error("[R2 upload]", err?.message);
+          return json({ error: `Erro no upload R2: ${err?.message}` }, { status: 500 });
         }
 
-        const bytes = new Uint8Array(arrayBuffer);
-        let binary = "";
-        for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]!);
-        const base64 = btoa(binary);
-        const dataUrl = `data:${file.type};base64,${base64}`;
+        const publicUrl = `${env.MEDIA_PUBLIC_URL.replace(/\/$/, "")}/${r2Key}`;
 
+        // Save metadata to D1
         try {
           const result = await env.DB.prepare(
-            `INSERT INTO agent_media (tenant_id, media_id, file_name, media_type, data_url)
+            `INSERT INTO agent_media (tenant_id, media_id, file_name, media_type, url)
              VALUES (?, ?, ?, ?, ?)`,
-          ).bind(tenantId, mediaId, fileName, file.type, dataUrl).run();
-          return json({ ok: true, id: result.meta.last_row_id });
+          ).bind(tenantId, mediaId, fileName, file.type, publicUrl).run();
+          return json({ ok: true, id: result.meta.last_row_id, url: publicUrl });
         } catch (err: any) {
+          // Rollback R2 upload on D1 failure
+          await env.MEDIA_BUCKET.delete(r2Key).catch(() => {});
           const msg: string = err?.message ?? "";
           if (msg.toLowerCase().includes("unique")) {
             return json({ error: "media_id já existe. Escolha outro nome." }, { status: 409 });
           }
-          console.error("[agent_media upload]", msg);
-          return json({ error: `Erro ao salvar mídia: ${msg}` }, { status: 500 });
+          console.error("[agent_media d1]", msg);
+          return json({ error: `Erro ao salvar: ${msg}` }, { status: 500 });
         }
       }
 
       if (method === "DELETE") {
         const idParam = url.searchParams.get("id");
         if (!idParam) return json({ error: "Parâmetro id obrigatório" }, { status: 400 });
+
+        // Fetch URL to derive R2 key before deleting
+        const row = await env.DB.prepare(
+          "SELECT url FROM agent_media WHERE id = ? AND tenant_id = ?",
+        ).bind(Number(idParam), tenantId).first<{ url: string }>();
+
+        if (row?.url) {
+          const base = env.MEDIA_PUBLIC_URL.replace(/\/$/, "");
+          const r2Key = row.url.replace(base + "/", "");
+          await env.MEDIA_BUCKET.delete(r2Key).catch(() => {});
+        }
+
         await env.DB.prepare(
           "DELETE FROM agent_media WHERE id = ? AND tenant_id = ?",
         ).bind(Number(idParam), tenantId).run();

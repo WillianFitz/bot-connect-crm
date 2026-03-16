@@ -8,14 +8,20 @@ route = ""
 [[d1_databases]]
 binding = "DB"
 database_name = "bot_connect_crm"
-# Substitua abaixo pelo ID real do D1 no painel da Cloudflare
 database_id = "3932c953-ad50-4977-aa3d-3eb2b5f8e892"
+
+[[r2_buckets]]
+binding = "MEDIA_BUCKET"
+bucket_name = "bot-connect-crm"
+# Para preview local: npx wrangler r2 object put bot-connect-crm/test --local
 
 # Disparo automático de campanhas: roda a cada 1 minuto
 [triggers]
 crons = ["* * * * *"]
 
 [vars]
+# Cole aqui a Public Development URL do bucket R2 (painel Cloudflare → R2 → bot-connect-crm → Public Development URL)
+MEDIA_PUBLIC_URL = "https://pub-e826e8696a224c7aa9f15d82a9bf7856.r2.dev"
 BOT_SERVICE_URL = "https://bot-connect-crm-production.up.railway.app"
 EXTRACTOR_SERVICE_URL = "https://extrator-instagram-production.up.railway.app"
 EVOLUTION_API_URL = "evolution-api-production-9edc.up.railway.app"

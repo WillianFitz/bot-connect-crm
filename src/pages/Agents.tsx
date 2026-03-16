@@ -700,33 +700,25 @@ export default function Agents() {
   const handleUploadMedia = async () => {
     if (!mediaFile || !mediaName.trim()) return;
     if (!/^[a-z0-9_\-]+$/.test(mediaName.trim())) {
-      toast({ title: "Nome inválido", description: "Use apenas letras minúsculas, números, _ e -", variant: "destructive" });
+      toast({ title: "Nome/ID inválido", description: "Use apenas letras minúsculas, números, _ e -", variant: "destructive" });
       return;
     }
-    const MAX_MB = 3;
-    if (mediaFile.size > MAX_MB * 1024 * 1024) {
-      toast({
-        title: "Arquivo muito grande",
-        description: `Limite: ${MAX_MB} MB. Seu arquivo: ${(mediaFile.size / 1024 / 1024).toFixed(1)} MB`,
-        variant: "destructive",
-      });
+    // 50 MB frontend guard (R2 supports much more, but WhatsApp limits to ~64 MB)
+    if (mediaFile.size > 50 * 1024 * 1024) {
+      toast({ title: "Arquivo muito grande", description: "Limite: 50 MB", variant: "destructive" });
       return;
     }
     setIsUploadingMedia(true);
     try {
-      await api.uploadAgentMedia(mediaFile, mediaName.trim(), mediaFile.name);
+      await api.uploadAgentMedia(mediaFile, mediaName.trim());
       queryClient.invalidateQueries({ queryKey: ["agent-media"] });
-      toast({ title: "Mídia enviada com sucesso!" });
+      toast({ title: "Mídia enviada!", description: `Token: {{media:${mediaName.trim()}}}` });
       setMediaFile(null);
       setMediaName("");
       const inp = document.getElementById("media-file-input") as HTMLInputElement | null;
       if (inp) inp.value = "";
     } catch (err: any) {
-      toast({
-        title: "Erro no upload",
-        description: err.message ?? "Erro desconhecido",
-        variant: "destructive",
-      });
+      toast({ title: "Erro no upload", description: err.message ?? "Erro desconhecido", variant: "destructive" });
     } finally {
       setIsUploadingMedia(false);
     }
@@ -973,12 +965,12 @@ export default function Agents() {
           </div>
         </div>
 
-        {/* Uploads de mídia */}
+        {/* Mídias do agente */}
         <div className="space-y-4 rounded-xl border border-border/50 bg-card/40 p-4">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-semibold text-foreground flex items-center gap-2">
               <Upload className="h-4 w-4 text-primary" />
-              Uploads de mídia do agente
+              Mídias do agente
             </h3>
             <Button
               variant="ghost"
@@ -990,12 +982,14 @@ export default function Agents() {
             </Button>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            Envie arquivos de imagem, áudio ou vídeo. Após o upload, o botão aparece em "Minhas Ferramentas" e pode ser arrastado para o prompt.
+            Cadastre a URL pública de cada mídia. O bot usa a URL para enviar imagem, áudio ou vídeo via WhatsApp.
+            Hospede seus arquivos em qualquer lugar (Google Drive link direto, Dropbox, servidor próprio, etc.)
           </p>
 
-          {/* Formulário de upload */}
+          {/* Formulário */}
           <div className="space-y-3 rounded-lg border border-dashed border-border/60 bg-background/30 p-4">
-            <p className="text-xs font-semibold text-foreground">Novo upload</p>
+            <p className="text-xs font-semibold text-foreground">Nova mídia</p>
+
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label className="text-[11px] text-muted-foreground">Arquivo</Label>
@@ -1004,23 +998,39 @@ export default function Agents() {
                   type="file"
                   accept="image/*,video/*,audio/*"
                   className="w-full text-xs file:mr-2 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-primary/10 file:text-primary hover:file:bg-primary/20 cursor-pointer"
-                  onChange={(e) => setMediaFile(e.target.files?.[0] ?? null)}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0] ?? null;
+                    setMediaFile(f);
+                    if (f && !mediaName) {
+                      // Auto-fill ID from filename
+                      const auto = f.name.split(".")[0]!
+                        .toLowerCase()
+                        .replace(/[^a-z0-9_\-]/g, "_")
+                        .replace(/_+/g, "_")
+                        .slice(0, 40);
+                      setMediaName(auto);
+                    }
+                  }}
                 />
-                <p className="text-[10px] text-muted-foreground">Suporta imagem, vídeo e áudio</p>
+                <p className="text-[10px] text-muted-foreground">
+                  Imagem, vídeo ou áudio · máx. 50 MB
+                </p>
               </div>
+
               <div className="space-y-1">
-                <Label className="text-[11px] text-muted-foreground">Nome/ID da mídia</Label>
+                <Label className="text-[11px] text-muted-foreground">ID do token</Label>
                 <Input
                   className="h-8 bg-secondary border-border/50 text-xs font-mono"
-                  placeholder="ex.: video_demo1"
+                  placeholder="ex.: video_apresentacao"
                   value={mediaName}
                   onChange={(e) => setMediaName(e.target.value.toLowerCase().replace(/[^a-z0-9_\-]/g, ""))}
                 />
                 <p className="text-[10px] text-muted-foreground">
-                  Minúsculas, sem espaços. Permitido: a-z 0-9 _ -
+                  Token no prompt: <span className="font-mono text-primary/80">{"{{media:" + (mediaName || "id") + "}}"}</span>
                 </p>
               </div>
             </div>
+
             <Button
               size="sm"
               className="gap-2"
@@ -1028,8 +1038,8 @@ export default function Agents() {
               disabled={!mediaFile || !mediaName.trim() || isUploadingMedia}
             >
               {isUploadingMedia
-                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Enviando...</>
-                : <><Upload className="h-3.5 w-3.5" /> Enviar e salvar</>
+                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Enviando para R2...</>
+                : <><Upload className="h-3.5 w-3.5" /> Enviar mídia</>
               }
             </Button>
           </div>
@@ -1037,7 +1047,7 @@ export default function Agents() {
           {/* Biblioteca */}
           <div className="space-y-2">
             <p className="text-[10px] text-muted-foreground/70 uppercase tracking-widest font-semibold">
-              Biblioteca — {rawMediaList.length} {rawMediaList.length === 1 ? "arquivo" : "arquivos"}
+              Biblioteca — {rawMediaList.length} {rawMediaList.length === 1 ? "mídia" : "mídias"}
             </p>
             {mediaQuery.isLoading && (
               <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
@@ -1045,7 +1055,7 @@ export default function Agents() {
               </div>
             )}
             {!mediaQuery.isLoading && rawMediaList.length === 0 && (
-              <p className="text-[11px] text-muted-foreground italic py-2">Nenhuma mídia cadastrada.</p>
+              <p className="text-[11px] text-muted-foreground italic py-2">Nenhuma mídia cadastrada ainda.</p>
             )}
             {rawMediaList.length > 0 && (
               <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3">
@@ -1056,13 +1066,12 @@ export default function Agents() {
                       key={m.id}
                       className="flex items-center gap-2 rounded-lg border border-border/40 bg-secondary/50 p-2.5 group"
                     >
-                      {/* Preview chip */}
                       <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs font-semibold shrink-0 ${v.badgeClass}`}>
                         <span>{v.emoji}</span>
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="text-xs font-medium text-foreground truncate">{m.file_name}</p>
-                        <p className="text-[10px] text-muted-foreground truncate">{m.media_id}</p>
+                        <p className="text-[10px] text-muted-foreground/70 truncate font-mono">{m.media_id}</p>
                       </div>
                       <Button
                         variant="ghost"
