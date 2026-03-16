@@ -940,6 +940,12 @@ async function handleAgents(request: Request, env: Env, method: string, url: URL
         }
 
         const arrayBuffer = await file.arrayBuffer();
+
+        // D1 free tier supports up to ~1MB per value; enforce a safe limit
+        if (arrayBuffer.byteLength > 3 * 1024 * 1024) {
+          return json({ error: "Arquivo muito grande. Limite: 3 MB." }, { status: 413 });
+        }
+
         const bytes = new Uint8Array(arrayBuffer);
         let binary = "";
         for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]!);
@@ -952,8 +958,13 @@ async function handleAgents(request: Request, env: Env, method: string, url: URL
              VALUES (?, ?, ?, ?, ?)`,
           ).bind(tenantId, mediaId, fileName, file.type, dataUrl).run();
           return json({ ok: true, id: result.meta.last_row_id });
-        } catch {
-          return json({ error: "media_id já existe. Escolha outro nome." }, { status: 409 });
+        } catch (err: any) {
+          const msg: string = err?.message ?? "";
+          if (msg.toLowerCase().includes("unique")) {
+            return json({ error: "media_id já existe. Escolha outro nome." }, { status: 409 });
+          }
+          console.error("[agent_media upload]", msg);
+          return json({ error: `Erro ao salvar mídia: ${msg}` }, { status: 500 });
         }
       }
 

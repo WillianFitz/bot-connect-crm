@@ -703,6 +703,15 @@ export default function Agents() {
       toast({ title: "Nome inválido", description: "Use apenas letras minúsculas, números, _ e -", variant: "destructive" });
       return;
     }
+    const MAX_MB = 3;
+    if (mediaFile.size > MAX_MB * 1024 * 1024) {
+      toast({
+        title: "Arquivo muito grande",
+        description: `Limite: ${MAX_MB} MB. Seu arquivo: ${(mediaFile.size / 1024 / 1024).toFixed(1)} MB`,
+        variant: "destructive",
+      });
+      return;
+    }
     setIsUploadingMedia(true);
     try {
       await api.uploadAgentMedia(mediaFile, mediaName.trim(), mediaFile.name);
@@ -713,7 +722,11 @@ export default function Agents() {
       const inp = document.getElementById("media-file-input") as HTMLInputElement | null;
       if (inp) inp.value = "";
     } catch (err: any) {
-      toast({ title: "Erro no upload", description: err.message, variant: "destructive" });
+      toast({
+        title: "Erro no upload",
+        description: err.message ?? "Erro desconhecido",
+        variant: "destructive",
+      });
     } finally {
       setIsUploadingMedia(false);
     }
