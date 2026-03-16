@@ -4,18 +4,41 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 
-// Login simples de admin: apenas senha, validada no backend via ADMIN_API_KEY
+const API_BASE =
+  (import.meta.env.VITE_API_BASE_URL as string | undefined) || "/api";
+
 export default function AdminLogin() {
   const [key, setKey] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (typeof localStorage !== "undefined") {
-      // marca apenas que o admin está autenticado no front
-      localStorage.setItem("admin_logged", "1");
+    setError("");
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/admin/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key }),
+      });
+      if (!res.ok) {
+        setError("Chave inválida. Tente novamente.");
+        return;
+      }
+      const data = (await res.json()) as { ok: boolean; token?: string };
+      if (data.ok && data.token) {
+        localStorage.setItem("admin_token", data.token);
+        navigate("/admin");
+      } else {
+        setError("Falha na autenticação. Verifique se JWT_SECRET está configurado.");
+      }
+    } catch {
+      setError("Erro de conexão. Tente novamente.");
+    } finally {
+      setLoading(false);
     }
-    navigate("/admin");
   };
 
   return (
@@ -37,18 +60,22 @@ export default function AdminLogin() {
             </Label>
             <Input
               className="mt-1 bg-secondary border-border/50"
+              type="password"
               value={key}
               onChange={(e) => setKey(e.target.value)}
               required
             />
           </div>
 
-          <Button type="submit" className="w-full mt-2">
-            Entrar
+          {error && (
+            <p className="text-xs text-destructive">{error}</p>
+          )}
+
+          <Button type="submit" className="w-full mt-2" disabled={loading}>
+            {loading ? "Verificando..." : "Entrar"}
           </Button>
         </form>
       </div>
     </div>
   );
 }
-

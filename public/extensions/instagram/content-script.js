@@ -16,14 +16,20 @@ if (typeof window.__igExtractorLoaded === "undefined") {
       _lastPageTs = Date.now();
       _lastPageHasMore = ev.data.hasMore;
     }
+    if (ev.data?.type === "__IG_EXTRACTOR_READY" && window.__igInjectedReadyResolve) {
+      window.__igInjectedReadyResolve();
+      window.__igInjectedReadyResolve = null;
+    }
   });
 
+  // Injeta injected.js no contexto da página (necessário para interceptar fetch/XHR do Instagram)
+  // Usa window.__igFetchPatched como guard real — não depende do elemento no DOM
   function injectPageScript() {
-    if (document.getElementById("__ig_injected")) return;
+    if (window.__igFetchPatched) return; // já interceptado, não precisa reinjetar
     const s = document.createElement("script");
-    s.id = "__ig_injected";
     s.src = chrome.runtime.getURL("injected.js");
-    s.onload = () => s.remove();
+    s.onload  = () => { console.log("[IGExtractor] injected.js carregado OK"); s.remove(); };
+    s.onerror = () => { console.error("[IGExtractor] ERRO ao carregar injected.js — verifique web_accessible_resources no manifest"); };
     (document.head || document.documentElement || document.body).appendChild(s);
   }
 
@@ -49,7 +55,6 @@ if (typeof window.__igExtractorLoaded === "undefined") {
   }
 
   async function waitForNextPage(timeout = 12000) {
-    // FIX: aumentado de 7000 para 12000ms — evita falsos "stale" em conexões lentas
     const marker = _lastPageTs;
     const end = Date.now() + timeout;
     while (Date.now() < end) {
@@ -80,34 +85,57 @@ if (typeof window.__igExtractorLoaded === "undefined") {
     }
   }
 
-  // Links fixos da página de perfil para excluir
   const PAGE_HREFS = new Set(["/", "/explore/", "/reels/", "/direct/inbox/", "/direct/"]);
 
-  // Pega links dos seguidores no modal (renderizado no body pelo Instagram)
   function getFollowerLinks() {
     const all = Array.from(document.querySelectorAll("a[href^='/'][role='link'], a[href^='/'][tabindex]"))
       .filter(a => {
         const href = a.getAttribute("href") || "";
         if (!href || PAGE_HREFS.has(href)) return false;
-        if (href.includes("stories") || href.includes("explore") || href.includes("followers") || href.includes("following")) return false;
-        // Links de perfil: /username/ ou /username
+        if (href.includes("stories") || href.includes("explore") ||
+            href.includes("followers") || href.includes("following")) return false;
         return /^\/[^/]+\/?$/.test(href);
       });
-    // Deduplica por href mantendo última ocorrência (a foto vem antes do nome, queremos o último)
     const seen = new Map();
     all.forEach(a => seen.set(a.getAttribute("href"), a));
     return Array.from(seen.values());
   }
 
   async function collectUsernames(targetCount, baseProfile) {
+    // Zera tudo a cada rodada
+    _captured.clear();
+    _lastPageHasMore = true;
+    _lastPageTs = Date.now();
+    _userId = null;
+
+    // Injeta e aguarda mensagem __IG_EXTRACTOR_READY (injected roda na página, content-script não vê seu window)
+    function waitInjectedReady(timeoutMs) {
+      return new Promise((resolve) => {
+        let done = false;
+        const t = setTimeout(() => {
+          if (done) return;
+          done = true;
+          window.__igInjectedReadyResolve = null;
+          resolve(false);
+        }, timeoutMs);
+        window.__igInjectedReadyResolve = () => {
+          if (done) return;
+          done = true;
+          clearTimeout(t);
+          window.__igInjectedReadyResolve = null;
+          resolve(true);
+        };
+      });
+    }
     injectPageScript();
-    await sleep(1500);
+    let ready = await waitInjectedReady(6000);
+    if (!ready) {
+      console.warn("[IGExtractor] injected.js não respondeu na primeira tentativa, retentando...");
+      injectPageScript();
+      ready = await waitInjectedReady(5000);
+    }
+    console.log("[IGExtractor] Iniciando para", baseProfile, "target:", targetCount, "| injected:", ready);
 
-    // FIX: targetCount agora é sempre relativo ao que este Set local precisa capturar
-    // O dashboard passa `limit` (quantidade desta rodada), não o acumulado.
-    console.log("[IGExtractor] Iniciando para", baseProfile, "target:", targetCount);
-
-    // 1. Abre modal
     await waitFor("header", 12000);
     await sleep(1500);
     await dismissPopups();
@@ -133,38 +161,31 @@ if (typeof window.__igExtractorLoaded === "undefined") {
 
     if (!dlg) throw new Error("Modal de seguidores não abriu.");
 
-    // 2. Aguarda primeiro batch
     await waitForGrowth(0, 10000);
     console.log("[IGExtractor] Batch inicial:", _captured.size, "users");
-    if (_captured.size === 0) throw new Error("Nenhum seguidor capturado.");
 
-    // 3. Loop: scrollIntoView no último link para acionar o IntersectionObserver do Instagram
-    // FIX: stale aumentado de 6 para 10 — janela minimizada precisa de mais tentativas
     let stale = 0;
     const MAX_STALE = 10;
 
     while (_captured.size < targetCount) {
       if (!_lastPageHasMore) {
-        console.log("[IGExtractor] Instagram sinalizou fim da lista (hasMore=false)");
+        console.log("[IGExtractor] Fim da lista (hasMore=false)");
         break;
       }
 
       const prevSize = _captured.size;
       const links = getFollowerLinks();
 
-      // Pega o primeiro link ABAIXO da viewport (não visível ainda)
       const viewportH = window.innerHeight;
       let targetLink = null;
       for (const a of links) {
         const rect = a.getBoundingClientRect();
         if (rect.top > viewportH - 50) { targetLink = a; break; }
       }
-      // Se todos já estão visíveis, pega o último
       if (!targetLink) targetLink = links[links.length - 1];
 
       if (targetLink) {
         targetLink.scrollIntoView({ behavior: "smooth", block: "center" });
-        // FIX: força scroll adicional no contêiner do modal para ajudar em janelas minimizadas
         const modal = targetLink.closest("div[role='dialog']");
         if (modal) {
           const scrollable = Array.from(modal.querySelectorAll("*")).find(el =>
@@ -172,26 +193,22 @@ if (typeof window.__igExtractorLoaded === "undefined") {
           );
           if (scrollable) scrollable.scrollTop = scrollable.scrollHeight;
         }
-        console.log(`[IGExtractor] scrollIntoView | links: ${links.length} | total: ${_captured.size}/${targetCount}`);
+        console.log(`[IGExtractor] scroll | links: ${links.length} | total: ${_captured.size}/${targetCount}`);
       } else {
         document.documentElement.scrollTop = document.documentElement.scrollHeight;
-        console.log(`[IGExtractor] scroll HTML fallback | total: ${_captured.size}/${targetCount}`);
+        console.log(`[IGExtractor] scroll fallback | total: ${_captured.size}/${targetCount}`);
       }
 
       const pageArrived = await waitForNextPage(12000);
       await sleep(900 + Math.floor(Math.random() * 600));
 
       const grew = _captured.size > prevSize;
-      console.log(`[IGExtractor] | grew: ${grew} | pageArrived: ${pageArrived} | total: ${_captured.size}`);
+      console.log(`[IGExtractor] grew: ${grew} | pageArrived: ${pageArrived} | total: ${_captured.size}`);
 
       if (!grew && !pageArrived) {
         stale++;
         console.log(`[IGExtractor] stale: ${stale}/${MAX_STALE}`);
-        if (stale >= MAX_STALE) {
-          console.log("[IGExtractor] Máximo de tentativas sem crescimento — fim");
-          break;
-        }
-        // FIX: backoff progressivo: espera mais a cada tentativa frustrada
+        if (stale >= MAX_STALE) { console.log("[IGExtractor] Max stale — fim"); break; }
         await sleep(2000 + stale * 500);
       } else {
         stale = 0;
@@ -205,7 +222,6 @@ if (typeof window.__igExtractorLoaded === "undefined") {
     RESERVED.forEach(r => _captured.delete(r));
     _captured.delete("");
 
-    // Retorna exatamente `targetCount` (ou menos se não houver mais)
     return Array.from(_captured).slice(0, targetCount);
   }
 
@@ -221,42 +237,35 @@ if (typeof window.__igExtractorLoaded === "undefined") {
     });
     if (!text.trim()) text = document.body.innerText || "";
 
-    // 1. wa.me links — mais confiáveis
     const waNumbers = (text.match(/wa\.me\/(\d{8,15})/g) || []).map(l => l.replace("wa.me/",""));
 
-    // 2. Números brasileiros formatados: (XX) XXXXX-XXXX ou (XX) XXXX-XXXX
     const formatted = [];
     const fmtRegex = /(?:\+55[\s.-]?)?\((\d{2})\)[\s.-]?(\d{4,5})[\s.-]?(\d{4})/g;
     let m;
     while ((m = fmtRegex.exec(text)) !== null) {
       const ddd = parseInt(m[1], 10);
-      if (ddd >= 11 && ddd <= 99) {
+      if (ddd >= 11 && ddd <= 99)
         formatted.push((m[1] + m[2] + m[3]).replace(/\D/g, ""));
-      }
     }
 
-    // 3. +55 seguido de número completo
     const withCountry = [];
     const ccRegex = /\+55[\s.-]?(\d{2})[\s.-]?(\d{4,5})[\s.-]?(\d{4})/g;
-    while ((m = ccRegex.exec(text)) !== null) {
+    while ((m = ccRegex.exec(text)) !== null)
       withCountry.push(("55" + m[1] + m[2] + m[3]).replace(/\D/g, ""));
-    }
 
-    const allCandidates = [...waNumbers, ...withCountry, ...formatted];
     const cleaned = Array.from(new Set(
-      allCandidates
+      [...waNumbers, ...withCountry, ...formatted]
         .map(n => n.replace(/\D/g, ""))
         .filter(n => n.length >= 10 && n.length <= 13)
         .filter(n => !/^(19|20)\d{2}$/.test(n))
     ));
-    const phone = cleaned[0] || "";
 
     let displayName = "";
     for (const el of document.querySelectorAll("header h1,header h2,header span[dir='auto'],section h1,section h2")) {
       const t = (el.textContent || "").trim();
       if (t && t.length > 1 && t.length < 80) { displayName = t; break; }
     }
-    return { phone, displayName };
+    return { phone: cleaned[0] || "", displayName };
   }
 
   chrome.runtime.onMessage.addListener((msg, _, sendResponse) => {

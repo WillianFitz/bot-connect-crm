@@ -12,8 +12,7 @@
   ],
   "host_permissions": [
     "https://www.instagram.com/*",
-    "http://www.instagram.com/*",
-    "https://*/*"
+    "http://www.instagram.com/*"
   ],
   "web_accessible_resources": [
     {

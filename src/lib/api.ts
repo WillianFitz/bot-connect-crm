@@ -236,18 +236,18 @@ export const api = {
     username: string;
     password: string;
     document: string;
-  }) =>
-    request<{ ok: true; tenantId: string }>("/admin/create-tenant-user", {
+  }) => {
+    const adminToken = typeof localStorage !== "undefined" ? localStorage.getItem("admin_token") || "" : "";
+    return request<{ ok: true; tenantId: string }>("/admin/create-tenant-user", {
       method: "POST",
-      headers: {
-        "x-admin-key":
-          (import.meta.env.VITE_ADMIN_API_KEY as string | undefined) || "",
-      },
+      headers: { Authorization: `Bearer ${adminToken}` },
       body: JSON.stringify(payload),
-    }),
+    });
+  },
 
-  adminListUsers: () =>
-    request<
+  adminListUsers: () => {
+    const adminToken = typeof localStorage !== "undefined" ? localStorage.getItem("admin_token") || "" : "";
+    return request<
       Array<{
         id: number;
         tenant_id: string;
@@ -258,20 +258,17 @@ export const api = {
       }>
     >("/admin/users", {
       method: "GET",
-      headers: {
-        "x-admin-key":
-          (import.meta.env.VITE_ADMIN_API_KEY as string | undefined) || "",
-      },
-    }),
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+  },
 
-  adminDeleteUser: (id: number) =>
-    request<{ ok: true }>(`/admin/users?id=${id}`, {
+  adminDeleteUser: (id: number) => {
+    const adminToken = typeof localStorage !== "undefined" ? localStorage.getItem("admin_token") || "" : "";
+    return request<{ ok: true }>(`/admin/users?id=${id}`, {
       method: "DELETE",
-      headers: {
-        "x-admin-key":
-          (import.meta.env.VITE_ADMIN_API_KEY as string | undefined) || "",
-      },
-    }),
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+  },
 
   clientLogin: (payload: { username: string; password: string }) =>
     request<{ ok: true; tenantId: string; username: string; token?: string }>("/auth/login", {

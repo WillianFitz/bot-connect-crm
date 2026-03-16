@@ -19,7 +19,8 @@ crons = ["* * * * *"]
 BOT_SERVICE_URL = "https://bot-connect-crm-production.up.railway.app"
 EXTRACTOR_SERVICE_URL = "https://extrator-instagram-production.up.railway.app"
 EVOLUTION_API_URL = "evolution-api-production-9edc.up.railway.app"
-EVOLUTION_API_KEY = "Sudo@0412"
+# EVOLUTION_API_KEY: defina como Secret no dashboard da Cloudflare (Variables and Secrets)
+# Execute: wrangler secret put EVOLUTION_API_KEY
 # JWT_SECRET: defina como Secret no dashboard da Cloudflare (Variables and Secrets)
 ALLOWED_ORIGINS = "https://bot-connect-crm.pages.dev,http://localhost:5173,http://127.0.0.1:5173,http://localhost:8787"
 

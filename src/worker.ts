@@ -47,9 +47,60 @@ async function getTenantId(request: Request, env: Env): Promise<string> {
   return header;
 }
 
-function isAdmin(request: Request, env: Env): boolean {
-  const key = request.headers.get("x-admin-key");
-  return !!key && key === env.ADMIN_API_KEY;
+async function signAdminJwt(secret: string): Promise<string> {
+  const header = { alg: "HS256", typ: "JWT" };
+  const now = Math.floor(Date.now() / 1000);
+  const body = { role: "admin", iat: now, exp: now + 60 * 60 * 8 };
+  const b64 = (b: Uint8Array) => btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const enc = (o: object) => b64(new TextEncoder().encode(JSON.stringify(o)));
+  const msg = `${enc(header)}.${enc(body)}`;
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(msg));
+  return `${msg}.${b64(new Uint8Array(sig))}`;
+}
+
+async function verifyAdminJwt(token: string, secret: string): Promise<boolean> {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return false;
+    const payloadJson = atob(parts[1]!.replace(/-/g, "+").replace(/_/g, "/"));
+    const payload = JSON.parse(payloadJson) as { role?: string; exp?: number };
+    if (payload.role !== "admin") return false;
+    if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) return false;
+    const msg = `${parts[0]}.${parts[1]}`;
+    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(msg));
+    const b64 = (b: Uint8Array) => btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    return parts[2] === b64(new Uint8Array(sig));
+  } catch {
+    return false;
+  }
+}
+
+async function isAdmin(request: Request, env: Env): Promise<boolean> {
+  // Preferred: short-lived admin JWT via Authorization header
+  const authHeader = request.headers.get("Authorization");
+  if (authHeader?.startsWith("Bearer ") && env.JWT_SECRET) {
+    if (await verifyAdminJwt(authHeader.slice(7), env.JWT_SECRET)) return true;
+  }
+  // Fallback: static x-admin-key (only accepted when JWT_SECRET is not set)
+  if (!env.JWT_SECRET) {
+    const key = request.headers.get("x-admin-key");
+    return !!key && key === env.ADMIN_API_KEY;
+  }
+  return false;
+}
+
+async function handleAdminLogin(request: Request, env: Env): Promise<Response> {
+  const body = await readBody<{ key?: string }>(request);
+  if (!body.key || body.key !== env.ADMIN_API_KEY) {
+    return json({ error: "Chave inválida" }, { status: 401 });
+  }
+  if (!env.JWT_SECRET) {
+    return json({ error: "JWT_SECRET não configurado no servidor" }, { status: 500 });
+  }
+  const token = await signAdminJwt(env.JWT_SECRET);
+  return json({ ok: true, token });
 }
 
 const PBKDF2_ITERATIONS = 120000;
@@ -113,7 +164,7 @@ async function legacySha256Hash(password: string): Promise<string> {
 async function signJwt(payload: { tenantId: string; username: string }, secret: string): Promise<string> {
   const header = { alg: "HS256", typ: "JWT" };
   const now = Math.floor(Date.now() / 1000);
-  const body = { ...payload, iat: now, exp: now + 60 * 60 * 24 * 7 };
+  const body = { ...payload, iat: now, exp: now + 60 * 60 * 24 };
   const b64 = (b: Uint8Array) => btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   const enc = (o: object) => b64(new TextEncoder().encode(JSON.stringify(o)));
   const msg = `${enc(header)}.${enc(body)}`;
@@ -229,7 +280,7 @@ async function callOpenAI(
 }
 
 async function handleAdminCreateTenantUser(request: Request, env: Env): Promise<Response> {
-  if (!isAdmin(request, env)) {
+  if (!(await isAdmin(request, env))) {
     return json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -268,7 +319,7 @@ async function handleAdminCreateTenantUser(request: Request, env: Env): Promise<
 }
 
 async function handleAdminListUsers(request: Request, env: Env): Promise<Response> {
-  if (!isAdmin(request, env)) {
+  if (!(await isAdmin(request, env))) {
     return json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -283,7 +334,7 @@ async function handleAdminListUsers(request: Request, env: Env): Promise<Respons
 }
 
 async function handleAdminDeleteUser(request: Request, env: Env, url: URL): Promise<Response> {
-  if (!isAdmin(request, env)) {
+  if (!(await isAdmin(request, env))) {
     return json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -400,10 +451,10 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
       const data = (await res.json()) as any;
 
       if (!res.ok) {
+        console.error("[worker] Evolution API error (QR create):", JSON.stringify(data));
         return json(
           {
             qr: null,
-            raw: data,
             error:
               data?.response?.message?.[0] ||
               "Não foi possível gerar o QR. Verifique a instância na Evolution API.",
@@ -417,7 +468,6 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
         return json(
           {
             qr: null,
-            raw: data,
             error:
               "QR ainda não disponível. Tente novamente em alguns segundos ou confira no painel da Evolution.",
           },
@@ -425,7 +475,7 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
         );
       }
 
-      return json({ qr: base64, raw: data });
+      return json({ qr: base64 });
     } catch (err: any) {
       return json(
         { qr: null, error: err?.message || "Erro ao criar instância/QR na Evolution API" },
@@ -700,7 +750,8 @@ async function handleLeads(request: Request, env: Env, method: string, url: URL)
   await ensureTenant(env, tenantId);
 
   if (method === "GET") {
-    const search = url.searchParams.get("q") || "";
+    const searchRaw = url.searchParams.get("q") || "";
+    const search = searchRaw.trim().slice(0, 100);
     const folderId = url.searchParams.get("folderId");
     const countOnly = url.searchParams.get("countOnly") === "1";
 
@@ -1380,7 +1431,25 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
       crm_column_id = null,
     } = body;
 
-    if (!name) return json({ error: "Nome obrigatório" }, { status: 400 });
+    if (!name || typeof name !== "string" || name.trim().length === 0) {
+      return json({ error: "Nome obrigatório" }, { status: 400 });
+    }
+    const resolvedDelayMin = Number(delay_min ?? 6);
+    const resolvedDelayMax = Number(delay_max ?? 15);
+    const resolvedTimeFrom = String(time_from ?? "09:00");
+    const resolvedTimeTo = String(time_to ?? "18:00");
+    if (!Number.isFinite(resolvedDelayMin) || resolvedDelayMin < 0 || resolvedDelayMin > 1440) {
+      return json({ error: "delay_min deve ser entre 0 e 1440" }, { status: 400 });
+    }
+    if (!Number.isFinite(resolvedDelayMax) || resolvedDelayMax < 0 || resolvedDelayMax > 1440) {
+      return json({ error: "delay_max deve ser entre 0 e 1440" }, { status: 400 });
+    }
+    if (!/^\d{2}:\d{2}$/.test(resolvedTimeFrom)) {
+      return json({ error: "time_from deve estar no formato HH:MM" }, { status: 400 });
+    }
+    if (!/^\d{2}:\d{2}$/.test(resolvedTimeTo)) {
+      return json({ error: "time_to deve estar no formato HH:MM" }, { status: 400 });
+    }
 
     const res = await env.DB.prepare(
       `INSERT INTO campaigns
@@ -1389,11 +1458,11 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
     )
       .bind(
         tenantId,
-        name,
-        delay_min ?? 6,
-        delay_max ?? 15,
-        time_from ?? "09:00",
-        time_to ?? "18:00",
+        name.trim(),
+        resolvedDelayMin,
+        resolvedDelayMax,
+        resolvedTimeFrom,
+        resolvedTimeTo,
         JSON.stringify(Array.isArray(days_blocked) ? days_blocked : []),
         funnel_id ?? null,
         crm_column_id ?? null,
@@ -1585,6 +1654,17 @@ async function handleCRM(request: Request, env: Env, method: string, url: URL) {
       if (!body.lead_id || !body.column_id) {
         return json({ error: "lead_id e column_id são obrigatórios" }, { status: 400 });
       }
+
+      // Verify both resources belong to the current tenant (prevent IDOR)
+      const leadOwned = await env.DB.prepare(
+        "SELECT id FROM leads WHERE id = ? AND tenant_id = ? LIMIT 1",
+      ).bind(body.lead_id, tenantId).first();
+      if (!leadOwned) return json({ error: "Lead não encontrado" }, { status: 404 });
+
+      const colOwned = await env.DB.prepare(
+        "SELECT id FROM crm_columns WHERE id = ? AND tenant_id = ? LIMIT 1",
+      ).bind(body.column_id, tenantId).first();
+      if (!colOwned) return json({ error: "Coluna não encontrada" }, { status: 404 });
 
       const res = await env.DB.prepare(
         `INSERT INTO crm_leads (tenant_id, lead_id, column_id, position)
@@ -1855,11 +1935,13 @@ export default {
 
     const allowedOrigins = (env.ALLOWED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean);
     const origin = request.headers.get("Origin") || "";
-    const allowOrigin = allowedOrigins.length ? (allowedOrigins.includes(origin) ? origin : allowedOrigins[0]) : null;
+    const allowOrigin = allowedOrigins.includes(origin) ? origin : null;
     if (method === "OPTIONS") {
       const headers: Record<string, string> = {
         "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, Authorization, x-admin-key, x-tenant-id, x-extension-token",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
       };
       if (allowOrigin) headers["Access-Control-Allow-Origin"] = allowOrigin;
       return new Response(null, { status: 204, headers });
@@ -1868,7 +1950,9 @@ export default {
     let response: Response;
 
     try {
-      if (pathname === "/api/admin/create-tenant-user" && method === "POST") {
+      if (pathname === "/api/admin/login" && method === "POST") {
+        response = await handleAdminLogin(request, env);
+      } else if (pathname === "/api/admin/create-tenant-user" && method === "POST") {
         response = await handleAdminCreateTenantUser(request, env);
       } else if (pathname === "/api/admin/users" && method === "GET") {
         response = await handleAdminListUsers(request, env);
@@ -1912,6 +1996,8 @@ export default {
     if (allowOrigin) headers.set("Access-Control-Allow-Origin", allowOrigin);
     headers.set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
     headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-admin-key, x-tenant-id, x-extension-token");
+    headers.set("X-Content-Type-Options", "nosniff");
+    headers.set("X-Frame-Options", "DENY");
 
     return new Response(response.body, {
       status: response.status,
