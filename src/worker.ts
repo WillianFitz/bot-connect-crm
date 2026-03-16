@@ -437,6 +437,9 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
     }
 
     try {
+      const workerOrigin = new URL(request.url).origin;
+      const webhookUrl = `${workerOrigin}/api/webhook/evolution`;
+
       const res = await fetch(`${baseUrl}/instance/create`, {
         method: "POST",
         headers: {
@@ -447,6 +450,12 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
           instanceName: tenantId,
           integration: "WHATSAPP-BAILEYS",
           qrcode: true,
+          webhook: {
+            url: webhookUrl,
+            byEvents: false,
+            base64: false,
+            events: ["MESSAGES_UPSERT"],
+          },
         }),
       });
 
@@ -1003,7 +1012,10 @@ async function handleAgents(request: Request, env: Env, method: string, url: URL
 
     if (sub === "clear-memory") {
       if (method === "POST") {
-        // Placeholder: in production, clear conversation history for this tenant's atendimento agent
+        await env.DB.batch([
+          env.DB.prepare("DELETE FROM agent_conversations WHERE tenant_id = ?").bind(tenantId),
+          env.DB.prepare("DELETE FROM agent_pauses WHERE tenant_id = ?").bind(tenantId),
+        ]);
         return json({ ok: true });
       }
       return new Response("Method not allowed", { status: 405 });
@@ -2019,6 +2031,298 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
   return new Response("Not found", { status: 404 });
 }
 
+// ─── Webhook Evolution API ────────────────────────────────────────────────────
+
+function extractTextFromEvolutionPayload(data: any): string | null {
+  const msg = data?.data?.message;
+  if (!msg) return null;
+  return (
+    msg.conversation ||
+    msg.extendedTextMessage?.text ||
+    msg.imageMessage?.caption ||
+    msg.videoMessage?.caption ||
+    null
+  );
+}
+
+function normalizePhoneFromJid(jid: string): string {
+  return (jid || "").split("@")[0]?.replace(/\D/g, "") || "";
+}
+
+async function isPhoneProspected(env: Env, tenantId: string, phone: string): Promise<boolean> {
+  const row = await env.DB.prepare(
+    "SELECT id FROM leads WHERE tenant_id = ? AND phone = ? LIMIT 1",
+  ).bind(tenantId, phone).first();
+  return !!row;
+}
+
+async function getAgentPause(
+  env: Env,
+  tenantId: string,
+  phone: string,
+): Promise<{ paused: boolean; definitive: boolean }> {
+  const row = await env.DB.prepare(
+    "SELECT paused_until, pause_definitive FROM agent_pauses WHERE tenant_id = ? AND phone = ? LIMIT 1",
+  ).bind(tenantId, phone).first<{ paused_until: string | null; pause_definitive: number }>();
+
+  if (!row) return { paused: false, definitive: false };
+  if (row.pause_definitive) return { paused: true, definitive: true };
+  if (row.paused_until && new Date(row.paused_until) > new Date()) {
+    return { paused: true, definitive: false };
+  }
+  // Pause expired — clean up
+  await env.DB.prepare("DELETE FROM agent_pauses WHERE tenant_id = ? AND phone = ?")
+    .bind(tenantId, phone).run();
+  return { paused: false, definitive: false };
+}
+
+async function setPause(
+  env: Env,
+  tenantId: string,
+  phone: string,
+  pauseMinutes: number,
+  definitive: boolean,
+): Promise<void> {
+  const pausedUntil = definitive
+    ? null
+    : new Date(Date.now() + pauseMinutes * 60 * 1000).toISOString();
+  await env.DB.prepare(
+    `INSERT INTO agent_pauses (tenant_id, phone, paused_until, pause_definitive)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(tenant_id, phone) DO UPDATE SET
+       paused_until = excluded.paused_until,
+       pause_definitive = excluded.pause_definitive,
+       created_at = datetime('now')`,
+  ).bind(tenantId, phone, pausedUntil, definitive ? 1 : 0).run();
+}
+
+async function getConversationHistory(
+  env: Env,
+  tenantId: string,
+  phone: string,
+  limit = 20,
+): Promise<Array<{ role: "user" | "assistant"; content: string }>> {
+  const res = await env.DB.prepare(
+    `SELECT role, content FROM agent_conversations
+     WHERE tenant_id = ? AND phone = ?
+     ORDER BY created_at DESC LIMIT ?`,
+  ).bind(tenantId, phone, limit).all<{ role: string; content: string }>();
+  return ((res.results || []) as Array<{ role: string; content: string }>)
+    .reverse()
+    .map((r) => ({ role: r.role as "user" | "assistant", content: r.content }));
+}
+
+async function appendConversation(
+  env: Env,
+  tenantId: string,
+  phone: string,
+  role: "user" | "assistant",
+  content: string,
+): Promise<void> {
+  await env.DB.prepare(
+    "INSERT INTO agent_conversations (tenant_id, phone, role, content) VALUES (?, ?, ?, ?)",
+  ).bind(tenantId, phone, role, content).run();
+}
+
+function resolvePromptDefaults(
+  prompt: string,
+  agentRow: { agenda_link?: string | null; human_number?: string | null; human_group_id?: string | null },
+): string {
+  return prompt
+    .replace(/\{\{agenda\}\}/g, agentRow.agenda_link || "[link da agenda não configurado]")
+    .replace(/\{\{numero_humano\}\}/g, agentRow.human_number || "[número humano não configurado]")
+    .replace(/\{\{grupo_humano\}\}/g, agentRow.human_group_id || "[grupo não configurado]");
+}
+
+interface MessageSegment {
+  type: "text" | "image" | "video" | "audio";
+  content: string;
+  caption?: string;
+}
+
+async function parseResponseSegments(
+  env: Env,
+  tenantId: string,
+  response: string,
+): Promise<MessageSegment[]> {
+  const segments: MessageSegment[] = [];
+  const parts = response.split(/({{media:[^}]+}})/g);
+  for (const part of parts) {
+    const mediaMatch = part.match(/^{{media:([^}]+)}}$/);
+    if (mediaMatch) {
+      const mediaId = mediaMatch[1];
+      const row = await env.DB.prepare(
+        "SELECT media_type, url FROM agent_media WHERE tenant_id = ? AND media_id = ? LIMIT 1",
+      ).bind(tenantId, mediaId).first<{ media_type: string; url: string }>();
+      if (row) {
+        const mt = row.media_type || "";
+        let type: "image" | "video" | "audio" = "image";
+        if (mt.startsWith("video/")) type = "video";
+        else if (mt.startsWith("audio/")) type = "audio";
+        segments.push({ type, content: row.url });
+      }
+    } else {
+      const text = part.trim();
+      if (text) segments.push({ type: "text", content: text });
+    }
+  }
+  return segments;
+}
+
+async function sendWhatsAppMedia(
+  env: Env,
+  tenantId: string,
+  number: string,
+  mediaUrl: string,
+  mediaType: "image" | "video" | "audio",
+  caption?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const baseUrl = getEvolutionBaseUrl(env);
+  if (!baseUrl || !env.EVOLUTION_API_KEY) {
+    return { ok: false, error: "Evolution API não configurada" };
+  }
+  try {
+    let endpoint: string;
+    let body: Record<string, unknown>;
+    if (mediaType === "audio") {
+      endpoint = `${baseUrl}/message/sendWhatsAppAudio/${tenantId}`;
+      body = { number, audio: mediaUrl };
+    } else {
+      endpoint = `${baseUrl}/message/sendMedia/${tenantId}`;
+      body = { number, mediatype: mediaType, media: mediaUrl, caption: caption || "" };
+    }
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: env.EVOLUTION_API_KEY },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      let errMsg = res.statusText;
+      try {
+        const data = await res.json();
+        if (Array.isArray((data as any)?.response?.message) && (data as any).response.message[0])
+          errMsg = (data as any).response.message[0];
+      } catch { /* ignore */ }
+      return { ok: false, error: errMsg };
+    }
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || "Erro de rede" };
+  }
+}
+
+async function handleEvolutionWebhook(request: Request, env: Env): Promise<Response> {
+  let data: any;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "JSON inválido" }, { status: 400 });
+  }
+
+  // Instance name = tenantId in this system
+  const tenantId: string = data?.instance || "";
+  if (!tenantId) return json({ ok: true });
+
+  // Only process incoming text messages
+  const event: string = data?.event || "";
+  if (event !== "messages.upsert") return json({ ok: true });
+
+  const fromMe: boolean = !!data?.data?.key?.fromMe;
+  if (fromMe) return json({ ok: true });
+
+  const remoteJid: string = data?.data?.key?.remoteJid || "";
+  if (!remoteJid || remoteJid.endsWith("@g.us")) return json({ ok: true }); // ignore groups
+
+  const phone = normalizePhoneFromJid(remoteJid);
+  if (!phone) return json({ ok: true });
+
+  const userText = extractTextFromEvolutionPayload(data);
+  if (!userText) return json({ ok: true }); // non-text message
+
+  // Load connection settings
+  const conn = await env.DB.prepare(
+    "SELECT agent_enabled, reply_all FROM connections WHERE tenant_id = ? AND type = 'whatsapp' LIMIT 1",
+  ).bind(tenantId).first<{ agent_enabled: number; reply_all: number }>();
+
+  if (!conn || !conn.agent_enabled) return json({ ok: true });
+
+  // If not reply_all, only respond to prospected leads
+  if (!conn.reply_all) {
+    const prospected = await isPhoneProspected(env, tenantId, phone);
+    if (!prospected) return json({ ok: true });
+  }
+
+  // Check if agent is paused for this phone
+  const pause = await getAgentPause(env, tenantId, phone);
+  if (pause.paused) return json({ ok: true });
+
+  // Load agent config
+  const agent = await env.DB.prepare(
+    "SELECT base_prompt, pause_minutes, pause_definitive, agenda_link, human_number, human_group_id FROM agents WHERE tenant_id = ? AND id = 'atendimento' LIMIT 1",
+  ).bind(tenantId).first<{
+    base_prompt?: string | null;
+    pause_minutes?: number | null;
+    pause_definitive?: number | null;
+    agenda_link?: string | null;
+    human_number?: string | null;
+    human_group_id?: string | null;
+  }>();
+
+  const rawPrompt = agent?.base_prompt || "Você é um agente de atendimento. Responda de forma educada, clara e objetiva.";
+  const systemPrompt = resolvePromptDefaults(rawPrompt, {
+    agenda_link: agent?.agenda_link,
+    human_number: agent?.human_number,
+    human_group_id: agent?.human_group_id,
+  });
+
+  // Load conversation history
+  const history = await getConversationHistory(env, tenantId, phone, 20);
+
+  // Save user message
+  await appendConversation(env, tenantId, phone, "user", userText);
+
+  // Call OpenAI
+  const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+    { role: "system", content: systemPrompt },
+    ...history,
+    { role: "user", content: userText },
+  ];
+
+  let aiResponse: string;
+  try {
+    aiResponse = await callOpenAI(env, messages);
+  } catch (err: any) {
+    console.error("[webhook] OpenAI error:", err?.message);
+    return json({ ok: true }); // fail silently, don't crash webhook
+  }
+
+  // Save assistant response
+  await appendConversation(env, tenantId, phone, "assistant", aiResponse);
+
+  // Parse response segments (text + media tokens)
+  const segments = await parseResponseSegments(env, tenantId, aiResponse);
+
+  // Send each segment via WhatsApp
+  for (const seg of segments) {
+    if (seg.type === "text") {
+      await sendWhatsAppMessage(env, tenantId, phone, seg.content);
+    } else {
+      await sendWhatsAppMedia(env, tenantId, phone, seg.content, seg.type, seg.caption);
+    }
+  }
+
+  // Set pause if configured (prevents bot from interrupting human follow-up)
+  const pauseMinutes = Number(agent?.pause_minutes ?? 0);
+  const pauseDefinitive = !!agent?.pause_definitive;
+  if (pauseMinutes > 0 || pauseDefinitive) {
+    await setPause(env, tenantId, phone, pauseMinutes, pauseDefinitive);
+  }
+
+  return json({ ok: true });
+}
+
+// ─── End Webhook ──────────────────────────────────────────────────────────────
+
 /** Pathname normalizado para roteamento: usa /api/... e colapsa /api/api/ em /api/. */
 function normalisePathname(pathname: string): string {
   const i = pathname.indexOf("/api/");
@@ -2086,6 +2390,8 @@ export default {
         response = await handleAIAgent(request, env, "atendimento");
       } else if (pathname === "/api/ai/agendamento" && method === "POST") {
         response = await handleAIAgent(request, env, "agendamento");
+      } else if (pathname === "/api/webhook/evolution" && method === "POST") {
+        response = await handleEvolutionWebhook(request, env);
       } else {
         response = notFound();
       }

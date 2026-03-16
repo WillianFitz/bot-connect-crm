@@ -456,25 +456,9 @@ export default function Agents() {
     queryFn: api.getAgents,
   });
 
-  const whatsappQuery = useQuery({
-    queryKey: ["whatsapp-connection"],
-    queryFn: api.getWhatsappConnection,
-  });
-
   const mediaQuery = useQuery({
     queryKey: ["agent-media"],
     queryFn: api.getAgentMedia,
-  });
-
-  const updateConnectionMutation = useMutation({
-    mutationFn: (payload: { agent_enabled?: boolean; reply_all?: boolean }) =>
-      api.updateWhatsappConnection(payload),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["whatsapp-connection"] });
-    },
-    onError: (err: Error) => {
-      toast({ title: "Erro ao salvar", description: err.message, variant: "destructive" });
-    },
   });
 
   const deleteMediaMutation = useMutation({
@@ -725,7 +709,6 @@ export default function Agents() {
   };
 
   const renderAtendimento = () => {
-    const conn = whatsappQuery.data;
     const rawMediaList = mediaQuery.data ?? [];
     const charCount = forms?.atendimento.base_prompt.length ?? 0;
 
@@ -748,38 +731,6 @@ export default function Agents() {
           </div>
         </div>
 
-        {/* Toggles de comportamento */}
-        <div className="space-y-3 rounded-xl border border-border/50 bg-card/40 p-4">
-          <h3 className="text-xs font-semibold text-foreground">Comportamento do Agente</h3>
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-foreground font-medium">Agente de atendimento ligado</p>
-                <p className="text-[11px] text-muted-foreground">
-                  Responde apenas leads com quem você já iniciou uma conversa (prospecção ativa).
-                </p>
-              </div>
-              <Switch
-                checked={!!conn?.agent_enabled}
-                disabled={updateConnectionMutation.isPending}
-                onCheckedChange={(v) => updateConnectionMutation.mutate({ agent_enabled: v })}
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-foreground font-medium">Responder todos</p>
-                <p className="text-[11px] text-muted-foreground">
-                  Quando ativado, o agente responde <strong>qualquer pessoa</strong> que entrar em contato no WhatsApp.
-                </p>
-              </div>
-              <Switch
-                checked={!!conn?.reply_all}
-                disabled={updateConnectionMutation.isPending || !conn?.agent_enabled}
-                onCheckedChange={(v) => updateConnectionMutation.mutate({ reply_all: v })}
-              />
-            </div>
-          </div>
-        </div>
 
         {/* Ferramentas */}
         <div className="rounded-xl border border-border/50 bg-card/40 p-4 space-y-3">
