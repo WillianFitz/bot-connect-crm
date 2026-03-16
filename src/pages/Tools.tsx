@@ -48,7 +48,6 @@ const EXTENSION_FILES = [
 export default function Tools() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [profile, setProfile] = useState("");
   const [downloadExtensionPending, setDownloadExtensionPending] = useState(false);
   const tenantId =
     (typeof window !== "undefined" &&
@@ -58,27 +57,6 @@ export default function Tools() {
   const { data: jobs, isLoading: isLoadingJobs } = useQuery({
     queryKey: ["instagramJobs"],
     queryFn: () => api.listInstagramJobs(),
-  });
-
-  const startMutation = useMutation({
-    mutationFn: (payload: { profile: string }) =>
-      api.startInstagramExtraction(payload),
-    onSuccess: () => {
-      toast({
-        title: "Extração iniciada",
-        description:
-          "O job foi criado. Aguarde alguns minutos e atualize para ver novos leads.",
-      });
-      setProfile("");
-      queryClient.invalidateQueries({ queryKey: ["instagramJobs"] });
-    },
-    onError: (err: any) => {
-      toast({
-        title: "Erro ao iniciar extração",
-        description: err?.message || "Tente novamente em instantes.",
-        variant: "destructive",
-      });
-    },
   });
 
   const igConfigQuery = useQuery({
@@ -178,13 +156,13 @@ export default function Tools() {
         </TabsList>
 
         <TabsContent value="instagram">
-          <div className="grid gap-6 md:grid-cols-[1.2fr,1.8fr]">
+          <div className="grid gap-6 md:grid-cols-1 max-w-2xl">
             <Card>
               <CardHeader>
                 <CardTitle>Conexão Instagram</CardTitle>
                 <CardDescription>
                   Use a extensão de navegador para capturar seguidores do
-                  Instagram e enviar diretamente para o SaaS.
+                  Instagram e enviar diretamente para sua base de leads.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -316,61 +294,21 @@ export default function Tools() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Extrator de seguidores do Instagram</CardTitle>
+                <CardTitle>Histórico de importações</CardTitle>
                 <CardDescription>
-                  Depois de configurar o login acima, escolha um perfil público
-                  para iniciar a extração dos seguidores.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">
-                    Usuário / @perfil do Instagram
-                  </label>
-                  <Input
-                    placeholder="ex.: @meu_cliente_oficial"
-                    value={profile}
-                    onChange={(e) => setProfile(e.target.value)}
-                  />
-                </div>
-
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  A autenticação no Instagram e a execução real da extração
-                  são feitas pelo serviço no Railway. Aqui você apenas dispara
-                  o job e acompanha o status.
-                </p>
-
-                <Button
-                  onClick={() => startMutation.mutate({ profile })}
-                  disabled={!profile.trim() || startMutation.isPending}
-                  className="w-full md:w-auto"
-                >
-                  {startMutation.isPending && (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  )}
-                  Iniciar extração
-                </Button>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Histórico de extrações</CardTitle>
-                <CardDescription>
-                  Acompanhe o status dos jobs de extração e quantos leads foram
-                  importados para sua base.
+                  Leads enviados pela extensão do Instagram aparecem aqui.
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 {isLoadingJobs ? (
                   <div className="flex items-center justify-center py-8 text-sm text-muted-foreground gap-2">
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Carregando jobs...
+                    Carregando...
                   </div>
                 ) : !jobs || jobs.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
-                    Nenhum job de extração ainda. Dispare seu primeiro job ao
-                    lado.
+                    Nenhuma importação ainda. Use a extensão no Instagram para
+                    capturar seguidores e enviar para sua base.
                   </p>
                 ) : (
                   <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
