@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bot,
@@ -7,12 +7,7 @@ import {
   Loader2,
   Upload,
   Trash2,
-  GripHorizontal,
   RefreshCw,
-  FileVideo,
-  FileAudio,
-  FileImage,
-  File as FileIcon,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -144,32 +139,300 @@ Outras Regras:
 - Aguarde sempre a resposta do usuário antes de prosseguir
 - Número para falar com humano: {{numero_humano}}`;
 
-function mediaIcon(type: string) {
-  if (type.startsWith("video/")) return FileVideo;
-  if (type.startsWith("audio/")) return FileAudio;
-  if (type.startsWith("image/")) return FileImage;
-  return FileIcon;
-}
+// ─── Token visual system ────────────────────────────────────────────────────
 
-interface DraggableChipProps {
+interface TokenVisual {
   token: string;
   label: string;
-  icon?: React.ReactNode;
+  emoji: string;
+  chipClass: string;   // tailwind classes for the draggable chip (in tools panel)
+  badgeClass: string;  // tailwind classes for the inline badge (in editor)
 }
 
-function DraggableChip({ token, label, icon }: DraggableChipProps) {
+function escapeHtml(s: string) {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+function escapeAttr(s: string) {
+  return s.replace(/"/g, "&quot;");
+}
+function escapeRegex(s: string) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const DEFAULT_TOKEN_VISUALS: TokenVisual[] = [
+  {
+    token: "{{agenda}}",
+    label: "Agenda",
+    emoji: "🗓️",
+    chipClass:
+      "bg-amber-500/20 border-amber-400/60 text-amber-300 hover:bg-amber-500/30",
+    badgeClass:
+      "bg-amber-500/20 border-amber-400/60 text-amber-300",
+  },
+  {
+    token: "{{numero_humano}}",
+    label: "Falar com Humano",
+    emoji: "👤",
+    chipClass:
+      "bg-blue-500/20 border-blue-400/60 text-blue-300 hover:bg-blue-500/30",
+    badgeClass:
+      "bg-blue-500/20 border-blue-400/60 text-blue-300",
+  },
+  {
+    token: "{{grupo_humano}}",
+    label: "Grupo Humano",
+    emoji: "👥",
+    chipClass:
+      "bg-cyan-500/20 border-cyan-400/60 text-cyan-300 hover:bg-cyan-500/30",
+    badgeClass:
+      "bg-cyan-500/20 border-cyan-400/60 text-cyan-300",
+  },
+];
+
+interface AgentMedia {
+  id: number;
+  media_id: string;
+  file_name: string;
+  media_type: string;
+  created_at: string;
+}
+
+function buildMediaVisual(m: AgentMedia): TokenVisual {
+  const token = `{{media:${m.media_id}}}`;
+  if (m.media_type.startsWith("video/"))
+    return {
+      token,
+      label: `Enviar Vídeo • ${m.media_id}`,
+      emoji: "🎥",
+      chipClass:
+        "bg-violet-500/20 border-violet-400/60 text-violet-300 hover:bg-violet-500/30",
+      badgeClass: "bg-violet-500/20 border-violet-400/60 text-violet-300",
+    };
+  if (m.media_type.startsWith("audio/"))
+    return {
+      token,
+      label: `Enviar Áudio • ${m.media_id}`,
+      emoji: "🎵",
+      chipClass:
+        "bg-pink-500/20 border-pink-400/60 text-pink-300 hover:bg-pink-500/30",
+      badgeClass: "bg-pink-500/20 border-pink-400/60 text-pink-300",
+    };
+  if (m.media_type.startsWith("image/"))
+    return {
+      token,
+      label: `Enviar Imagem • ${m.media_id}`,
+      emoji: "🖼️",
+      chipClass:
+        "bg-emerald-500/20 border-emerald-400/60 text-emerald-300 hover:bg-emerald-500/30",
+      badgeClass: "bg-emerald-500/20 border-emerald-400/60 text-emerald-300",
+    };
+  return {
+    token,
+    label: `Enviar Arquivo • ${m.media_id}`,
+    emoji: "📎",
+    chipClass:
+      "bg-gray-500/20 border-gray-400/60 text-gray-300 hover:bg-gray-500/30",
+    badgeClass: "bg-gray-500/20 border-gray-400/60 text-gray-300",
+  };
+}
+
+// Converts stored string (with {{token}} markers) to editor HTML
+function valueToHTML(text: string, visuals: TokenVisual[]): string {
+  if (!visuals.length) return escapeHtml(text).replace(/\n/g, "<br>");
+  const pattern = new RegExp(
+    `(${visuals.map((v) => escapeRegex(v.token)).join("|")})`,
+  );
+  return text
+    .split(pattern)
+    .map((part) => {
+      const v = visuals.find((x) => x.token === part);
+      if (v) {
+        return `<span data-token="${escapeAttr(v.token)}" contenteditable="false" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs font-semibold mx-0.5 align-middle cursor-default select-none ${v.badgeClass}">${v.emoji} ${escapeHtml(v.label)}</span>`;
+      }
+      return escapeHtml(part).replace(/\n/g, "<br>");
+    })
+    .join("");
+}
+
+// Serialises editor DOM back to the stored string
+function htmlToValue(div: HTMLDivElement): string {
+  function walk(node: Node): string {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const el = node as HTMLElement;
+      if (el.dataset.token) return el.dataset.token;
+      if (el.tagName === "BR") return "\n";
+      if (el.tagName === "DIV")
+        return "\n" + Array.from(el.childNodes).map(walk).join("");
+      return Array.from(el.childNodes).map(walk).join("");
+    }
+    return "";
+  }
+  return Array.from(div.childNodes).map(walk).join("");
+}
+
+// ─── RichPromptEditor ────────────────────────────────────────────────────────
+
+interface RichPromptEditorProps {
+  value: string;
+  onChange: (v: string) => void;
+  visuals: TokenVisual[];
+  placeholder?: string;
+}
+
+function RichPromptEditor({
+  value,
+  onChange,
+  visuals,
+  placeholder,
+}: RichPromptEditorProps) {
+  const editorRef = useRef<HTMLDivElement>(null);
+  const internalRef = useRef(value);
+  const lastVisualsRef = useRef(visuals);
+
+  // Sync DOM when value/visuals change from outside
+  useEffect(() => {
+    const el = editorRef.current;
+    if (!el) return;
+    const visualsChanged = visuals !== lastVisualsRef.current;
+    lastVisualsRef.current = visuals;
+    if (!visualsChanged && value === internalRef.current) return;
+    internalRef.current = value;
+    // Save / restore selection
+    const sel = window.getSelection();
+    const hadFocus = document.activeElement === el;
+    el.innerHTML = valueToHTML(value, visuals);
+    if (hadFocus && sel) {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  }, [value, visuals]);
+
+  // Initial render
+  useEffect(() => {
+    if (editorRef.current)
+      editorRef.current.innerHTML = valueToHTML(value, visuals);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleInput = useCallback(() => {
+    const el = editorRef.current;
+    if (!el) return;
+    const newVal = htmlToValue(el);
+    internalRef.current = newVal;
+    onChange(newVal);
+  }, [onChange]);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      const token = e.dataTransfer.getData("text/plain");
+      if (!token) return;
+      const visual = visuals.find((v) => v.token === token);
+      const el = editorRef.current;
+      if (!el) return;
+
+      // Position caret at drop point
+      let range: Range | null = null;
+      if (document.caretPositionFromPoint) {
+        const pos = document.caretPositionFromPoint(e.clientX, e.clientY);
+        if (pos) {
+          range = document.createRange();
+          range.setStart(pos.offsetNode, pos.offset);
+          range.collapse(true);
+        }
+      } else if ((document as any).caretRangeFromPoint) {
+        range = (document as any).caretRangeFromPoint(e.clientX, e.clientY);
+      }
+      const sel = window.getSelection();
+      if (range && sel) {
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+
+      if (visual) {
+        const span = document.createElement("span");
+        span.dataset.token = visual.token;
+        span.contentEditable = "false";
+        span.className = `inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs font-semibold mx-0.5 align-middle cursor-default select-none ${visual.badgeClass}`;
+        span.draggable = false;
+        span.textContent = `${visual.emoji} ${visual.label}`;
+        if (sel && sel.rangeCount > 0) {
+          const r = sel.getRangeAt(0);
+          r.deleteContents();
+          r.insertNode(span);
+          r.setStartAfter(span);
+          r.setEndAfter(span);
+          sel.removeAllRanges();
+          sel.addRange(r);
+        } else {
+          el.appendChild(span);
+        }
+      } else {
+        // Fallback: plain text insertion
+        document.execCommand("insertText", false, token);
+      }
+      handleInput();
+    },
+    [visuals, handleInput],
+  );
+
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    document.execCommand(
+      "insertText",
+      false,
+      e.clipboardData.getData("text/plain"),
+    );
+  }, []);
+
+  return (
+    <div
+      ref={editorRef}
+      contentEditable
+      suppressContentEditableWarning
+      onInput={handleInput}
+      onDrop={handleDrop}
+      onDragOver={(e) => e.preventDefault()}
+      onPaste={handlePaste}
+      data-placeholder={placeholder}
+      className={[
+        "min-h-[320px] max-h-[560px] overflow-y-auto p-3 rounded-md border border-border/50",
+        "bg-secondary text-xs leading-relaxed focus:outline-none focus:ring-1 focus:ring-ring",
+        "empty:before:content-[attr(data-placeholder)] empty:before:text-muted-foreground/40",
+        "whitespace-pre-wrap break-words",
+      ].join(" ")}
+    />
+  );
+}
+
+// ─── ToolChip (draggable button in the tools panel) ─────────────────────────
+
+function ToolChip({ visual }: { visual: TokenVisual }) {
   return (
     <div
       draggable
       onDragStart={(e) => {
-        e.dataTransfer.setData("text/plain", token);
+        e.dataTransfer.setData("text/plain", visual.token);
         e.dataTransfer.effectAllowed = "copy";
       }}
-      title={`Arraste para o prompt: ${token}`}
-      className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-primary/10 border border-primary/20 rounded-md text-xs text-primary cursor-grab hover:bg-primary/20 active:cursor-grabbing select-none transition-colors"
+      title="Arraste para o prompt"
+      className={[
+        "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border",
+        "text-xs font-semibold cursor-grab active:cursor-grabbing select-none",
+        "transition-all duration-150",
+        visual.chipClass,
+      ].join(" ")}
     >
-      {icon ?? <GripHorizontal className="h-3 w-3 opacity-60" />}
-      <span className="font-mono">{label}</span>
+      <span className="text-sm leading-none">{visual.emoji}</span>
+      <span>{visual.label}</span>
     </div>
   );
 }
@@ -187,7 +450,6 @@ export default function Agents() {
   const [mediaFile, setMediaFile] = useState<File | null>(null);
   const [mediaName, setMediaName] = useState("");
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
-  const promptRef = useRef<HTMLTextAreaElement>(null);
 
   const agentsQuery = useQuery({
     queryKey: ["agents"],
@@ -434,39 +696,22 @@ export default function Agents() {
     </div>
   );
 
-  const handlePromptDrop = (e: React.DragEvent<HTMLTextAreaElement>) => {
-    e.preventDefault();
-    const token = e.dataTransfer.getData("text/plain");
-    if (!token || !forms) return;
-    const textarea = e.currentTarget;
-    const pos = textarea.selectionStart ?? textarea.value.length;
-    const val = forms.atendimento.base_prompt;
-    const newVal = val.slice(0, pos) + token + val.slice(pos);
-    updateField("atendimento", { base_prompt: newVal });
-    setTimeout(() => {
-      textarea.focus();
-      textarea.selectionStart = textarea.selectionEnd = pos + token.length;
-    }, 0);
-  };
 
   const handleUploadMedia = async () => {
     if (!mediaFile || !mediaName.trim()) return;
     if (!/^[a-z0-9_\-]+$/.test(mediaName.trim())) {
-      toast({
-        title: "Nome inválido",
-        description: "Use apenas letras minúsculas, números, _ e -",
-        variant: "destructive",
-      });
+      toast({ title: "Nome inválido", description: "Use apenas letras minúsculas, números, _ e -", variant: "destructive" });
       return;
     }
     setIsUploadingMedia(true);
     try {
       await api.uploadAgentMedia(mediaFile, mediaName.trim(), mediaFile.name);
       queryClient.invalidateQueries({ queryKey: ["agent-media"] });
-      toast({ title: "Mídia enviada", description: `Token: {{media:${mediaName.trim()}}}` });
+      toast({ title: "Mídia enviada com sucesso!" });
       setMediaFile(null);
       setMediaName("");
-      (document.getElementById("media-file-input") as HTMLInputElement | null)!.value = "";
+      const inp = document.getElementById("media-file-input") as HTMLInputElement | null;
+      if (inp) inp.value = "";
     } catch (err: any) {
       toast({ title: "Erro no upload", description: err.message, variant: "destructive" });
     } finally {
@@ -476,8 +721,12 @@ export default function Agents() {
 
   const renderAtendimento = () => {
     const conn = whatsappQuery.data;
-    const mediaList = mediaQuery.data ?? [];
+    const rawMediaList = mediaQuery.data ?? [];
     const charCount = forms?.atendimento.base_prompt.length ?? 0;
+
+    // Build all token visuals (defaults + media)
+    const mediaVisuals = rawMediaList.map(buildMediaVisual);
+    const allVisuals: TokenVisual[] = [...DEFAULT_TOKEN_VISUALS, ...mediaVisuals];
 
     return (
       <div className="space-y-6">
@@ -497,7 +746,7 @@ export default function Agents() {
         {/* Toggles de comportamento */}
         <div className="space-y-3 rounded-xl border border-border/50 bg-card/40 p-4">
           <h3 className="text-xs font-semibold text-foreground">Comportamento do Agente</h3>
-          <div className="space-y-3">
+          <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs text-foreground font-medium">Agente de atendimento ligado</p>
@@ -508,9 +757,7 @@ export default function Agents() {
               <Switch
                 checked={!!conn?.agent_enabled}
                 disabled={updateConnectionMutation.isPending}
-                onCheckedChange={(v) =>
-                  updateConnectionMutation.mutate({ agent_enabled: v })
-                }
+                onCheckedChange={(v) => updateConnectionMutation.mutate({ agent_enabled: v })}
               />
             </div>
             <div className="flex items-center justify-between">
@@ -523,118 +770,103 @@ export default function Agents() {
               <Switch
                 checked={!!conn?.reply_all}
                 disabled={updateConnectionMutation.isPending || !conn?.agent_enabled}
-                onCheckedChange={(v) =>
-                  updateConnectionMutation.mutate({ reply_all: v })
-                }
+                onCheckedChange={(v) => updateConnectionMutation.mutate({ reply_all: v })}
               />
             </div>
           </div>
         </div>
 
-        {/* Ferramentas + Prompt - layout lado a lado em telas grandes */}
-        <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-4">
-          {/* Painel de ferramentas */}
-          <div className="space-y-3 rounded-xl border border-border/50 bg-card/40 p-4">
-            <h3 className="text-xs font-semibold text-foreground">Minhas Ferramentas</h3>
-            <p className="text-[11px] text-muted-foreground">
-              Arraste a ferramenta para o local correto no seu prompt.
+        {/* Ferramentas */}
+        <div className="rounded-xl border border-border/50 bg-card/40 p-4 space-y-3">
+          <h3 className="text-xs font-semibold text-foreground">Minhas Ferramentas</h3>
+          <p className="text-[11px] text-muted-foreground">
+            Arraste qualquer botão abaixo para o local correto no prompt.
+          </p>
+
+          {/* Tokens padrões */}
+          <div className="space-y-2">
+            <p className="text-[10px] text-muted-foreground/70 uppercase tracking-widest font-semibold">
+              Ações padrão
             </p>
-
-            <div className="space-y-2">
-              <p className="text-[11px] text-muted-foreground uppercase tracking-wide font-medium">
-                Tokens padrões
-              </p>
-              <div className="flex flex-wrap gap-2">
-                <DraggableChip token="{{agenda}}" label="{{agenda}}" icon={<span className="text-xs">🗓️</span>} />
-                <DraggableChip token="{{numero_humano}}" label="{{numero_humano}}" icon={<span className="text-xs">👤</span>} />
-                <DraggableChip token="{{grupo_humano}}" label="{{grupo_humano}}" icon={<span className="text-xs">👥</span>} />
-              </div>
+            <div className="flex flex-wrap gap-2">
+              {DEFAULT_TOKEN_VISUALS.map((v) => (
+                <ToolChip key={v.token} visual={v} />
+              ))}
             </div>
-
-            {mediaList.length > 0 && (
-              <div className="space-y-2">
-                <p className="text-[11px] text-muted-foreground uppercase tracking-wide font-medium">
-                  Mídias
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {mediaList.map((m) => {
-                    const Icon = mediaIcon(m.media_type);
-                    return (
-                      <DraggableChip
-                        key={m.id}
-                        token={`{{media:${m.media_id}}}`}
-                        label={m.media_id}
-                        icon={<Icon className="h-3 w-3" />}
-                      />
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {mediaList.length === 0 && (
-              <p className="text-[11px] text-muted-foreground italic">
-                Sem mídias. Envie na seção abaixo.
-              </p>
-            )}
           </div>
 
-          {/* Editor de Prompt */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs text-muted-foreground">Prompt do agente</Label>
+          {/* Mídias */}
+          {mediaVisuals.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-[10px] text-muted-foreground/70 uppercase tracking-widest font-semibold">
+                Mídias enviadas
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {mediaVisuals.map((v) => (
+                  <ToolChip key={v.token} visual={v} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {rawMediaList.length === 0 && (
+            <p className="text-[11px] text-muted-foreground/60 italic">
+              Nenhuma mídia enviada ainda. Envie na seção abaixo para adicionar botões de vídeo, áudio e imagem.
+            </p>
+          )}
+        </div>
+
+        {/* Editor de Prompt */}
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Label className="text-xs text-muted-foreground font-semibold">Prompt do agente</Label>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs gap-1.5 text-muted-foreground hover:text-destructive"
+              onClick={() => clearMemoryMutation.mutate()}
+              disabled={clearMemoryMutation.isPending}
+            >
+              🧹 Limpar memória do agente para testes
+            </Button>
+          </div>
+
+          <RichPromptEditor
+            value={current.base_prompt}
+            onChange={(v) => updateField("atendimento", { base_prompt: v })}
+            visuals={allVisuals}
+            placeholder={ATENDIMENTO_PROMPT_PLACEHOLDER}
+          />
+
+          <div className="flex items-center justify-between">
+            <span className={`text-[11px] ${charCount > 8000 ? "text-destructive" : "text-muted-foreground"}`}>
+              {charCount}/8000 caracteres
+            </span>
+            <div className="flex gap-2">
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-7 text-xs gap-1.5 text-muted-foreground hover:text-destructive"
-                onClick={() => clearMemoryMutation.mutate()}
-                disabled={clearMemoryMutation.isPending}
-                title="Limpa o histórico de conversa para testes"
+                className="h-7 text-xs"
+                onClick={() => updateField("atendimento", { base_prompt: "" })}
               >
-                🧹 Limpar memória do agente para testes
+                Limpar
               </Button>
-            </div>
-            <Textarea
-              ref={promptRef}
-              className="min-h-[320px] bg-secondary border-border/50 text-xs leading-relaxed font-mono resize-y"
-              placeholder={ATENDIMENTO_PROMPT_PLACEHOLDER}
-              value={current.base_prompt}
-              onChange={(e) => updateField("atendimento", { base_prompt: e.target.value })}
-              onDrop={handlePromptDrop}
-              onDragOver={(e) => e.preventDefault()}
-            />
-            <div className="flex items-center justify-between">
-              <span
-                className={`text-[11px] ${charCount > 8000 ? "text-destructive" : "text-muted-foreground"}`}
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => updateField("atendimento", { base_prompt: ATENDIMENTO_PROMPT_DEFAULT })}
               >
-                {charCount}/8000 caracteres
-              </span>
-              <div className="flex gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs"
-                  onClick={() => updateField("atendimento", { base_prompt: "" })}
-                >
-                  Limpar
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 text-xs"
-                  onClick={() => updateField("atendimento", { base_prompt: ATENDIMENTO_PROMPT_DEFAULT })}
-                >
-                  Usar prompt pronto
-                </Button>
-                <Button
-                  size="sm"
-                  className="h-7 text-xs"
-                  onClick={() => saveMutation.mutate(forms!.atendimento)}
-                  disabled={saveMutation.isPending || charCount > 8000}
-                >
-                  {saveMutation.isPending ? "Salvando..." : "Salvar"}
-                </Button>
-              </div>
+                Usar prompt pronto
+              </Button>
+              <Button
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => saveMutation.mutate(forms!.atendimento)}
+                disabled={saveMutation.isPending || charCount > 8000}
+              >
+                {saveMutation.isPending ? "Salvando..." : "Salvar"}
+              </Button>
             </div>
           </div>
         </div>
@@ -655,15 +887,13 @@ export default function Agents() {
               min={0}
               className="w-20 h-7 bg-secondary border-border/50"
               value={current.pause_minutes}
-              onChange={(e) =>
-                updateField("atendimento", { pause_minutes: Number(e.target.value) || 0 })
-              }
+              onChange={(e) => updateField("atendimento", { pause_minutes: Number(e.target.value) || 0 })}
             />
             <span className="text-muted-foreground">minutos</span>
           </div>
           <div className="flex items-center justify-between text-xs">
             <div>
-              <p className="text-foreground">Pausa definitiva</p>
+              <p className="text-foreground font-medium">Pausa definitiva</p>
               <p className="text-[11px] text-muted-foreground">
                 Se ativar, o agente não volta a responder automaticamente após sua interação.
               </p>
@@ -674,7 +904,7 @@ export default function Agents() {
             />
           </div>
           <p className="text-[11px] text-muted-foreground">
-            💡 Dica: defina 0 para não pausar. Se marcar Pausa definitiva, o agente não voltará a responder automaticamente após sua interação.
+            💡 Dica: defina 0 para não pausar. Se marcar Pausa definitiva, o agente não voltará a responder automaticamente.
           </p>
         </div>
 
@@ -682,12 +912,11 @@ export default function Agents() {
         <div className="space-y-4 rounded-xl border border-border/50 bg-card/40 p-4">
           <h3 className="text-xs font-semibold text-foreground">Itens padrões</h3>
           <p className="text-[11px] text-muted-foreground">
-            Use estes itens como tokens no prompt. Arraste da seção "Minhas Ferramentas" para inserir no prompt.
+            Configure os valores dos tokens. Arraste os botões da seção "Minhas Ferramentas" para inserir no prompt.
           </p>
           <div className="space-y-3">
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">🗓️ Agenda</Label>
-              <p className="text-[11px] text-muted-foreground">{"Defina o link público da sua agenda e insira no prompt como token {{agenda}}."}</p>
               <div className="flex gap-2">
                 <Input
                   className="h-8 bg-secondary border-border/50 text-xs flex-1"
@@ -695,14 +924,13 @@ export default function Agents() {
                   value={current.agenda_link}
                   onChange={(e) => updateField("atendimento", { agenda_link: e.target.value })}
                 />
-                <Button size="sm" className="h-8 text-xs" onClick={() => saveMutation.mutate(forms!.atendimento)} disabled={saveMutation.isPending}>
-                  Salvar agenda
+                <Button size="sm" className="h-8 text-xs shrink-0" onClick={() => saveMutation.mutate(forms!.atendimento)} disabled={saveMutation.isPending}>
+                  Salvar
                 </Button>
               </div>
             </div>
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">👤 Número falar com humano</Label>
-              <p className="text-[11px] text-muted-foreground">{"Insira no formato 55DDD99999999. Use como token {{numero_humano}}."}</p>
               <div className="flex gap-2">
                 <Input
                   className="h-8 bg-secondary border-border/50 text-xs flex-1"
@@ -710,14 +938,13 @@ export default function Agents() {
                   value={current.human_number}
                   onChange={(e) => updateField("atendimento", { human_number: e.target.value })}
                 />
-                <Button size="sm" className="h-8 text-xs" onClick={() => saveMutation.mutate(forms!.atendimento)} disabled={saveMutation.isPending}>
+                <Button size="sm" className="h-8 text-xs shrink-0" onClick={() => saveMutation.mutate(forms!.atendimento)} disabled={saveMutation.isPending}>
                   Salvar
                 </Button>
               </div>
             </div>
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">👥 Grupo falar com humano</Label>
-              <p className="text-[11px] text-muted-foreground">{"Insira o ID do grupo (ex.: 1234567890-123456@g.us). Use como token {{grupo_humano}}."}</p>
               <div className="flex gap-2">
                 <Input
                   className="h-8 bg-secondary border-border/50 text-xs flex-1"
@@ -725,7 +952,7 @@ export default function Agents() {
                   value={current.human_group_id}
                   onChange={(e) => updateField("atendimento", { human_group_id: e.target.value })}
                 />
-                <Button size="sm" className="h-8 text-xs" onClick={() => saveMutation.mutate(forms!.atendimento)} disabled={saveMutation.isPending}>
+                <Button size="sm" className="h-8 text-xs shrink-0" onClick={() => saveMutation.mutate(forms!.atendimento)} disabled={saveMutation.isPending}>
                   Salvar
                 </Button>
               </div>
@@ -750,27 +977,26 @@ export default function Agents() {
             </Button>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            Envie arquivos e gere tokens para usar no prompt. Arraste o token para inserir no prompt do agente.
+            Envie arquivos de imagem, áudio ou vídeo. Após o upload, o botão aparece em "Minhas Ferramentas" e pode ser arrastado para o prompt.
           </p>
 
           {/* Formulário de upload */}
-          <div className="space-y-3 rounded-lg border border-border/30 bg-background/40 p-3">
-            <p className="text-xs font-medium text-foreground">Novo upload</p>
-            <div className="grid gap-2 sm:grid-cols-2">
+          <div className="space-y-3 rounded-lg border border-dashed border-border/60 bg-background/30 p-4">
+            <p className="text-xs font-semibold text-foreground">Novo upload</p>
+            <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label className="text-[11px] text-muted-foreground">Arquivo</Label>
                 <input
                   id="media-file-input"
                   type="file"
                   accept="image/*,video/*,audio/*"
-                  className="w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-primary/10 file:text-primary hover:file:bg-primary/20 cursor-pointer"
+                  className="w-full text-xs file:mr-2 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-primary/10 file:text-primary hover:file:bg-primary/20 cursor-pointer"
                   onChange={(e) => setMediaFile(e.target.files?.[0] ?? null)}
                 />
+                <p className="text-[10px] text-muted-foreground">Suporta imagem, vídeo e áudio</p>
               </div>
               <div className="space-y-1">
-                <Label className="text-[11px] text-muted-foreground">
-                  Nome/ID da mídia
-                </Label>
+                <Label className="text-[11px] text-muted-foreground">Nome/ID da mídia</Label>
                 <Input
                   className="h-8 bg-secondary border-border/50 text-xs font-mono"
                   placeholder="ex.: video_demo1"
@@ -778,66 +1004,57 @@ export default function Agents() {
                   onChange={(e) => setMediaName(e.target.value.toLowerCase().replace(/[^a-z0-9_\-]/g, ""))}
                 />
                 <p className="text-[10px] text-muted-foreground">
-                  Regras: minúsculas, sem acentos, sem espaços. Permitido a-z 0-9 _ -
+                  Minúsculas, sem espaços. Permitido: a-z 0-9 _ -
                 </p>
               </div>
             </div>
             <Button
               size="sm"
-              className="gap-1.5"
+              className="gap-2"
               onClick={handleUploadMedia}
               disabled={!mediaFile || !mediaName.trim() || isUploadingMedia}
             >
-              {isUploadingMedia ? (
-                <><Loader2 className="h-3 w-3 animate-spin" /> Enviando...</>
-              ) : (
-                <><Upload className="h-3 w-3" /> Enviar e salvar</>
-              )}
+              {isUploadingMedia
+                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Enviando...</>
+                : <><Upload className="h-3.5 w-3.5" /> Enviar e salvar</>
+              }
             </Button>
           </div>
 
           {/* Biblioteca */}
           <div className="space-y-2">
-            <p className="text-[11px] text-muted-foreground uppercase tracking-wide font-medium">
-              Minha biblioteca — {mediaList.length} {mediaList.length === 1 ? "item" : "itens"}
+            <p className="text-[10px] text-muted-foreground/70 uppercase tracking-widest font-semibold">
+              Biblioteca — {rawMediaList.length} {rawMediaList.length === 1 ? "arquivo" : "arquivos"}
             </p>
             {mediaQuery.isLoading && (
               <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
                 <Loader2 className="h-3 w-3 animate-spin" /> Carregando...
               </div>
             )}
-            {!mediaQuery.isLoading && mediaList.length === 0 && (
+            {!mediaQuery.isLoading && rawMediaList.length === 0 && (
               <p className="text-[11px] text-muted-foreground italic py-2">Nenhuma mídia cadastrada.</p>
             )}
-            {mediaList.length > 0 && (
+            {rawMediaList.length > 0 && (
               <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3">
-                {mediaList.map((m) => {
-                  const Icon = mediaIcon(m.media_type);
-                  const token = `{{media:${m.media_id}}}`;
+                {rawMediaList.map((m) => {
+                  const v = buildMediaVisual(m);
                   return (
                     <div
                       key={m.id}
-                      className="flex items-center gap-2 rounded-lg border border-border/40 bg-secondary/50 p-2 group"
+                      className="flex items-center gap-2 rounded-lg border border-border/40 bg-secondary/50 p-2.5 group"
                     >
-                      <Icon className="h-5 w-5 text-muted-foreground flex-shrink-0" />
+                      {/* Preview chip */}
+                      <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs font-semibold shrink-0 ${v.badgeClass}`}>
+                        <span>{v.emoji}</span>
+                      </div>
                       <div className="min-w-0 flex-1">
                         <p className="text-xs font-medium text-foreground truncate">{m.file_name}</p>
-                        <p
-                          className="text-[10px] font-mono text-primary truncate cursor-grab"
-                          draggable
-                          onDragStart={(e) => {
-                            e.dataTransfer.setData("text/plain", token);
-                            e.dataTransfer.effectAllowed = "copy";
-                          }}
-                          title={`Arraste para o prompt: ${token}`}
-                        >
-                          {token}
-                        </p>
+                        <p className="text-[10px] text-muted-foreground truncate">{m.media_id}</p>
                       </div>
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                        className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
                         onClick={() => deleteMediaMutation.mutate(m.id)}
                         disabled={deleteMediaMutation.isPending}
                       >
