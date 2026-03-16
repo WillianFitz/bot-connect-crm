@@ -222,6 +222,62 @@ export const api = {
       totalErrors: number;
     }>("/dashboard/stats"),
 
+  getAgentMedia: () =>
+    request<
+      Array<{
+        id: number;
+        media_id: string;
+        file_name: string;
+        media_type: string;
+        created_at: string;
+      }>
+    >("/agents/atendimento/media"),
+
+  uploadAgentMedia: async (file: File, mediaId: string, fileName: string) => {
+    const token =
+      typeof localStorage !== "undefined" ? localStorage.getItem("auth_token") || undefined : undefined;
+    const tenantId =
+      (window as any)?.TENANT_ID ||
+      (typeof localStorage !== "undefined" ? localStorage.getItem("tenant_id") || undefined : undefined);
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("media_id", mediaId);
+    formData.append("file_name", fileName);
+    const res = await fetch(
+      `${(import.meta.env.VITE_API_BASE_URL as string | undefined) || "/api"}/agents/atendimento/media`,
+      {
+        method: "POST",
+        headers: {
+          ...(token
+            ? { Authorization: `Bearer ${token}` }
+            : tenantId
+              ? { "x-tenant-id": tenantId }
+              : {}),
+        },
+        body: formData,
+      },
+    );
+    if (!res.ok) {
+      let msg = res.statusText;
+      try {
+        const d = await res.json();
+        if (d?.error) msg = d.error;
+      } catch { /* ignore */ }
+      throw new Error(msg);
+    }
+    return res.json() as Promise<{ ok: true; id: number }>;
+  },
+
+  deleteAgentMedia: (id: number) =>
+    request<{ ok: true }>(`/agents/atendimento/media?id=${id}`, {
+      method: "DELETE",
+    }),
+
+  clearAgentMemory: () =>
+    request<{ ok: true }>("/agents/atendimento/clear-memory", {
+      method: "POST",
+    }),
+
   getAgents: () => request<any[]>("/agents"),
   saveAgents: (agents: any[]) =>
     request<{ ok: true; count: number }>("/agents", {

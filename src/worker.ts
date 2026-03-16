@@ -908,6 +908,76 @@ async function handleAgents(request: Request, env: Env, method: string, url: URL
     return new Response("Method not allowed", { status: 405 });
   }
 
+  // /api/agents/atendimento/media   — upload/list/delete agent media
+  // /api/agents/atendimento/clear-memory — clear conversation memory
+  if (parts.length === 4 && parts[2] === "atendimento") {
+    const sub = parts[3];
+
+    if (sub === "media") {
+      if (method === "GET") {
+        const res = await env.DB.prepare(
+          "SELECT id, media_id, file_name, media_type, created_at FROM agent_media WHERE tenant_id = ? ORDER BY created_at DESC",
+        ).bind(tenantId).all();
+        return json(res.results || []);
+      }
+
+      if (method === "POST") {
+        let formData: FormData;
+        try {
+          formData = await request.formData();
+        } catch {
+          return json({ error: "Esperado multipart/form-data" }, { status: 400 });
+        }
+        const file = formData.get("file") as File | null;
+        const mediaId = (formData.get("media_id") as string | null)?.trim();
+        const fileName = (formData.get("file_name") as string | null)?.trim();
+
+        if (!file || !mediaId || !fileName) {
+          return json({ error: "Campos obrigatórios: file, media_id, file_name" }, { status: 400 });
+        }
+        if (!/^[a-z0-9_\-]+$/.test(mediaId)) {
+          return json({ error: "media_id inválido: use apenas a-z 0-9 _ -" }, { status: 400 });
+        }
+
+        const arrayBuffer = await file.arrayBuffer();
+        const bytes = new Uint8Array(arrayBuffer);
+        let binary = "";
+        for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]!);
+        const base64 = btoa(binary);
+        const dataUrl = `data:${file.type};base64,${base64}`;
+
+        try {
+          const result = await env.DB.prepare(
+            `INSERT INTO agent_media (tenant_id, media_id, file_name, media_type, data_url)
+             VALUES (?, ?, ?, ?, ?)`,
+          ).bind(tenantId, mediaId, fileName, file.type, dataUrl).run();
+          return json({ ok: true, id: result.meta.last_row_id });
+        } catch {
+          return json({ error: "media_id já existe. Escolha outro nome." }, { status: 409 });
+        }
+      }
+
+      if (method === "DELETE") {
+        const idParam = url.searchParams.get("id");
+        if (!idParam) return json({ error: "Parâmetro id obrigatório" }, { status: 400 });
+        await env.DB.prepare(
+          "DELETE FROM agent_media WHERE id = ? AND tenant_id = ?",
+        ).bind(Number(idParam), tenantId).run();
+        return json({ ok: true });
+      }
+
+      return new Response("Method not allowed", { status: 405 });
+    }
+
+    if (sub === "clear-memory") {
+      if (method === "POST") {
+        // Placeholder: in production, clear conversation history for this tenant's atendimento agent
+        return json({ ok: true });
+      }
+      return new Response("Method not allowed", { status: 405 });
+    }
+  }
+
   // /api/agents/:id
   if (parts.length === 3) {
     const id = parts[2];
