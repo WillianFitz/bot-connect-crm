@@ -2445,13 +2445,20 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
   const segments = await parseResponseSegments(env, tenantId, aiResponse);
 
   // Send each segment via WhatsApp
-  // Para @lid: NÃO usar quoted (mismatch @lid/phone no quoted.key.remoteJid causa mensagem em branco)
-  const sendQuotedKey = isLid ? undefined : incomingMsgKey;
-  console.log(`[webhook] enviando ${segments.length} segmento(s) para ${phone} (isLid:${isLid} quoted:${!!sendQuotedKey}). tipos:`, segments.map(s => `${s.type}(${s.content.substring(0,30)})`).join(", "));
+  // Para @lid: tenta enviar direto ao @lid JID com quoted (forçar Baileys a usar rota @lid)
+  // Se falhar (exists:false), cai para phone sem quoted
+  const sendNumber = isLid ? remoteJid : phone;
+  const sendQuotedKey = incomingMsgKey;
+  console.log(`[webhook] enviando ${segments.length} segmento(s) para ${sendNumber} (isLid:${isLid} quoted:${!!sendQuotedKey}). tipos:`, segments.map(s => `${s.type}(${s.content.substring(0,30)})`).join(", "));
   for (const seg of segments) {
     let sendResult: { ok: boolean; error?: string; remoteJid?: string };
     if (seg.type === "text") {
-      sendResult = await sendWhatsAppMessage(env, tenantId, phone, seg.content, sendQuotedKey);
+      sendResult = await sendWhatsAppMessage(env, tenantId, sendNumber, seg.content, sendQuotedKey);
+      // Se @lid rejeitado (exists:false), tenta fallback para phone sem quoted
+      if (!sendResult.ok && isLid && sendResult.error?.includes("number_not_found")) {
+        console.log(`[webhook] @lid rejeitado, fallback para phone:${phone}`);
+        sendResult = await sendWhatsAppMessage(env, tenantId, phone, seg.content, undefined);
+      }
     } else {
       sendResult = await sendWhatsAppMedia(env, tenantId, phone, seg.content, seg.type, seg.caption);
     }
