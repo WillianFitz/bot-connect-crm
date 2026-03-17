@@ -1187,7 +1187,7 @@ async function sendWhatsAppMessage(
   tenantId: string,
   number: string,
   text: string,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; remoteJid?: string }> {
   const baseUrl = getEvolutionBaseUrl(env);
   if (!baseUrl || !env.EVOLUTION_API_KEY) {
     return { ok: false, error: "Evolution API não configurada" };
@@ -1202,15 +1202,23 @@ async function sendWhatsAppMessage(
     if (!res.ok) {
       let errMsg = res.statusText;
       try {
-        const data = await res.json();
+        const data = await res.json() as any;
         if (Array.isArray(data?.response?.message) && data.response.message[0])
           errMsg = data.response.message[0];
+        else if (data?.exists === false)
+          errMsg = `number_not_found:${number}`;
       } catch {
         // ignore
       }
       return { ok: false, error: errMsg };
     }
-    return { ok: true };
+    // Capture the remoteJid from Evolution's response (may be @lid for privacy contacts)
+    let remoteJid: string | undefined;
+    try {
+      const data = await res.json() as any;
+      remoteJid = data?.key?.remoteJid || undefined;
+    } catch { /* ignore */ }
+    return { ok: true, remoteJid };
   } catch (err: any) {
     return { ok: false, error: err?.message || "Erro de rede" };
   }
@@ -1373,6 +1381,10 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
       }
 
       const result = await sendWhatsAppMessage(env, tenantId, phone, text);
+      // Se o Evolution retornou um @lid, armazena o mapeamento phone → lid
+      if (result.ok && result.remoteJid?.endsWith("@lid")) {
+        await storeLidMapping(env, tenantId, phone, result.remoteJid);
+      }
       if (result.ok) {
         await env.DB.prepare(
           `INSERT INTO campaign_sends (campaign_id, lead_id, status) VALUES (?, ?, 'sent')
@@ -2101,25 +2113,27 @@ async function isPhoneProspected(env: Env, tenantId: string, phone: string): Pro
 }
 
 /**
- * Tenta resolver um @lid do WhatsApp para o número de telefone real via Evolution API.
- * O @lid é um identificador de privacidade novo do WhatsApp — o número real está no cadastro de contatos.
+ * Resolve um @lid do WhatsApp para o número de telefone real.
+ * O @lid é um identificador de privacidade novo — capturado e armazenado quando enviamos mensagens.
  */
 async function resolveLidToPhone(env: Env, tenantId: string, lid: string): Promise<string | null> {
-  const baseUrl = getEvolutionBaseUrl(env);
-  if (!baseUrl || !env.EVOLUTION_API_KEY) return null;
-  try {
-    const res = await fetch(`${baseUrl}/chat/findContacts/${tenantId}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: env.EVOLUTION_API_KEY },
-      body: JSON.stringify({ where: { id: lid } }),
-    });
-    if (!res.ok) return null;
-    const contacts = await res.json() as any[];
-    if (!Array.isArray(contacts) || !contacts[0]) return null;
-    const cId: string = contacts[0]?.id || "";
-    if (cId.endsWith("@s.whatsapp.net")) return normalizePhoneFromJid(cId);
-    return null;
-  } catch { return null; }
+  // Consulta mapeamento local armazenado ao enviar campanhas/mensagens
+  const row = await env.DB.prepare(
+    "SELECT phone FROM lid_mappings WHERE tenant_id = ? AND lid = ? LIMIT 1",
+  ).bind(tenantId, lid).first<{ phone: string }>();
+  if (row?.phone) return row.phone;
+  return null;
+}
+
+/**
+ * Armazena o mapeamento phone → lid quando o Evolution revela o @lid de um contato.
+ */
+async function storeLidMapping(env: Env, tenantId: string, phone: string, lid: string): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO lid_mappings (tenant_id, phone, lid)
+     VALUES (?, ?, ?)
+     ON CONFLICT(tenant_id, lid) DO UPDATE SET phone = excluded.phone, updated_at = datetime('now')`,
+  ).bind(tenantId, phone, lid).run();
 }
 
 async function getAgentPause(
@@ -2420,19 +2434,20 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
   // Parse response segments (text + media tokens)
   const segments = await parseResponseSegments(env, tenantId, aiResponse);
 
-  // Para @lid, o Evolution precisa do JID completo (ex: "253828372951115@lid") para rotear a mensagem
-  const sendTo = isLid ? remoteJid : phone;
-
   // Send each segment via WhatsApp
+  // Para @lid: usa o phone resolvido (mapeado via campanha) ou o lid digits como fallback
   for (const seg of segments) {
-    let sendResult: { ok: boolean; error?: string };
+    let sendResult: { ok: boolean; error?: string; remoteJid?: string };
     if (seg.type === "text") {
-      sendResult = await sendWhatsAppMessage(env, tenantId, sendTo, seg.content);
+      sendResult = await sendWhatsAppMessage(env, tenantId, phone, seg.content);
     } else {
-      sendResult = await sendWhatsAppMedia(env, tenantId, sendTo, seg.content, seg.type, seg.caption);
+      sendResult = await sendWhatsAppMedia(env, tenantId, phone, seg.content, seg.type, seg.caption);
     }
     if (!sendResult.ok) {
-      console.error(`[webhook] falha ao enviar para ${sendTo}:`, sendResult.error);
+      console.error(`[webhook] falha ao enviar para ${phone}:`, sendResult.error);
+    } else if (sendResult.remoteJid?.endsWith("@lid") && !isLid) {
+      // Armazena mapeamento se a resposta revelar o @lid
+      await storeLidMapping(env, tenantId, phone, sendResult.remoteJid);
     }
   }
 
