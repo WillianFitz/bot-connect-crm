@@ -1193,10 +1193,7 @@ async function sendWhatsAppMessage(
   if (!baseUrl || !env.EVOLUTION_API_KEY) {
     return { ok: false, error: "Evolution API não configurada" };
   }
-  // Se temos a chave da mensagem original (para contatos @lid), usa o remoteJid diretamente
-  // e inclui quoted para que o Baileys/Evolution roteie sem fazer lookup de número
-  const sendNumber = quotedKey?.remoteJid || number;
-  const payload: Record<string, unknown> = { number: sendNumber, text };
+  const payload: Record<string, unknown> = { number, text };
   if (quotedKey) {
     payload.options = { quoted: { key: quotedKey } };
   }
@@ -2460,7 +2457,7 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
     if (!sendResult.ok) {
       console.error(`[webhook] falha ao enviar seg ${seg.type} para ${phone}:`, sendResult.error);
     } else {
-      console.log(`[webhook] segmento ${seg.type} enviado ok`);
+      console.log(`[webhook] segmento ${seg.type} enviado ok. remoteJid retornado:${sendResult.remoteJid || 'N/A'}`);
       if (sendResult.remoteJid?.endsWith("@lid") && !isLid) {
         await storeLidMapping(env, tenantId, phone, sendResult.remoteJid);
       }
