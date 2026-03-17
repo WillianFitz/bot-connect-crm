@@ -648,30 +648,38 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
           const state = evData?.instance?.state;
           const mappedStatus = state === "open" ? "connected" : "disconnected";
 
-          await env.DB.prepare(
-            `INSERT INTO connections (tenant_id, type, status, agent_enabled, reply_all)
-             VALUES (?, 'whatsapp', ?, COALESCE(?, 0), COALESCE(?, 0))
-             ON CONFLICT(tenant_id, type) DO UPDATE SET
-               status = excluded.status,
-               updated_at = datetime('now')`,
-          )
-            .bind(tenantId, mappedStatus, row?.agent_enabled ?? 0, row?.reply_all ?? 0)
-            .run();
+          // Regra: Evolution pode forçar "disconnected" a qualquer momento.
+          // Mas NÃO pode sobrescrever "disconnected" → "connected" (previne race condition
+          // onde Evolution ainda responde "open" depois de um delete/logout explícito do CRM).
+          // A transição disconnected→connected só ocorre via webhook connection.update.
+          const shouldUpdate = mappedStatus === "disconnected" || !row || row.status !== "disconnected";
 
-          row = {
-            type: "whatsapp",
-            status: mappedStatus,
-            agent_enabled: row?.agent_enabled ?? 0,
-            reply_all: row?.reply_all ?? 0,
-          };
+          if (shouldUpdate) {
+            await env.DB.prepare(
+              `INSERT INTO connections (tenant_id, type, status, agent_enabled, reply_all)
+               VALUES (?, 'whatsapp', ?, COALESCE(?, 0), COALESCE(?, 0))
+               ON CONFLICT(tenant_id, type) DO UPDATE SET
+                 status = excluded.status,
+                 updated_at = datetime('now')`,
+            )
+              .bind(tenantId, mappedStatus, row?.agent_enabled ?? 0, row?.reply_all ?? 0)
+              .run();
+
+            row = {
+              type: "whatsapp",
+              status: mappedStatus,
+              agent_enabled: row?.agent_enabled ?? 0,
+              reply_all: row?.reply_all ?? 0,
+            };
+          }
         } else if (row) {
-          // Instância não existe na Evolution (404/400) mas temos linha no D1 → marcar disconnected
+          // Instância não existe na Evolution (404/400) → marcar disconnected
           await env.DB.prepare(
             "UPDATE connections SET status = 'disconnected', updated_at = datetime('now') WHERE tenant_id = ? AND type = 'whatsapp'",
           ).bind(tenantId).run();
           row = { ...row, status: "disconnected" };
         }
-        // Se row é null e Evolution retornou erro: não há instância, retorna o fallback abaixo
+        // Se row é null e Evolution retornou erro: nenhuma instância ativa, retorna fallback
       } catch {
         // se falhar (rede), devolve o que tiver em D1
       }
@@ -2054,11 +2062,34 @@ function normalizePhoneFromJid(jid: string): string {
   return (jid || "").split("@")[0]?.replace(/\D/g, "") || "";
 }
 
+/**
+ * Retorna variantes do número brasileiro para cobrir casos com/sem o nono dígito.
+ * Ex: "5511999999999" → ["5511999999999", "551199999999"]
+ *     "551199999999"  → ["551199999999",  "5511999999999"]
+ */
+function getBrazilPhoneVariants(phone: string): string[] {
+  const digits = phone.replace(/\D/g, "");
+  const variants = new Set<string>();
+  variants.add(digits);
+  if (digits.length === 13 && digits.startsWith("55")) {
+    // remove o nono dígito (posição 4)
+    variants.add(digits.slice(0, 4) + digits.slice(5));
+  } else if (digits.length === 12 && digits.startsWith("55")) {
+    // adiciona o nono dígito após o DDD (posição 4)
+    variants.add(digits.slice(0, 4) + "9" + digits.slice(4));
+  }
+  return Array.from(variants);
+}
+
 async function isPhoneProspected(env: Env, tenantId: string, phone: string): Promise<boolean> {
-  const row = await env.DB.prepare(
-    "SELECT id FROM leads WHERE tenant_id = ? AND phone = ? LIMIT 1",
-  ).bind(tenantId, phone).first();
-  return !!row;
+  const variants = getBrazilPhoneVariants(phone);
+  for (const v of variants) {
+    const row = await env.DB.prepare(
+      "SELECT id FROM leads WHERE tenant_id = ? AND phone = ? LIMIT 1",
+    ).bind(tenantId, v).first();
+    if (row) return true;
+  }
+  return false;
 }
 
 async function getAgentPause(
@@ -2247,7 +2278,12 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
   // Only process incoming text messages
   if (event !== "messages.upsert") return json({ ok: true });
 
-  const fromMe: boolean = !!data?.data?.key?.fromMe;
+  // Evolution v2 pode colocar fromMe em caminhos diferentes dependendo da versão
+  const fromMe: boolean = !!(
+    data?.data?.key?.fromMe ||
+    data?.data?.message?.fromMe ||
+    data?.fromMe
+  );
   if (fromMe) return json({ ok: true });
 
   const remoteJid: string = data?.data?.key?.remoteJid || "";
