@@ -569,7 +569,7 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
 
     try {
       await fetch(`${baseUrl}/instance/logout/${tenantId}`, {
-        method: "POST",
+        method: "DELETE",
         headers: { apikey: env.EVOLUTION_API_KEY },
       });
     } catch {
@@ -581,8 +581,6 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
        VALUES (?, 'whatsapp', 'disconnected', 0, 0)
        ON CONFLICT(tenant_id, type) DO UPDATE SET
          status = 'disconnected',
-         agent_enabled = 0,
-         reply_all = 0,
          updated_at = datetime('now')`,
     )
       .bind(tenantId)
