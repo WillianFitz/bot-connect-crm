@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(cd:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(npx wrangler:*)",
+      "Bash(curl:*)"
     ]
   }
 }

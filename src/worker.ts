@@ -2100,6 +2100,28 @@ async function isPhoneProspected(env: Env, tenantId: string, phone: string): Pro
   return false;
 }
 
+/**
+ * Tenta resolver um @lid do WhatsApp para o número de telefone real via Evolution API.
+ * O @lid é um identificador de privacidade novo do WhatsApp — o número real está no cadastro de contatos.
+ */
+async function resolveLidToPhone(env: Env, tenantId: string, lid: string): Promise<string | null> {
+  const baseUrl = getEvolutionBaseUrl(env);
+  if (!baseUrl || !env.EVOLUTION_API_KEY) return null;
+  try {
+    const res = await fetch(`${baseUrl}/chat/findContacts/${tenantId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: env.EVOLUTION_API_KEY },
+      body: JSON.stringify({ where: { id: lid } }),
+    });
+    if (!res.ok) return null;
+    const contacts = await res.json() as any[];
+    if (!Array.isArray(contacts) || !contacts[0]) return null;
+    const cId: string = contacts[0]?.id || "";
+    if (cId.endsWith("@s.whatsapp.net")) return normalizePhoneFromJid(cId);
+    return null;
+  } catch { return null; }
+}
+
 async function getAgentPause(
   env: Env,
   tenantId: string,
@@ -2291,12 +2313,15 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
     data?.data?.key?.fromMe ??
     data?.key?.fromMe
   );
-  if (fromMe) return json({ ok: true });
+  if (fromMe) {
+    console.log("[webhook] fromMe=true — ignorando. jid:", data?.data?.key?.remoteJid || data?.key?.remoteJid);
+    return json({ ok: true });
+  }
 
   const remoteJid: string = data?.data?.key?.remoteJid || data?.key?.remoteJid || "";
   if (!remoteJid || remoteJid.endsWith("@g.us")) return json({ ok: true }); // ignore groups
 
-  const phone = normalizePhoneFromJid(remoteJid);
+  let phone = normalizePhoneFromJid(remoteJid);
   if (!phone) return json({ ok: true });
 
   const userText = extractTextFromEvolutionPayload(data);
@@ -2305,22 +2330,45 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
     return json({ ok: true });
   }
 
+  // @lid: WhatsApp privacy JID — resolve para o número real via Evolution
+  const isLid = remoteJid.endsWith("@lid");
+  if (isLid) {
+    const resolved = await resolveLidToPhone(env, tenantId, remoteJid);
+    if (resolved) {
+      console.log(`[webhook] @lid ${remoteJid} resolvido para phone:${resolved}`);
+      phone = resolved;
+    } else {
+      console.log(`[webhook] @lid ${remoteJid} não pôde ser resolvido para um número`);
+    }
+  }
+
+  console.log(`[webhook] mensagem recebida — tenant:${tenantId} phone:${phone} jid:${remoteJid} texto:"${userText}"`);
+
   // Load connection settings
   const conn = await env.DB.prepare(
     "SELECT agent_enabled, reply_all FROM connections WHERE tenant_id = ? AND type = 'whatsapp' LIMIT 1",
   ).bind(tenantId).first<{ agent_enabled: number; reply_all: number }>();
 
-  if (!conn || !conn.agent_enabled) return json({ ok: true });
+  if (!conn || !conn.agent_enabled) {
+    console.log(`[webhook] agent_enabled=0 — ignorando. tenant:${tenantId}`);
+    return json({ ok: true });
+  }
 
   // If not reply_all, only respond to prospected leads
   if (!conn.reply_all) {
     const prospected = await isPhoneProspected(env, tenantId, phone);
-    if (!prospected) return json({ ok: true });
+    if (!prospected) {
+      console.log(`[webhook] phone não é lead — ignorando. tenant:${tenantId} phone:${phone}`);
+      return json({ ok: true });
+    }
   }
 
   // Check if agent is paused for this phone
   const pause = await getAgentPause(env, tenantId, phone);
-  if (pause.paused) return json({ ok: true });
+  if (pause.paused) {
+    console.log(`[webhook] agente pausado para phone:${phone}`);
+    return json({ ok: true });
+  }
 
   // Load agent config
   const agent = await env.DB.prepare(
