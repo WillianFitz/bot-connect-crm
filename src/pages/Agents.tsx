@@ -302,16 +302,47 @@ function RichPromptEditor({
     lastVisualsRef.current = visuals;
     if (!visualsChanged && value === internalRef.current) return;
     internalRef.current = value;
-    // Save / restore selection
-    const sel = window.getSelection();
+
     const hadFocus = document.activeElement === el;
+    const sel = window.getSelection();
+
+    // Salva offset do cursor antes de re-renderizar
+    let savedOffset = -1;
+    if (hadFocus && sel && sel.rangeCount > 0) {
+      const range = sel.getRangeAt(0);
+      const pre = range.cloneRange();
+      pre.selectNodeContents(el);
+      pre.setEnd(range.startContainer, range.startOffset);
+      savedOffset = pre.toString().length;
+    }
+
     el.innerHTML = valueToHTML(value, visuals);
-    if (hadFocus && sel) {
-      const range = document.createRange();
-      range.selectNodeContents(el);
-      range.collapse(false);
-      sel.removeAllRanges();
-      sel.addRange(range);
+
+    // Restaura cursor na posição salva
+    if (hadFocus && sel && savedOffset >= 0) {
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      let remaining = savedOffset;
+      let node = walker.nextNode() as Text | null;
+      const newRange = document.createRange();
+      let placed = false;
+      while (node) {
+        if (remaining <= node.length) {
+          newRange.setStart(node, remaining);
+          newRange.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(newRange);
+          placed = true;
+          break;
+        }
+        remaining -= node.length;
+        node = walker.nextNode() as Text | null;
+      }
+      if (!placed) {
+        newRange.selectNodeContents(el);
+        newRange.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(newRange);
+      }
     }
   }, [value, visuals]);
 

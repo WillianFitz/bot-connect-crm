@@ -1193,14 +1193,17 @@ async function sendWhatsAppMessage(
   if (!baseUrl || !env.EVOLUTION_API_KEY) {
     return { ok: false, error: "Evolution API não configurada" };
   }
-  const payload: Record<string, unknown> = { number, text };
+  // Delay humanizado: simula tempo de digitação (~5 chars/s) + variação aleatória de ±20%
+  const baseDelay = Math.min(Math.max((text.length / 5) * 1000, 1500), 8000);
+  const delay = Math.round(baseDelay * (0.8 + Math.random() * 0.4));
+
+  const payload: Record<string, unknown> = { number, text, delay };
   if (quotedKey) {
     payload.quoted = {
       key: { id: quotedKey.id },
       message: { conversation: text },
     };
   }
-  console.log(`[sendText] payload → number:${number} text:"${String(text).substring(0, 60)}" hasQuoted:${!!quotedKey}`);
   try {
     const res = await fetch(`${baseUrl}/message/sendText/${tenantId}`, {
       method: "POST",
@@ -2257,7 +2260,16 @@ async function parseResponseSegments(
       }
     } else {
       const text = part.trim();
-      if (text) segments.push({ type: "text", content: text });
+      if (!text) continue;
+      // Quebra em parágrafos para parecer mais humano (máx 3 segmentos de texto por resposta)
+      const paragraphs = text.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+      if (paragraphs.length > 1) {
+        for (const p of paragraphs.slice(0, 3)) {
+          segments.push({ type: "text", content: p });
+        }
+      } else {
+        segments.push({ type: "text", content: text });
+      }
     }
   }
   return segments;
@@ -2364,31 +2376,17 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
     return json({ ok: true });
   }
 
-  // @lid: formato de privacidade do WhatsApp — tenta resolver para número real
+  // @lid: formato de privacidade do WhatsApp — tenta resolver para número real via lid_mappings
   const isLid = remoteJid.endsWith("@lid");
   if (isLid) {
-    // 1. Tenta mapeamento local (lid_mappings)
     const resolved = await resolveLidToPhone(env, tenantId, remoteJid);
     if (resolved) {
       console.log(`[webhook] @lid ${remoteJid} resolvido via lid_mappings → phone:${resolved}`);
       phone = resolved;
     } else {
-      // 2. Tenta achar o lead mais recente que recebeu disparo (campaign_sends mais recente)
-      const leadRow = await env.DB.prepare(
-        `SELECT l.phone FROM campaign_sends cs
-         JOIN campaigns c ON c.id = cs.campaign_id AND c.tenant_id = ?
-         JOIN leads l ON l.id = cs.lead_id
-         WHERE cs.status = 'sent'
-         ORDER BY cs.sent_at DESC LIMIT 1`,
-      ).bind(tenantId).first<{ phone: string }>();
-      if (leadRow?.phone) {
-        const normalized = normalizeBrazilNumber(leadRow.phone);
-        if (normalized) {
-          console.log(`[webhook] @lid ${remoteJid} resolvido via último lead disparado → phone:${normalized}`);
-          phone = normalized;
-          await storeLidMapping(env, tenantId, normalized, remoteJid);
-        }
-      }
+      // @lid desconhecido — não há como identificar o contato com segurança, ignora
+      console.log(`[webhook] @lid ${remoteJid} sem mapeamento conhecido — ignorando mensagem`);
+      return json({ ok: true });
     }
   }
 

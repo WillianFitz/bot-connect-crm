@@ -6,7 +6,8 @@
       "Bash(npx wrangler:*)",
       "Bash(curl:*)",
       "WebFetch(domain:doc.evolution-api.com)",
-      "WebFetch(domain:evolution-api.com)"
+      "WebFetch(domain:evolution-api.com)",
+      "Bash(npm run:*)"
     ]
   }
 }
