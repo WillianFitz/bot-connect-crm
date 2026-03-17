@@ -2222,26 +2222,43 @@ async function appendConversation(
 }
 
 /**
- * Valida se uma string é um nome próprio utilizável.
- * Rejeita: só números, só emojis/símbolos, muito curto, muito longo,
- * menos de 2 letras reais (a-z incluindo acentuação), sequências de caracteres aleatórios.
+ * Remove emojis e símbolos do início/fim do nome, mantendo só letras,
+ * espaços, hífens e apóstrofos (nomes compostos como "O'Brien", "Anne-Marie").
+ */
+function cleanContactName(raw: string): string {
+  // Remove emojis e símbolos unicode de pontuação/outros pelo início e fim
+  let name = raw.trim();
+  // Retira caracteres não-letra/não-espaço/não-hífen das bordas
+  name = name.replace(/^[\p{So}\p{Sk}\p{Sm}\p{Po}\p{Ps}\p{Pe}\p{Pi}\p{Pf}\p{Pd}\s]+/gu, "");
+  name = name.replace(/[\p{So}\p{Sk}\p{Sm}\p{Po}\p{Ps}\p{Pe}\p{Pi}\p{Pf}\p{Pd}\s]+$/gu, "");
+  // Colapsa espaços múltiplos internos
+  name = name.replace(/\s+/g, " ").trim();
+  return name;
+}
+
+/**
+ * Valida se uma string (já limpa) é um nome próprio utilizável.
+ * Rejeita: só números, menos de 2 letras, majoritariamente dígitos, caracteres suspeitos.
  */
 function isValidContactName(raw: string): boolean {
   const name = raw.trim();
   if (!name) return false;
-  // Tamanho razoável para um nome
   if (name.length < 2 || name.length > 60) return false;
-  // Deve conter ao menos 2 letras (unicode: inclui acentos, ç, ñ etc.)
   const letters = name.match(/\p{L}/gu) || [];
   if (letters.length < 2) return false;
-  // Não pode ser majoritariamente números (ex: "55119999" ou "123abc")
   const digits = name.match(/\d/g) || [];
   if (digits.length > letters.length) return false;
-  // Não pode conter caracteres suspeitos: @, /, \, <, >, {, }, |
   if (/[@/\\<>{}|]/.test(name)) return false;
-  // Primeiros caracteres devem ser letra ou espaço (não símbolo/emoji logo no início)
   if (!/^\p{L}/u.test(name)) return false;
   return true;
+}
+
+/**
+ * Limpa e valida um nome de contato. Retorna o nome limpo ou "" se inválido.
+ */
+function sanitizeContactName(raw: string): string {
+  const cleaned = cleanContactName(raw);
+  return isValidContactName(cleaned) ? cleaned : "";
 }
 
 function resolvePromptDefaults(
@@ -2249,15 +2266,13 @@ function resolvePromptDefaults(
   agentRow: { agenda_link?: string | null; human_number?: string | null; human_group_id?: string | null },
   contactName?: string,
 ): string {
-  const raw = contactName?.trim() || "";
-  const name = isValidContactName(raw) ? raw : "";
+  const name = sanitizeContactName(contactName || "");
   const resolved = prompt
     .replace(/\{\{agenda\}\}/g, agentRow.agenda_link || "[link da agenda não configurado]")
     .replace(/\{\{numero_humano\}\}/g, agentRow.human_number || "[número humano não configurado]")
     .replace(/\{\{grupo_humano\}\}/g, agentRow.human_group_id || "[grupo não configurado]")
     .replace(/\{\{contact_name\}\}/g, name || "desconhecido");
   if (!name) return resolved;
-  // Injeta contexto do contato no topo do prompt para que a IA use o nome sem perguntar
   return `[Contexto do sistema]\nNome do contato: ${name}\n\n${resolved}`;
 }
 
@@ -2448,14 +2463,37 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
     return json({ ok: true });
   }
 
-  // Resolve contact name: 1º pushName do WhatsApp, 2º nome cadastrado nos leads
-  const pushName: string = (data?.data?.pushName || data?.pushName || "").trim();
-  let contactName = pushName;
+  // Resolve contact name: 1º pushName do WhatsApp (limpo), 2º nome cadastrado nos leads
+  const rawPushName: string = (data?.data?.pushName || data?.pushName || "").trim();
+  const cleanedPushName = sanitizeContactName(rawPushName);
+
+  // Verifica se o lead já existe (pelo phone)
+  const existingLead = await env.DB.prepare(
+    "SELECT id, company FROM leads WHERE tenant_id = ? AND phone = ? LIMIT 1",
+  ).bind(tenantId, phone).first<{ id: number; company: string }>();
+
+  // Auto-cadastra novo contato como lead ao primeiro contato
+  if (!existingLead) {
+    const leadName = cleanedPushName || phone;
+    await env.DB.prepare(
+      "INSERT INTO leads (tenant_id, company, phone) VALUES (?, ?, ?)",
+    ).bind(tenantId, leadName, phone).run();
+    console.log(`[webhook] novo lead auto-cadastrado — phone:${phone} nome:"${leadName}"`);
+  } else if (cleanedPushName && existingLead.company !== cleanedPushName) {
+    // Atualiza nome se o pushName atual for mais válido que o salvo
+    const currentNameValid = isValidContactName(existingLead.company || "");
+    if (!currentNameValid) {
+      await env.DB.prepare(
+        "UPDATE leads SET company = ? WHERE tenant_id = ? AND phone = ?",
+      ).bind(cleanedPushName, tenantId, phone).run();
+    }
+  }
+
+  // Determina o nome a passar para o prompt
+  let contactName = cleanedPushName;
   if (!contactName) {
-    const leadRow = await env.DB.prepare(
-      "SELECT company FROM leads WHERE tenant_id = ? AND phone = ? LIMIT 1",
-    ).bind(tenantId, phone).first<{ company: string }>();
-    contactName = leadRow?.company?.trim() || "";
+    const savedName = existingLead?.company?.trim() || "";
+    contactName = sanitizeContactName(savedName);
   }
 
   // Load agent config
