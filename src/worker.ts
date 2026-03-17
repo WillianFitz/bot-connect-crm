@@ -1193,10 +1193,11 @@ async function sendWhatsAppMessage(
   if (!baseUrl || !env.EVOLUTION_API_KEY) {
     return { ok: false, error: "Evolution API não configurada" };
   }
-  const payload: Record<string, unknown> = { number, textMessage: { text } };
+  const payload: Record<string, unknown> = { number, text };
   if (quotedKey) {
     payload.options = { quoted: { key: quotedKey } };
   }
+  console.log(`[sendText] payload → number:${number} text:"${String(text).substring(0, 60)}" hasQuoted:${!!quotedKey}`);
   try {
     const res = await fetch(`${baseUrl}/message/sendText/${tenantId}`, {
       method: "POST",
