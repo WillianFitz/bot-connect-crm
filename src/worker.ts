@@ -2420,12 +2420,15 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
   // Parse response segments (text + media tokens)
   const segments = await parseResponseSegments(env, tenantId, aiResponse);
 
+  // Para @lid, o Evolution precisa do JID completo (ex: "253828372951115@lid") para rotear a mensagem
+  const sendTo = isLid ? remoteJid : phone;
+
   // Send each segment via WhatsApp
   for (const seg of segments) {
     if (seg.type === "text") {
-      await sendWhatsAppMessage(env, tenantId, phone, seg.content);
+      await sendWhatsAppMessage(env, tenantId, sendTo, seg.content);
     } else {
-      await sendWhatsAppMedia(env, tenantId, phone, seg.content, seg.type, seg.caption);
+      await sendWhatsAppMedia(env, tenantId, sendTo, seg.content, seg.type, seg.caption);
     }
   }
 
