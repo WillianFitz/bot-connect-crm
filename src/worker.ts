@@ -1195,7 +1195,10 @@ async function sendWhatsAppMessage(
   }
   const payload: Record<string, unknown> = { number, text };
   if (quotedKey) {
-    payload.options = { quoted: { key: quotedKey } };
+    payload.quoted = {
+      key: { id: quotedKey.id },
+      message: { conversation: text },
+    };
   }
   console.log(`[sendText] payload → number:${number} text:"${String(text).substring(0, 60)}" hasQuoted:${!!quotedKey}`);
   try {
@@ -2364,12 +2367,28 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
   // @lid: formato de privacidade do WhatsApp — tenta resolver para número real
   const isLid = remoteJid.endsWith("@lid");
   if (isLid) {
+    // 1. Tenta mapeamento local (lid_mappings)
     const resolved = await resolveLidToPhone(env, tenantId, remoteJid);
     if (resolved) {
-      console.log(`[webhook] @lid ${remoteJid} resolvido para phone:${resolved}`);
+      console.log(`[webhook] @lid ${remoteJid} resolvido via lid_mappings → phone:${resolved}`);
       phone = resolved;
+    } else {
+      // 2. Tenta achar o lead mais recente que recebeu disparo (campaign_sends mais recente)
+      const leadRow = await env.DB.prepare(
+        `SELECT l.phone FROM campaign_sends cs
+         JOIN leads l ON l.id = cs.lead_id AND l.tenant_id = cs.tenant_id
+         WHERE cs.tenant_id = ? AND cs.status = 'sent'
+         ORDER BY cs.sent_at DESC LIMIT 1`,
+      ).bind(tenantId).first<{ phone: string }>();
+      if (leadRow?.phone) {
+        const normalized = normalizeBrazilNumber(leadRow.phone);
+        if (normalized) {
+          console.log(`[webhook] @lid ${remoteJid} resolvido via último lead disparado → phone:${normalized}`);
+          phone = normalized;
+          await storeLidMapping(env, tenantId, normalized, remoteJid);
+        }
+      }
     }
-    // Mesmo sem resolver, continua — @lid indica contato que já interagiu (recebeu disparo)
   }
 
   console.log(`[webhook] mensagem recebida — tenant:${tenantId} phone:${phone} jid:${remoteJid} texto:"${userText}"`);

@@ -4,7 +4,9 @@
       "Bash(cd:*)",
       "Bash(grep:*)",
       "Bash(npx wrangler:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "WebFetch(domain:doc.evolution-api.com)",
+      "WebFetch(domain:evolution-api.com)"
     ]
   }
 }
