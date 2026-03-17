@@ -1187,17 +1187,24 @@ async function sendWhatsAppMessage(
   tenantId: string,
   number: string,
   text: string,
+  quotedKey?: { id: string; remoteJid: string; fromMe: boolean },
 ): Promise<{ ok: boolean; error?: string; remoteJid?: string }> {
   const baseUrl = getEvolutionBaseUrl(env);
   if (!baseUrl || !env.EVOLUTION_API_KEY) {
     return { ok: false, error: "Evolution API não configurada" };
   }
-  const body = JSON.stringify({ number, text });
+  // Se temos a chave da mensagem original (para contatos @lid), usa o remoteJid diretamente
+  // e inclui quoted para que o Baileys/Evolution roteie sem fazer lookup de número
+  const sendNumber = quotedKey?.remoteJid || number;
+  const payload: Record<string, unknown> = { number: sendNumber, text };
+  if (quotedKey) {
+    payload.options = { quoted: { key: quotedKey } };
+  }
   try {
     const res = await fetch(`${baseUrl}/message/sendText/${tenantId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: env.EVOLUTION_API_KEY },
-      body,
+      body: JSON.stringify(payload),
     });
     if (!res.ok) {
       let errMsg = res.statusText;
@@ -2335,6 +2342,12 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
   const remoteJid: string = data?.data?.key?.remoteJid || data?.key?.remoteJid || "";
   if (!remoteJid || remoteJid.endsWith("@g.us")) return json({ ok: true }); // ignore groups
 
+  // Captura a key da mensagem original para uso no reply (garante roteamento correto ao @lid)
+  const incomingMsgId: string = data?.data?.key?.id || data?.key?.id || "";
+  const incomingMsgKey = incomingMsgId
+    ? { id: incomingMsgId, remoteJid, fromMe: false }
+    : undefined;
+
   let phone = normalizePhoneFromJid(remoteJid);
   if (!phone) return json({ ok: true });
 
@@ -2435,19 +2448,19 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
   const segments = await parseResponseSegments(env, tenantId, aiResponse);
 
   // Send each segment via WhatsApp
-  // Para @lid: usa o phone resolvido (mapeado via campanha) ou o lid digits como fallback
-  console.log(`[webhook] enviando ${segments.length} segmento(s) para ${phone}. tipos:`, segments.map(s => `${s.type}(${s.content.substring(0,30)})`).join(", "));
+  // Para @lid: passa a key da mensagem original para o Evolution rotear diretamente ao @lid
+  console.log(`[webhook] enviando ${segments.length} segmento(s) para ${phone} (quoted:${!!incomingMsgKey}). tipos:`, segments.map(s => `${s.type}(${s.content.substring(0,30)})`).join(", "));
   for (const seg of segments) {
     let sendResult: { ok: boolean; error?: string; remoteJid?: string };
     if (seg.type === "text") {
-      sendResult = await sendWhatsAppMessage(env, tenantId, phone, seg.content);
+      sendResult = await sendWhatsAppMessage(env, tenantId, phone, seg.content, incomingMsgKey);
     } else {
       sendResult = await sendWhatsAppMedia(env, tenantId, phone, seg.content, seg.type, seg.caption);
     }
     if (!sendResult.ok) {
       console.error(`[webhook] falha ao enviar seg ${seg.type} para ${phone}:`, sendResult.error);
     } else {
-      console.log(`[webhook] segmento ${seg.type} enviado ok para ${phone}`);
+      console.log(`[webhook] segmento ${seg.type} enviado ok`);
       if (sendResult.remoteJid?.endsWith("@lid") && !isLid) {
         await storeLidMapping(env, tenantId, phone, sendResult.remoteJid);
       }
