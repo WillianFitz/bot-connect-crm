@@ -2425,10 +2425,14 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
 
   // Send each segment via WhatsApp
   for (const seg of segments) {
+    let sendResult: { ok: boolean; error?: string };
     if (seg.type === "text") {
-      await sendWhatsAppMessage(env, tenantId, sendTo, seg.content);
+      sendResult = await sendWhatsAppMessage(env, tenantId, sendTo, seg.content);
     } else {
-      await sendWhatsAppMedia(env, tenantId, sendTo, seg.content, seg.type, seg.caption);
+      sendResult = await sendWhatsAppMedia(env, tenantId, sendTo, seg.content, seg.type, seg.caption);
+    }
+    if (!sendResult.ok) {
+      console.error(`[webhook] falha ao enviar para ${sendTo}:`, sendResult.error);
     }
   }
 
