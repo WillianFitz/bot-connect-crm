@@ -2221,12 +2221,36 @@ async function appendConversation(
   ).bind(tenantId, phone, role, content).run();
 }
 
+/**
+ * Valida se uma string é um nome próprio utilizável.
+ * Rejeita: só números, só emojis/símbolos, muito curto, muito longo,
+ * menos de 2 letras reais (a-z incluindo acentuação), sequências de caracteres aleatórios.
+ */
+function isValidContactName(raw: string): boolean {
+  const name = raw.trim();
+  if (!name) return false;
+  // Tamanho razoável para um nome
+  if (name.length < 2 || name.length > 60) return false;
+  // Deve conter ao menos 2 letras (unicode: inclui acentos, ç, ñ etc.)
+  const letters = name.match(/\p{L}/gu) || [];
+  if (letters.length < 2) return false;
+  // Não pode ser majoritariamente números (ex: "55119999" ou "123abc")
+  const digits = name.match(/\d/g) || [];
+  if (digits.length > letters.length) return false;
+  // Não pode conter caracteres suspeitos: @, /, \, <, >, {, }, |
+  if (/[@/\\<>{}|]/.test(name)) return false;
+  // Primeiros caracteres devem ser letra ou espaço (não símbolo/emoji logo no início)
+  if (!/^\p{L}/u.test(name)) return false;
+  return true;
+}
+
 function resolvePromptDefaults(
   prompt: string,
   agentRow: { agenda_link?: string | null; human_number?: string | null; human_group_id?: string | null },
   contactName?: string,
 ): string {
-  const name = contactName?.trim() || "";
+  const raw = contactName?.trim() || "";
+  const name = isValidContactName(raw) ? raw : "";
   const resolved = prompt
     .replace(/\{\{agenda\}\}/g, agentRow.agenda_link || "[link da agenda não configurado]")
     .replace(/\{\{numero_humano\}\}/g, agentRow.human_number || "[número humano não configurado]")
