@@ -2224,11 +2224,17 @@ async function appendConversation(
 function resolvePromptDefaults(
   prompt: string,
   agentRow: { agenda_link?: string | null; human_number?: string | null; human_group_id?: string | null },
+  contactName?: string,
 ): string {
-  return prompt
+  const name = contactName?.trim() || "";
+  const resolved = prompt
     .replace(/\{\{agenda\}\}/g, agentRow.agenda_link || "[link da agenda não configurado]")
     .replace(/\{\{numero_humano\}\}/g, agentRow.human_number || "[número humano não configurado]")
-    .replace(/\{\{grupo_humano\}\}/g, agentRow.human_group_id || "[grupo não configurado]");
+    .replace(/\{\{grupo_humano\}\}/g, agentRow.human_group_id || "[grupo não configurado]")
+    .replace(/\{\{contact_name\}\}/g, name || "desconhecido");
+  if (!name) return resolved;
+  // Injeta contexto do contato no topo do prompt para que a IA use o nome sem perguntar
+  return `[Contexto do sistema]\nNome do contato: ${name}\n\n${resolved}`;
 }
 
 interface MessageSegment {
@@ -2418,6 +2424,16 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
     return json({ ok: true });
   }
 
+  // Resolve contact name: 1º pushName do WhatsApp, 2º nome cadastrado nos leads
+  const pushName: string = (data?.data?.pushName || data?.pushName || "").trim();
+  let contactName = pushName;
+  if (!contactName) {
+    const leadRow = await env.DB.prepare(
+      "SELECT company FROM leads WHERE tenant_id = ? AND phone = ? LIMIT 1",
+    ).bind(tenantId, phone).first<{ company: string }>();
+    contactName = leadRow?.company?.trim() || "";
+  }
+
   // Load agent config
   const agent = await env.DB.prepare(
     "SELECT base_prompt, pause_minutes, pause_definitive, agenda_link, human_number, human_group_id FROM agents WHERE tenant_id = ? AND id = 'atendimento' LIMIT 1",
@@ -2430,12 +2446,12 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
     human_group_id?: string | null;
   }>();
 
-  const rawPrompt = agent?.base_prompt || "Você é um agente de atendimento. Responda de forma educada, clara e objetiva.";
+  const rawPrompt = agent?.base_prompt || "Você é um agente de atendimento da LeadFlowAI. Responda de forma educada, clara e objetiva.";
   const systemPrompt = resolvePromptDefaults(rawPrompt, {
     agenda_link: agent?.agenda_link,
     human_number: agent?.human_number,
     human_group_id: agent?.human_group_id,
-  });
+  }, contactName);
 
   // Load conversation history
   const history = await getConversationHistory(env, tenantId, phone, 20);
