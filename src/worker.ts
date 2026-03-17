@@ -2376,8 +2376,9 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
       // 2. Tenta achar o lead mais recente que recebeu disparo (campaign_sends mais recente)
       const leadRow = await env.DB.prepare(
         `SELECT l.phone FROM campaign_sends cs
-         JOIN leads l ON l.id = cs.lead_id AND l.tenant_id = cs.tenant_id
-         WHERE cs.tenant_id = ? AND cs.status = 'sent'
+         JOIN campaigns c ON c.id = cs.campaign_id AND c.tenant_id = ?
+         JOIN leads l ON l.id = cs.lead_id
+         WHERE cs.status = 'sent'
          ORDER BY cs.sent_at DESC LIMIT 1`,
       ).bind(tenantId).first<{ phone: string }>();
       if (leadRow?.phone) {
