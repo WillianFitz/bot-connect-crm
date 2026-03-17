@@ -454,7 +454,7 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
             url: webhookUrl,
             byEvents: false,
             base64: false,
-            events: ["MESSAGES_UPSERT"],
+            events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE"],
           },
         }),
       });
@@ -611,8 +611,13 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
       // ignora erro remoto; limpamos o estado local mesmo assim
     }
 
+    // Marca como disconnected (não deleta a linha para preservar agent_enabled/reply_all)
     await env.DB.prepare(
-      "DELETE FROM connections WHERE tenant_id = ? AND type = 'whatsapp'",
+      `INSERT INTO connections (tenant_id, type, status, agent_enabled, reply_all)
+       VALUES (?, 'whatsapp', 'disconnected', 0, 0)
+       ON CONFLICT(tenant_id, type) DO UPDATE SET
+         status = 'disconnected',
+         updated_at = datetime('now')`,
     )
       .bind(tenantId)
       .run();
@@ -630,19 +635,19 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
       reply_all: number;
     }>();
 
-    // Se Evolution estiver configurada, tenta sincronizar o estado real
+    // Se Evolution estiver configurada, sincroniza o estado real
     if (baseUrl && env.EVOLUTION_API_KEY) {
       try {
         const res = await fetch(`${baseUrl}/instance/connectionState/${tenantId}`, {
           method: "GET",
           headers: { apikey: env.EVOLUTION_API_KEY },
         });
+
         if (res.ok) {
-          const data = (await res.json()) as any;
-          const state = data?.instance?.state;
+          const evData = (await res.json()) as any;
+          const state = evData?.instance?.state;
           const mappedStatus = state === "open" ? "connected" : "disconnected";
 
-          // Atualiza/insere no D1 para manter coerência
           await env.DB.prepare(
             `INSERT INTO connections (tenant_id, type, status, agent_enabled, reply_all)
              VALUES (?, 'whatsapp', ?, COALESCE(?, 0), COALESCE(?, 0))
@@ -650,12 +655,7 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
                status = excluded.status,
                updated_at = datetime('now')`,
           )
-            .bind(
-              tenantId,
-              mappedStatus,
-              row?.agent_enabled ?? 0,
-              row?.reply_all ?? 0,
-            )
+            .bind(tenantId, mappedStatus, row?.agent_enabled ?? 0, row?.reply_all ?? 0)
             .run();
 
           row = {
@@ -664,9 +664,16 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
             agent_enabled: row?.agent_enabled ?? 0,
             reply_all: row?.reply_all ?? 0,
           };
+        } else if (row) {
+          // Instância não existe na Evolution (404/400) mas temos linha no D1 → marcar disconnected
+          await env.DB.prepare(
+            "UPDATE connections SET status = 'disconnected', updated_at = datetime('now') WHERE tenant_id = ? AND type = 'whatsapp'",
+          ).bind(tenantId).run();
+          row = { ...row, status: "disconnected" };
         }
+        // Se row é null e Evolution retornou erro: não há instância, retorna o fallback abaixo
       } catch {
-        // se falhar, ignora e devolve o que tiver em D1
+        // se falhar (rede), devolve o que tiver em D1
       }
     }
 
@@ -2221,8 +2228,23 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
   const tenantId: string = data?.instance || "";
   if (!tenantId) return json({ ok: true });
 
-  // Only process incoming text messages
   const event: string = data?.event || "";
+
+  // Atualiza status de conexão em tempo real quando Evolution notifica mudança
+  if (event === "connection.update") {
+    const state: string = data?.data?.state || data?.data?.instance?.state || "";
+    const mappedStatus = state === "open" ? "connected" : "disconnected";
+    await env.DB.prepare(
+      `INSERT INTO connections (tenant_id, type, status, agent_enabled, reply_all)
+       VALUES (?, 'whatsapp', ?, 0, 0)
+       ON CONFLICT(tenant_id, type) DO UPDATE SET
+         status = excluded.status,
+         updated_at = datetime('now')`,
+    ).bind(tenantId, mappedStatus).run();
+    return json({ ok: true });
+  }
+
+  // Only process incoming text messages
   if (event !== "messages.upsert") return json({ ok: true });
 
   const fromMe: boolean = !!data?.data?.key?.fromMe;
