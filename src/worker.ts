@@ -2436,6 +2436,7 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
 
   // Send each segment via WhatsApp
   // Para @lid: usa o phone resolvido (mapeado via campanha) ou o lid digits como fallback
+  console.log(`[webhook] enviando ${segments.length} segmento(s) para ${phone}. tipos:`, segments.map(s => `${s.type}(${s.content.substring(0,30)})`).join(", "));
   for (const seg of segments) {
     let sendResult: { ok: boolean; error?: string; remoteJid?: string };
     if (seg.type === "text") {
@@ -2444,10 +2445,12 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
       sendResult = await sendWhatsAppMedia(env, tenantId, phone, seg.content, seg.type, seg.caption);
     }
     if (!sendResult.ok) {
-      console.error(`[webhook] falha ao enviar para ${phone}:`, sendResult.error);
-    } else if (sendResult.remoteJid?.endsWith("@lid") && !isLid) {
-      // Armazena mapeamento se a resposta revelar o @lid
-      await storeLidMapping(env, tenantId, phone, sendResult.remoteJid);
+      console.error(`[webhook] falha ao enviar seg ${seg.type} para ${phone}:`, sendResult.error);
+    } else {
+      console.log(`[webhook] segmento ${seg.type} enviado ok para ${phone}`);
+      if (sendResult.remoteJid?.endsWith("@lid") && !isLid) {
+        await storeLidMapping(env, tenantId, phone, sendResult.remoteJid);
+      }
     }
   }
 
