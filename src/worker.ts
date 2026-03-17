@@ -2445,12 +2445,13 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
   const segments = await parseResponseSegments(env, tenantId, aiResponse);
 
   // Send each segment via WhatsApp
-  // Para @lid: passa a key da mensagem original para o Evolution rotear diretamente ao @lid
-  console.log(`[webhook] enviando ${segments.length} segmento(s) para ${phone} (quoted:${!!incomingMsgKey}). tipos:`, segments.map(s => `${s.type}(${s.content.substring(0,30)})`).join(", "));
+  // Para @lid: NÃO usar quoted (mismatch @lid/phone no quoted.key.remoteJid causa mensagem em branco)
+  const sendQuotedKey = isLid ? undefined : incomingMsgKey;
+  console.log(`[webhook] enviando ${segments.length} segmento(s) para ${phone} (isLid:${isLid} quoted:${!!sendQuotedKey}). tipos:`, segments.map(s => `${s.type}(${s.content.substring(0,30)})`).join(", "));
   for (const seg of segments) {
     let sendResult: { ok: boolean; error?: string; remoteJid?: string };
     if (seg.type === "text") {
-      sendResult = await sendWhatsAppMessage(env, tenantId, phone, seg.content, incomingMsgKey);
+      sendResult = await sendWhatsAppMessage(env, tenantId, phone, seg.content, sendQuotedKey);
     } else {
       sendResult = await sendWhatsAppMedia(env, tenantId, phone, seg.content, seg.type, seg.caption);
     }
