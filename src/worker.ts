@@ -2330,16 +2330,15 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
     return json({ ok: true });
   }
 
-  // @lid: WhatsApp privacy JID — resolve para o número real via Evolution
+  // @lid: formato de privacidade do WhatsApp — tenta resolver para número real
   const isLid = remoteJid.endsWith("@lid");
   if (isLid) {
     const resolved = await resolveLidToPhone(env, tenantId, remoteJid);
     if (resolved) {
       console.log(`[webhook] @lid ${remoteJid} resolvido para phone:${resolved}`);
       phone = resolved;
-    } else {
-      console.log(`[webhook] @lid ${remoteJid} não pôde ser resolvido para um número`);
     }
+    // Mesmo sem resolver, continua — @lid indica contato que já interagiu (recebeu disparo)
   }
 
   console.log(`[webhook] mensagem recebida — tenant:${tenantId} phone:${phone} jid:${remoteJid} texto:"${userText}"`);
@@ -2354,8 +2353,8 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
     return json({ ok: true });
   }
 
-  // If not reply_all, only respond to prospected leads
-  if (!conn.reply_all) {
+  // Se não é reply_all, verifica se é lead — mas @lid bypass: não é possível identificar o número
+  if (!conn.reply_all && !isLid) {
     const prospected = await isPhoneProspected(env, tenantId, phone);
     if (!prospected) {
       console.log(`[webhook] phone não é lead — ignorando. tenant:${tenantId} phone:${phone}`);
