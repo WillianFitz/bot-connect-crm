@@ -1205,12 +1205,18 @@ async function sendWhatsAppMessage(
     });
     if (!res.ok) {
       let errMsg = res.statusText;
+      let existsFalse = false;
       try {
         const data = await res.json() as any;
-        if (Array.isArray(data?.response?.message) && data.response.message[0])
-          errMsg = data.response.message[0];
-        else if (data?.exists === false)
+        if (Array.isArray(data?.response?.message) && data.response.message[0]) {
+          const m = data.response.message[0];
+          errMsg = typeof m === "string" ? m : JSON.stringify(m);
+        } else if (data?.exists === false) {
+          existsFalse = true;
+        }
+        if (existsFalse || errMsg.includes("exists")) {
           errMsg = `number_not_found:${number}`;
+        }
       } catch {
         // ignore
       }
@@ -2454,10 +2460,16 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
     let sendResult: { ok: boolean; error?: string; remoteJid?: string };
     if (seg.type === "text") {
       sendResult = await sendWhatsAppMessage(env, tenantId, sendNumber, seg.content, sendQuotedKey);
-      // Se @lid rejeitado (exists:false), tenta fallback para phone sem quoted
-      if (!sendResult.ok && isLid && sendResult.error?.includes("number_not_found")) {
-        console.log(`[webhook] @lid rejeitado, fallback para phone:${phone}`);
-        sendResult = await sendWhatsAppMessage(env, tenantId, phone, seg.content, undefined);
+      // Se @lid rejeitado (exists:false), tenta fallback com full JID @s.whatsapp.net
+      if (!sendResult.ok && isLid && String(sendResult.error ?? "").includes("number_not_found")) {
+        // Tenta JID completo para bypassar normalização do Evolution (pode evitar rota @lid interna)
+        const fullJid = `${phone}@s.whatsapp.net`;
+        console.log(`[webhook] @lid rejeitado, fallback full-JID: ${fullJid}`);
+        sendResult = await sendWhatsAppMessage(env, tenantId, fullJid, seg.content, undefined);
+        if (!sendResult.ok) {
+          console.log(`[webhook] full-JID também falhou, fallback phone:${phone}`);
+          sendResult = await sendWhatsAppMessage(env, tenantId, phone, seg.content, undefined);
+        }
       }
     } else {
       sendResult = await sendWhatsAppMedia(env, tenantId, phone, seg.content, seg.type, seg.caption);
