@@ -2047,15 +2047,23 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
 // ─── Webhook Evolution API ────────────────────────────────────────────────────
 
 function extractTextFromEvolutionPayload(data: any): string | null {
-  const msg = data?.data?.message;
+  // Evolution v2 pode entregar mensagem em data.data ou diretamente em data.message
+  const msg = data?.data?.message || data?.message;
   if (!msg) return null;
   return (
     msg.conversation ||
     msg.extendedTextMessage?.text ||
     msg.imageMessage?.caption ||
     msg.videoMessage?.caption ||
+    msg.documentMessage?.caption ||
+    msg.stickerMessage?.caption ||
     null
   );
+}
+
+/** Normaliza nome de evento do Evolution: "MESSAGES_UPSERT" → "messages.upsert" */
+function normalizeEvolutionEvent(event: string): string {
+  return (event || "").toLowerCase().replace(/_/g, ".");
 }
 
 function normalizePhoneFromJid(jid: string): string {
@@ -2259,7 +2267,7 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
   const tenantId: string = data?.instance || "";
   if (!tenantId) return json({ ok: true });
 
-  const event: string = data?.event || "";
+  const event: string = normalizeEvolutionEvent(data?.event || "");
 
   // Atualiza status de conexão em tempo real quando Evolution notifica mudança
   if (event === "connection.update") {
@@ -2275,25 +2283,27 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
     return json({ ok: true });
   }
 
-  // Only process incoming text messages
+  // Só processa mensagens recebidas
   if (event !== "messages.upsert") return json({ ok: true });
 
-  // Evolution v2 pode colocar fromMe em caminhos diferentes dependendo da versão
+  // fromMe: ignora mensagens enviadas por nós (campanhas, respostas do agente)
   const fromMe: boolean = !!(
-    data?.data?.key?.fromMe ||
-    data?.data?.message?.fromMe ||
-    data?.fromMe
+    data?.data?.key?.fromMe ??
+    data?.key?.fromMe
   );
   if (fromMe) return json({ ok: true });
 
-  const remoteJid: string = data?.data?.key?.remoteJid || "";
+  const remoteJid: string = data?.data?.key?.remoteJid || data?.key?.remoteJid || "";
   if (!remoteJid || remoteJid.endsWith("@g.us")) return json({ ok: true }); // ignore groups
 
   const phone = normalizePhoneFromJid(remoteJid);
   if (!phone) return json({ ok: true });
 
   const userText = extractTextFromEvolutionPayload(data);
-  if (!userText) return json({ ok: true }); // non-text message
+  if (!userText) {
+    console.log("[webhook] sem texto extraível — ignorando. event:", data?.event, "jid:", remoteJid);
+    return json({ ok: true });
+  }
 
   // Load connection settings
   const conn = await env.DB.prepare(
@@ -2344,12 +2354,17 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
     { role: "user", content: userText },
   ];
 
+  if (!env.OPENAI_API_KEY) {
+    console.error("[webhook] OPENAI_API_KEY não configurado — agente não pode responder");
+    return json({ ok: true });
+  }
+
   let aiResponse: string;
   try {
     aiResponse = await callOpenAI(env, messages);
   } catch (err: any) {
-    console.error("[webhook] OpenAI error:", err?.message);
-    return json({ ok: true }); // fail silently, don't crash webhook
+    console.error("[webhook] OpenAI error para phone", phone, ":", err?.message);
+    return json({ ok: true });
   }
 
   // Save assistant response
@@ -2367,10 +2382,17 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
     }
   }
 
-  // Set pause if configured (prevents bot from interrupting human follow-up)
+  // Pausa apenas se o agente transferiu para humano:
+  // detecta se a resposta menciona o número humano ou grupo humano configurados
   const pauseMinutes = Number(agent?.pause_minutes ?? 0);
   const pauseDefinitive = !!agent?.pause_definitive;
-  if (pauseMinutes > 0 || pauseDefinitive) {
+  const humanNumber = agent?.human_number || "";
+  const humanGroup = agent?.human_group_id || "";
+  const mentionedHuman =
+    (humanNumber && aiResponse.includes(humanNumber)) ||
+    (humanGroup && aiResponse.includes(humanGroup));
+
+  if (mentionedHuman && (pauseMinutes > 0 || pauseDefinitive)) {
     await setPause(env, tenantId, phone, pauseMinutes, pauseDefinitive);
   }
 
