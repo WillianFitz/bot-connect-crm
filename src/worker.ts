@@ -1193,7 +1193,7 @@ async function sendWhatsAppMessage(
   if (!baseUrl || !env.EVOLUTION_API_KEY) {
     return { ok: false, error: "Evolution API não configurada" };
   }
-  const payload: Record<string, unknown> = { number, text };
+  const payload: Record<string, unknown> = { number, textMessage: { text } };
   if (quotedKey) {
     payload.options = { quoted: { key: quotedKey } };
   }
