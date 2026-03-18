@@ -1601,7 +1601,7 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
   if (method === "GET") {
     if (isSingle && campaignId) {
       const row = await env.DB.prepare(
-        "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, status, total_leads, sent, errors, no_whatsapp, created_at FROM campaigns WHERE id = ? AND tenant_id = ?",
+        "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, status, total_leads, sent, errors, no_whatsapp, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE id = ? AND tenant_id = ?",
       )
         .bind(campaignId, tenantId)
         .first();
@@ -1609,7 +1609,7 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
       return json(row);
     }
     const res = await env.DB.prepare(
-      "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, status, total_leads, sent, errors, no_whatsapp, created_at FROM campaigns WHERE tenant_id = ? ORDER BY created_at DESC",
+      "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, status, total_leads, sent, errors, no_whatsapp, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE tenant_id = ? ORDER BY created_at DESC",
     ).bind(tenantId).all();
     return json(res.results || []);
   }
@@ -1668,7 +1668,7 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
     const raw = res as { meta?: { last_row_id?: number }; lastRowId?: number };
     const lastId = raw.meta?.last_row_id ?? raw.lastRowId ?? 0;
     const created = await env.DB.prepare(
-      "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, status, total_leads, sent, errors, no_whatsapp, created_at FROM campaigns WHERE id = ? AND tenant_id = ?",
+      "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, status, total_leads, sent, errors, no_whatsapp, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE id = ? AND tenant_id = ?",
     )
       .bind(lastId, tenantId)
       .first();
@@ -1741,6 +1741,14 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
       updates.push("funnel_id = ?");
       params.push(newFunnelId === null || newFunnelId === "" ? null : Number(newFunnelId));
     }
+    if ("scheduled_at" in body) {
+      updates.push("scheduled_at = ?");
+      params.push(body.scheduled_at ?? null);
+    }
+    if ("scheduled_dispatched" in body) {
+      updates.push("scheduled_dispatched = ?");
+      params.push(body.scheduled_dispatched ? 1 : 0);
+    }
     if (updates.length === 0) return json({ error: "Nenhum campo para atualizar" }, { status: 400 });
     params.push(campaignId, tenantId);
     await env.DB.prepare(
@@ -1750,7 +1758,7 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
       .run();
 
     const updated = await env.DB.prepare(
-      "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, status, total_leads, sent, errors, no_whatsapp, created_at FROM campaigns WHERE id = ? AND tenant_id = ?",
+      "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, status, total_leads, sent, errors, no_whatsapp, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE id = ? AND tenant_id = ?",
     )
       .bind(campaignId, tenantId)
       .first();
@@ -2955,10 +2963,17 @@ async function parseResponseSegments(
         if (mt.startsWith("video/")) type = "video";
         else if (mt.startsWith("audio/")) type = "audio";
         segments.push({ type, content: row.url });
+        // Após vídeo ou áudio, sempre pede retorno automaticamente
+        if (type === "video" || type === "audio") {
+          segments.push({ type: "text", content: "Quando terminar, me dá um retorno! 😊" });
+        }
       }
     } else {
       const text = part.trim();
       if (!text) continue;
+      // Ignora se for apenas a frase de retorno que a IA já gerou (evita duplicar)
+      const isRetornoDuplicado = /quando terminar[,.]?\s*me d[aá]/i.test(text);
+      if (isRetornoDuplicado) continue;
       // Quebra em parágrafos para parecer mais humano (máx 3 segmentos de texto por resposta)
       const paragraphs = text.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
       if (paragraphs.length > 1) {
