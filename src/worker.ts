@@ -1720,13 +1720,20 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
         ).bind(tenantId, lead.id).first();
 
         if (!existingCrmEntry) {
-          // Use campaign's crm_column_id if set, otherwise find first column
+          // Use campaign's crm_column_id if set, otherwise find "contato" column, else first column
           let targetColumnId: number | null = (camp as any).crm_column_id ?? null;
           if (!targetColumnId) {
-            const firstCol = await env.DB.prepare(
-              "SELECT id FROM crm_columns WHERE tenant_id = ? ORDER BY position ASC LIMIT 1",
+            const contatoCol = await env.DB.prepare(
+              "SELECT id FROM crm_columns WHERE tenant_id = ? AND LOWER(name) LIKE '%contato%' ORDER BY position ASC LIMIT 1",
             ).bind(tenantId).first<{ id: number }>();
-            targetColumnId = firstCol?.id ?? null;
+            if (contatoCol) {
+              targetColumnId = contatoCol.id;
+            } else {
+              const firstCol = await env.DB.prepare(
+                "SELECT id FROM crm_columns WHERE tenant_id = ? ORDER BY position ASC LIMIT 1",
+              ).bind(tenantId).first<{ id: number }>();
+              targetColumnId = firstCol?.id ?? null;
+            }
           }
           if (targetColumnId) {
             const posRes = await env.DB.prepare(
