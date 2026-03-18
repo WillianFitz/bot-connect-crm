@@ -2393,41 +2393,18 @@ function isBotPushName(pushName: string): boolean {
 }
 
 /**
- * Detecta padrão de resposta automatizada: muitas respostas em janela curta
- * ou respostas instantâneas repetidas (< 4 segundos após mensagem do agente).
- * Retorna true se suspeito de ser bot.
+ * Detecta padrão de resposta automatizada.
+ * Critério conservador: só flagra se o volume for claramente anormal para humano.
+ * Humanos rápidos respondem em 2-3s; bots respondem em < 1s dezenas de vezes.
  */
 async function isSuspectedBot(env: Env, tenantId: string, phone: string): Promise<boolean> {
-  // 5+ mensagens do contato nos últimos 20 segundos = resposta automatizada
+  // 8+ mensagens do contato nos últimos 30 segundos = volume impossível para humano
   const rapid = await env.DB.prepare(
     `SELECT COUNT(*) as cnt FROM agent_conversations
      WHERE tenant_id = ? AND phone = ? AND role = 'user'
-     AND created_at >= datetime('now', '-20 seconds')`,
+     AND created_at >= datetime('now', '-30 seconds')`,
   ).bind(tenantId, phone).first<{ cnt: number }>();
-  if ((rapid?.cnt ?? 0) >= 5) return true;
-
-  // Última mensagem do agente + resposta do usuário chegou em < 4 segundos
-  const lastPair = await env.DB.prepare(
-    `SELECT
-       (SELECT created_at FROM agent_conversations WHERE tenant_id=? AND phone=? AND role='assistant' ORDER BY id DESC LIMIT 1) as last_bot,
-       (SELECT created_at FROM agent_conversations WHERE tenant_id=? AND phone=? AND role='user'      ORDER BY id DESC LIMIT 1) as last_user`,
-  ).bind(tenantId, phone, tenantId, phone).first<{ last_bot: string; last_user: string }>();
-
-  if (lastPair?.last_bot && lastPair?.last_user) {
-    const botTime = new Date(lastPair.last_bot + "Z").getTime();
-    const userTime = new Date(lastPair.last_user + "Z").getTime();
-    const diffSec = (userTime - botTime) / 1000;
-    // Resposta em < 4 segundos: suspeito. Confirmamos com 3 ocorrências via rate limit
-    if (diffSec >= 0 && diffSec < 4) {
-      const recentRapid = await env.DB.prepare(
-        `SELECT COUNT(*) as cnt FROM agent_conversations
-         WHERE tenant_id = ? AND phone = ? AND role = 'user'
-         AND created_at >= datetime('now', '-2 minutes')`,
-      ).bind(tenantId, phone).first<{ cnt: number }>();
-      if ((recentRapid?.cnt ?? 0) >= 3) return true;
-    }
-  }
-  return false;
+  return (rapid?.cnt ?? 0) >= 8;
 }
 
 /** Detecta pedido explícito de atendimento humano */
