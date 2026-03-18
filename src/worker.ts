@@ -2,10 +2,8 @@ export interface Env {
   DB: D1Database;
   MEDIA_BUCKET: R2Bucket;
   MEDIA_PUBLIC_URL: string;
-  BOT_SERVICE_URL: string;
   OPENAI_API_KEY: string;
   ADMIN_API_KEY: string;
-  EXTRACTOR_SERVICE_URL: string;
   EVOLUTION_API_URL: string;
   EVOLUTION_API_KEY: string;
   JWT_SECRET?: string;

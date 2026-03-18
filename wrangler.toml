@@ -22,8 +22,6 @@ crons = ["* * * * *"]
 [vars]
 # Cole aqui a Public Development URL do bucket R2 (painel Cloudflare → R2 → bot-connect-crm → Public Development URL)
 MEDIA_PUBLIC_URL = "https://pub-e826e8696a224c7aa9f15d82a9bf7856.r2.dev"
-BOT_SERVICE_URL = "https://bot-connect-crm-production.up.railway.app"
-EXTRACTOR_SERVICE_URL = "https://extrator-instagram-production.up.railway.app"
 EVOLUTION_API_URL = "evolution-api-production-9edc.up.railway.app"
 # EVOLUTION_API_KEY: defina como Secret no dashboard da Cloudflare (Variables and Secrets)
 # Execute: wrangler secret put EVOLUTION_API_KEY
