@@ -1116,6 +1116,26 @@ signals: prefixe com "+" para positivo, "-" para negativo, máximo 5 signals`;
     return json({ ok: true, heat_score: score, heat_label: label, heat_summary: summary, heat_signals: signals });
   }
 
+  // DELETE /api/leads/:id/conversation  — clear conversation for a lead (fresh start)
+  const clearConvMatch = pathname.match(/^\/api\/leads\/(\d+)\/conversation$/);
+  if (method === "DELETE" && clearConvMatch) {
+    const leadId = Number(clearConvMatch[1]);
+    const lead = await env.DB.prepare(
+      "SELECT phone FROM leads WHERE id = ? AND tenant_id = ? LIMIT 1",
+    ).bind(leadId, tenantId).first<{ phone: string }>();
+    if (!lead) return json({ error: "Lead não encontrado" }, { status: 404 });
+
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM agent_conversations WHERE tenant_id = ? AND phone = ?").bind(tenantId, lead.phone),
+      env.DB.prepare("DELETE FROM agent_pauses WHERE tenant_id = ? AND phone = ?").bind(tenantId, lead.phone),
+      env.DB.prepare(
+        "UPDATE leads SET heat_score = NULL, heat_label = NULL, heat_summary = NULL, heat_signals = NULL, heat_analyzed_at = NULL WHERE id = ? AND tenant_id = ?",
+      ).bind(leadId, tenantId),
+    ]);
+    return json({ ok: true });
+  }
+
+  // Also register this route in the router guard below
   return notFound();
 }
 
@@ -3807,7 +3827,8 @@ export default {
       } else if (
         pathname === "/api/leads/heat" ||
         pathname === "/api/leads/heat/analyze-all" ||
-        /^\/api\/leads\/\d+\/heat-analyze$/.test(pathname)
+        /^\/api\/leads\/\d+\/heat-analyze$/.test(pathname) ||
+        /^\/api\/leads\/\d+\/conversation$/.test(pathname)
       ) {
         response = await handleLeadsHeat(request, env, method, urlForRouting);
       } else if (pathname.startsWith("/api/leads")) {

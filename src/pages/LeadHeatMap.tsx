@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Flame, Thermometer, Snowflake, Loader2, RefreshCw, TrendingUp, Zap, ChevronRight } from "lucide-react";
+import { Flame, Thermometer, Snowflake, Loader2, RefreshCw, TrendingUp, Zap, ChevronRight, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api";
@@ -73,10 +73,15 @@ const ZONE_CONFIG: Record<string, ZoneConfig> = {
 
 function formatRelativeDate(dateStr: string | null): string {
   if (!dateStr) return "";
-  const date = new Date(dateStr);
+  // SQLite datetime('now') stores UTC without 'Z' — force UTC parsing
+  const utcStr = dateStr.endsWith("Z") || dateStr.includes("+") ? dateStr : dateStr + "Z";
+  const date = new Date(utcStr);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / (1000 * 60));
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  if (diffMins < 1) return "agora mesmo";
+  if (diffMins < 60) return `há ${diffMins} min`;
   if (diffDays === 0) return "hoje";
   if (diffDays === 1) return "há 1 dia";
   return `há ${diffDays} dias`;
@@ -97,10 +102,14 @@ function LeadCard({
   lead,
   onAnalyze,
   isAnalyzing,
+  onClearConversation,
+  isClearingConversation,
 }: {
   lead: LeadHeat;
   onAnalyze: (id: number) => void;
   isAnalyzing: boolean;
+  onClearConversation: (id: number, phone: string) => void;
+  isClearingConversation: boolean;
 }) {
   const zone = lead.heat_label;
   const config = zone ? ZONE_CONFIG[zone] : null;
@@ -162,33 +171,49 @@ function LeadCard({
       )}
 
       {/* Footer */}
-      <div className="flex items-center justify-between pt-0.5">
+      <div className="flex items-center justify-between pt-0.5 gap-1">
         {lead.heat_analyzed_at ? (
           <span className="text-[11px] text-muted-foreground/60">{formatRelativeDate(lead.heat_analyzed_at)}</span>
         ) : (
           <span className="text-[11px] text-muted-foreground/40">Não analisado</span>
         )}
-        <Button
-          size="sm"
-          variant="ghost"
-          className={`h-6 px-2 text-[11px] gap-1 ${config ? `${config.textColor} hover:${config.textColor}` : "text-muted-foreground"}`}
-          onClick={() => onAnalyze(lead.id)}
-          disabled={isAnalyzing}
-        >
-          {isAnalyzing ? (
-            <Loader2 className="h-3 w-3 animate-spin" />
-          ) : lead.heat_analyzed_at ? (
-            <>
-              <RefreshCw className="h-3 w-3" />
-              Re-analisar
-            </>
-          ) : (
-            <>
-              <ChevronRight className="h-3 w-3" />
-              Analisar
-            </>
-          )}
-        </Button>
+        <div className="flex items-center gap-1 shrink-0">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-6 px-2 text-[11px] gap-1 text-muted-foreground hover:text-destructive"
+            title="Zerar conversa para novo contato"
+            onClick={() => onClearConversation(lead.id, lead.phone)}
+            disabled={isClearingConversation}
+          >
+            {isClearingConversation ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Trash2 className="h-3 w-3" />
+            )}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className={`h-6 px-2 text-[11px] gap-1 ${config ? `${config.textColor} hover:${config.textColor}` : "text-muted-foreground"}`}
+            onClick={() => onAnalyze(lead.id)}
+            disabled={isAnalyzing}
+          >
+            {isAnalyzing ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : lead.heat_analyzed_at ? (
+              <>
+                <RefreshCw className="h-3 w-3" />
+                Re-analisar
+              </>
+            ) : (
+              <>
+                <ChevronRight className="h-3 w-3" />
+                Analisar
+              </>
+            )}
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -199,11 +224,15 @@ function ZoneColumn({
   leads,
   onAnalyze,
   analyzingIds,
+  onClearConversation,
+  clearingIds,
 }: {
   zone: HeatZone;
   leads: LeadHeat[];
   onAnalyze: (id: number) => void;
   analyzingIds: Set<number>;
+  onClearConversation: (id: number, phone: string) => void;
+  clearingIds: Set<number>;
 }) {
   const config = zone ? ZONE_CONFIG[zone] : null;
   const labelText = config ? config.label : "Não analisado";
@@ -242,6 +271,8 @@ function ZoneColumn({
               lead={lead}
               onAnalyze={onAnalyze}
               isAnalyzing={analyzingIds.has(lead.id)}
+              onClearConversation={onClearConversation}
+              isClearingConversation={clearingIds.has(lead.id)}
             />
           ))
         )}
@@ -349,8 +380,43 @@ export default function LeadHeatMap() {
     },
   });
 
+  const [clearingIds, setClearingIds] = useState<Set<number>>(new Set());
+
+  const clearConversationMutation = useMutation({
+    mutationFn: ({ id, phone }: { id: number; phone: string }) =>
+      api.clearLeadConversation(id, phone),
+    onMutate: ({ id }) => {
+      setClearingIds((prev) => new Set(prev).add(id));
+    },
+    onSettled: (_, __, { id }) => {
+      setClearingIds((prev) => { const n = new Set(prev); n.delete(id); return n; });
+    },
+    onSuccess: (_, { id }) => {
+      queryClient.invalidateQueries({ queryKey: ["leads-heat"] });
+      toast({
+        title: "Conversa zerada",
+        description: "Histórico apagado. O lead começa do zero no próximo contato.",
+      });
+      // Also reset heat score locally so card goes to "Aguardando análise"
+      queryClient.setQueryData(["leads-heat"], (old: any[]) =>
+        old?.map((l) =>
+          l.id === id
+            ? { ...l, heat_score: null, heat_label: null, heat_summary: null, heat_signals: null, heat_analyzed_at: null, conversation_count: 0 }
+            : l
+        ) ?? old
+      );
+    },
+    onError: () => {
+      toast({ title: "Erro ao zerar conversa", variant: "destructive" });
+    },
+  });
+
   const handleAnalyze = (id: number) => {
     analyzeMutation.mutate(id);
+  };
+
+  const handleClearConversation = (id: number, phone: string) => {
+    clearConversationMutation.mutate({ id, phone });
   };
 
   const fireLeads = leads.filter((l) => l.heat_label === "fire");
@@ -420,6 +486,8 @@ export default function LeadHeatMap() {
                 leads={zoneleads}
                 onAnalyze={handleAnalyze}
                 analyzingIds={analyzingIds}
+                onClearConversation={handleClearConversation}
+                clearingIds={clearingIds}
               />
             ))}
           </div>
@@ -443,6 +511,8 @@ export default function LeadHeatMap() {
                     lead={lead}
                     onAnalyze={handleAnalyze}
                     isAnalyzing={analyzingIds.has(lead.id)}
+                    onClearConversation={handleClearConversation}
+                    isClearingConversation={clearingIds.has(lead.id)}
                   />
                 ))}
               </div>

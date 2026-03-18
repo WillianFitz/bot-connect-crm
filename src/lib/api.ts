@@ -516,5 +516,10 @@ export const api = {
     request<{ ok: boolean; analyzed: number }>("/leads/heat/analyze-all", {
       method: "POST",
     }),
+
+  clearLeadConversation: (id: number, _phone: string) =>
+    request<{ ok: boolean }>(`/leads/${id}/conversation`, {
+      method: "DELETE",
+    }),
 };
 
