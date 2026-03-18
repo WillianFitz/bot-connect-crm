@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Flame, Thermometer, Snowflake, Loader2, RefreshCw, TrendingUp, Zap, ChevronRight, Trash2 } from "lucide-react";
+import { Flame, Thermometer, Snowflake, Loader2, RefreshCw, TrendingUp, Zap, ChevronRight, Trash2, ChevronDown, ChevronUp, MessageSquare, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api";
@@ -111,12 +111,16 @@ function LeadCard({
   onClearConversation: (id: number, phone: string) => void;
   isClearingConversation: boolean;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const zone = lead.heat_label;
   const config = zone ? ZONE_CONFIG[zone] : null;
   const signals = parseSignals(lead);
-  const positiveSignals = signals.filter((s) => s.startsWith("+")).slice(0, 3);
-  const negativeSignals = signals.filter((s) => s.startsWith("-")).slice(0, 3);
-  const shownSignals = [...positiveSignals, ...negativeSignals].slice(0, 3);
+  const positiveSignals = signals.filter((s) => s.startsWith("+"));
+  const negativeSignals = signals.filter((s) => s.startsWith("-"));
+  const shownSignals = expanded
+    ? [...positiveSignals, ...negativeSignals]
+    : [...positiveSignals.slice(0, 2), ...negativeSignals.slice(0, 1)].slice(0, 3);
+  const hasMoreDetails = lead.heat_summary || signals.length > 3 || lead.conversation_count > 0;
   const borderCls = config ? config.borderColor : "border-gray-500/20";
   const scoreBadgeCls = config ? config.badgeBg : "bg-gray-500/20 text-gray-300 border-gray-500/30";
   const scoreTxtCls = config ? config.textColor : "text-gray-400";
@@ -146,7 +150,9 @@ function LeadCard({
 
       {/* Summary */}
       {lead.heat_summary && (
-        <p className="text-[12px] text-muted-foreground line-clamp-2 leading-relaxed">{lead.heat_summary}</p>
+        <p className={`text-[12px] text-muted-foreground leading-relaxed ${expanded ? "" : "line-clamp-2"}`}>
+          {lead.heat_summary}
+        </p>
       )}
 
       {/* Signals */}
@@ -167,7 +173,74 @@ function LeadCard({
               </span>
             );
           })}
+          {!expanded && signals.length > 3 && (
+            <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md font-medium bg-muted/40 text-muted-foreground border border-border/30">
+              +{signals.length - 3}
+            </span>
+          )}
         </div>
+      )}
+
+      {/* Expanded details */}
+      {expanded && (
+        <div className="pt-1 border-t border-border/20 space-y-2">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground/70">
+              <MessageSquare className="h-3 w-3 shrink-0" />
+              <span>{lead.conversation_count} mensagens no histórico</span>
+            </div>
+          </div>
+          {lead.heat_analyzed_at && (
+            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground/70">
+              <Clock className="h-3 w-3 shrink-0" />
+              <span>Analisado {formatRelativeDate(lead.heat_analyzed_at)}</span>
+            </div>
+          )}
+          {positiveSignals.length > 0 && (
+            <div className="space-y-1">
+              <p className="text-[10px] font-semibold text-emerald-400/70 uppercase tracking-wide">Sinais positivos</p>
+              <div className="flex flex-wrap gap-1">
+                {positiveSignals.map((sig, idx) => (
+                  <span key={idx} className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
+                    {sig.slice(1)}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          {negativeSignals.length > 0 && (
+            <div className="space-y-1">
+              <p className="text-[10px] font-semibold text-red-400/70 uppercase tracking-wide">Sinais negativos</p>
+              <div className="flex flex-wrap gap-1">
+                {negativeSignals.map((sig, idx) => (
+                  <span key={idx} className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md font-medium bg-red-500/15 text-red-400 border border-red-500/20">
+                    {sig.slice(1)}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Ver mais / Ver menos toggle */}
+      {hasMoreDetails && (
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="flex items-center gap-1 text-[11px] text-muted-foreground/60 hover:text-muted-foreground transition-colors w-full"
+        >
+          {expanded ? (
+            <>
+              <ChevronUp className="h-3 w-3" />
+              Ver menos
+            </>
+          ) : (
+            <>
+              <ChevronDown className="h-3 w-3" />
+              Ver mais detalhes
+            </>
+          )}
+        </button>
       )}
 
       {/* Footer */}
