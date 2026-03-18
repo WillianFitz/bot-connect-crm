@@ -19,6 +19,7 @@ import AdminLogin from "./pages/AdminLogin";
 import Tools from "./pages/Tools";
 import ProspectFunnels from "./pages/ProspectFunnels";
 import BookingPage from "./pages/BookingPage";
+import LeadHeatMap from "./pages/LeadHeatMap";
 
 const queryClient = new QueryClient();
 
@@ -58,6 +59,7 @@ function ProtectedAppLayout() {
         <Route path="funnels" element={<ProspectFunnels />} />
         <Route path="agents" element={<Agents />} />
         <Route path="appointments" element={<Appointments />} />
+        <Route path="heat-map" element={<LeadHeatMap />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="*" element={<NotFound />} />
       </Routes>

@@ -895,6 +895,230 @@ async function handleLeads(request: Request, env: Env, method: string, url: URL)
   return new Response("Method not allowed", { status: 405 });
 }
 
+// ─── Lead Heat Map ────────────────────────────────────────────────────────────
+
+async function analyzeAndSaveLeadHeat(env: Env, tenantId: string, phone: string): Promise<{
+  heat_score: number;
+  heat_label: string;
+  heat_summary: string;
+  heat_signals: string[];
+} | null> {
+  // Get lead for this phone
+  const lead = await env.DB.prepare(
+    "SELECT id, company FROM leads WHERE tenant_id = ? AND phone = ? LIMIT 1",
+  ).bind(tenantId, phone).first<{ id: number; company: string }>();
+  if (!lead) return null;
+
+  // Get conversation history (last 30 messages)
+  const history = await getConversationHistory(env, tenantId, phone, 30);
+
+  if (history.length < 2) {
+    const heatData = {
+      heat_score: 0,
+      heat_label: "cold",
+      heat_summary: "Sem conversa suficiente para análise.",
+      heat_signals: [] as string[],
+    };
+    await env.DB.prepare(
+      "UPDATE leads SET heat_score = ?, heat_label = ?, heat_summary = ?, heat_signals = ?, heat_analyzed_at = datetime('now') WHERE id = ? AND tenant_id = ?",
+    ).bind(heatData.heat_score, heatData.heat_label, heatData.heat_summary, JSON.stringify(heatData.heat_signals), lead.id, tenantId).run();
+    return heatData;
+  }
+
+  const leadName = lead.company || phone;
+  const conversationText = history
+    .map((h) => `${h.role === "user" ? "Lead" : "Agente"}: ${h.content}`)
+    .join("\n");
+
+  const analysisPrompt = `Analise esta conversa de WhatsApp entre um agente de vendas e o lead "${leadName}".
+
+Conversa:
+${conversationText}
+
+Avalie o nível de interesse do lead de 0 a 10:
+- 0-3: Frio — sem interesse ou respostas frias
+- 4-6: Morno — algum interesse mas sem comprometimento
+- 7-8: Quente — alto interesse, fazendo perguntas, sinais positivos
+- 9-10: Em Chamas — muito quente, pronto para comprar ou agendar
+
+Retorne APENAS JSON válido (sem markdown, sem explicações):
+{"score":7,"label":"hot","summary":"Resumo curto em 1-2 frases do interesse do lead.","signals":["+Respondeu rapidamente","+Perguntou sobre preço","-Mencionou concorrente"]}
+
+label deve ser exatamente: "cold" (0-3), "warm" (4-6), "hot" (7-8), "fire" (9-10)
+signals: prefixe com "+" para positivo, "-" para negativo, máximo 5 signals`;
+
+  let rawResponse: string;
+  try {
+    rawResponse = await callOpenAI(
+      env,
+      [{ role: "user", content: analysisPrompt }],
+      { temperature: 0.2 },
+    );
+  } catch {
+    return null;
+  }
+
+  let parsed: { score?: number; label?: string; summary?: string; signals?: string[] };
+  try {
+    // Strip markdown fences if present
+    const cleaned = rawResponse.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/, "").trim();
+    parsed = JSON.parse(cleaned);
+  } catch {
+    return null;
+  }
+
+  const score = typeof parsed.score === "number" ? Math.max(0, Math.min(10, parsed.score)) : 0;
+  const validLabels = ["cold", "warm", "hot", "fire"];
+  const label = typeof parsed.label === "string" && validLabels.includes(parsed.label) ? parsed.label : "cold";
+  const summary = typeof parsed.summary === "string" ? parsed.summary.slice(0, 500) : "";
+  const signals = Array.isArray(parsed.signals) ? (parsed.signals as string[]).slice(0, 5) : [];
+
+  await env.DB.prepare(
+    "UPDATE leads SET heat_score = ?, heat_label = ?, heat_summary = ?, heat_signals = ?, heat_analyzed_at = datetime('now') WHERE id = ? AND tenant_id = ?",
+  ).bind(score, label, summary, JSON.stringify(signals), lead.id, tenantId).run();
+
+  return { heat_score: score, heat_label: label, heat_summary: summary, heat_signals: signals };
+}
+
+async function handleLeadsHeat(request: Request, env: Env, method: string, url: URL): Promise<Response> {
+  const tenantId = await getTenantId(request, env);
+  await ensureTenant(env, tenantId);
+
+  const pathname = url.pathname; // e.g. /api/leads/heat or /api/leads/123/heat-analyze or /api/leads/heat/analyze-all
+
+  // GET /api/leads/heat
+  if (method === "GET" && pathname === "/api/leads/heat") {
+    const res = await env.DB.prepare(
+      `SELECT leads.*,
+         (SELECT COUNT(*) FROM agent_conversations WHERE tenant_id = leads.tenant_id AND phone = leads.phone) as conversation_count
+       FROM leads
+       WHERE leads.tenant_id = ? AND leads.phone IS NOT NULL AND leads.phone != ''
+       ORDER BY leads.heat_score DESC NULLS LAST, leads.heat_analyzed_at DESC`,
+    ).bind(tenantId).all<Record<string, unknown>>();
+
+    const rows = (res.results || []).map((row) => {
+      let signals: string[] | null = null;
+      if (typeof row.heat_signals === "string" && row.heat_signals) {
+        try {
+          const p = JSON.parse(row.heat_signals);
+          signals = Array.isArray(p) ? p : null;
+        } catch {
+          signals = null;
+        }
+      }
+      return { ...row, heat_signals: signals };
+    });
+
+    return json(rows);
+  }
+
+  // POST /api/leads/heat/analyze-all
+  if (method === "POST" && pathname === "/api/leads/heat/analyze-all") {
+    const leadsRes = await env.DB.prepare(
+      `SELECT leads.id, leads.company, leads.phone
+       FROM leads
+       WHERE leads.tenant_id = ? AND leads.phone IS NOT NULL AND leads.phone != ''
+       ORDER BY leads.heat_analyzed_at ASC NULLS FIRST
+       LIMIT 50`,
+    ).bind(tenantId).all<{ id: number; company: string; phone: string }>();
+
+    const rows = leadsRes.results || [];
+    let analyzed = 0;
+
+    for (const lead of rows) {
+      const history = await getConversationHistory(env, tenantId, lead.phone, 30);
+      if (history.length < 2) continue;
+      const result = await analyzeAndSaveLeadHeat(env, tenantId, lead.phone);
+      if (result) analyzed++;
+    }
+
+    return json({ ok: true, analyzed });
+  }
+
+  // POST /api/leads/:id/heat-analyze
+  const heatAnalyzeMatch = pathname.match(/^\/api\/leads\/(\d+)\/heat-analyze$/);
+  if (method === "POST" && heatAnalyzeMatch) {
+    const leadId = Number(heatAnalyzeMatch[1]);
+    const lead = await env.DB.prepare(
+      "SELECT id, company, phone FROM leads WHERE id = ? AND tenant_id = ? LIMIT 1",
+    ).bind(leadId, tenantId).first<{ id: number; company: string; phone: string }>();
+
+    if (!lead) return json({ error: "Lead não encontrado" }, { status: 404 });
+    if (!lead.phone) return json({ error: "Lead sem telefone" }, { status: 400 });
+
+    const history = await getConversationHistory(env, tenantId, lead.phone, 30);
+
+    if (history.length < 2) {
+      const heatData = {
+        ok: true,
+        heat_score: 0,
+        heat_label: "cold",
+        heat_summary: "Sem conversa suficiente para análise.",
+        heat_signals: [] as string[],
+      };
+      await env.DB.prepare(
+        "UPDATE leads SET heat_score = ?, heat_label = ?, heat_summary = ?, heat_signals = ?, heat_analyzed_at = datetime('now') WHERE id = ? AND tenant_id = ?",
+      ).bind(heatData.heat_score, heatData.heat_label, heatData.heat_summary, JSON.stringify(heatData.heat_signals), leadId, tenantId).run();
+      return json(heatData);
+    }
+
+    const leadName = lead.company || lead.phone;
+    const conversationText = history
+      .map((h) => `${h.role === "user" ? "Lead" : "Agente"}: ${h.content}`)
+      .join("\n");
+
+    const analysisPrompt = `Analise esta conversa de WhatsApp entre um agente de vendas e o lead "${leadName}".
+
+Conversa:
+${conversationText}
+
+Avalie o nível de interesse do lead de 0 a 10:
+- 0-3: Frio — sem interesse ou respostas frias
+- 4-6: Morno — algum interesse mas sem comprometimento
+- 7-8: Quente — alto interesse, fazendo perguntas, sinais positivos
+- 9-10: Em Chamas — muito quente, pronto para comprar ou agendar
+
+Retorne APENAS JSON válido (sem markdown, sem explicações):
+{"score":7,"label":"hot","summary":"Resumo curto em 1-2 frases do interesse do lead.","signals":["+Respondeu rapidamente","+Perguntou sobre preço","-Mencionou concorrente"]}
+
+label deve ser exatamente: "cold" (0-3), "warm" (4-6), "hot" (7-8), "fire" (9-10)
+signals: prefixe com "+" para positivo, "-" para negativo, máximo 5 signals`;
+
+    let rawResponse: string;
+    try {
+      rawResponse = await callOpenAI(
+        env,
+        [{ role: "user", content: analysisPrompt }],
+        { temperature: 0.2 },
+      );
+    } catch (err: any) {
+      return json({ error: `Erro ao chamar OpenAI: ${err?.message || "desconhecido"}` }, { status: 500 });
+    }
+
+    let parsed: { score?: number; label?: string; summary?: string; signals?: string[] };
+    try {
+      const cleaned = rawResponse.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/, "").trim();
+      parsed = JSON.parse(cleaned);
+    } catch {
+      return json({ error: "Resposta da IA não pôde ser interpretada" }, { status: 500 });
+    }
+
+    const score = typeof parsed.score === "number" ? Math.max(0, Math.min(10, parsed.score)) : 0;
+    const validLabels = ["cold", "warm", "hot", "fire"];
+    const label = typeof parsed.label === "string" && validLabels.includes(parsed.label) ? parsed.label : "cold";
+    const summary = typeof parsed.summary === "string" ? parsed.summary.slice(0, 500) : "";
+    const signals = Array.isArray(parsed.signals) ? (parsed.signals as string[]).slice(0, 5) : [];
+
+    await env.DB.prepare(
+      "UPDATE leads SET heat_score = ?, heat_label = ?, heat_summary = ?, heat_signals = ?, heat_analyzed_at = datetime('now') WHERE id = ? AND tenant_id = ?",
+    ).bind(score, label, summary, JSON.stringify(signals), leadId, tenantId).run();
+
+    return json({ ok: true, heat_score: score, heat_label: label, heat_summary: summary, heat_signals: signals });
+  }
+
+  return notFound();
+}
+
 async function handleAgents(request: Request, env: Env, method: string, url: URL) {
   const pathname = url.pathname;
   const parts = pathname.split("/").filter(Boolean);
@@ -1469,6 +1693,31 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
       if (result.ok) {
         // Salva mensagem da campanha no histórico do agente para que ele saiba o contexto ao receber resposta
         await appendConversation(env, tenantId, phone, "assistant", text, "atendimento");
+
+        // Auto-add to CRM on first disparo
+        const existingCrmEntry = await env.DB.prepare(
+          "SELECT id FROM crm_leads WHERE tenant_id = ? AND lead_id = ?",
+        ).bind(tenantId, lead.id).first();
+
+        if (!existingCrmEntry) {
+          // Use campaign's crm_column_id if set, otherwise find first column
+          let targetColumnId: number | null = (camp as any).crm_column_id ?? null;
+          if (!targetColumnId) {
+            const firstCol = await env.DB.prepare(
+              "SELECT id FROM crm_columns WHERE tenant_id = ? ORDER BY position ASC LIMIT 1",
+            ).bind(tenantId).first<{ id: number }>();
+            targetColumnId = firstCol?.id ?? null;
+          }
+          if (targetColumnId) {
+            const posRes = await env.DB.prepare(
+              "SELECT COUNT(*) as cnt FROM crm_leads WHERE tenant_id = ? AND column_id = ?",
+            ).bind(tenantId, targetColumnId).first<{ cnt: number }>();
+            await env.DB.prepare(
+              "INSERT OR IGNORE INTO crm_leads (tenant_id, lead_id, column_id, position) VALUES (?, ?, ?, ?)",
+            ).bind(tenantId, lead.id, targetColumnId, posRes?.cnt ?? 0).run();
+          }
+        }
+
         await env.DB.prepare(
           `INSERT INTO campaign_sends (campaign_id, lead_id, status) VALUES (?, ?, 'sent')
            ON CONFLICT(campaign_id, lead_id) DO UPDATE SET status = 'sent', sent_at = datetime('now'), error_message = NULL`,
@@ -3424,6 +3673,15 @@ Regras gerais:
   // Save assistant response
   await appendConversation(env, tenantId, phone, "assistant", aiResponse);
 
+  // Auto-analyze heat every 5 messages
+  const msgCount = await env.DB.prepare(
+    "SELECT COUNT(*) as cnt FROM agent_conversations WHERE tenant_id = ? AND phone = ?",
+  ).bind(tenantId, phone).first<{ cnt: number }>();
+  if (msgCount && msgCount.cnt % 5 === 0) {
+    // Fire and forget heat analysis (don't await to not delay response)
+    analyzeAndSaveLeadHeat(env, tenantId, phone).catch(() => {});
+  }
+
   // Parse response segments (text + media tokens)
   const segments = await parseResponseSegments(env, tenantId, aiResponse);
 
@@ -3546,6 +3804,12 @@ export default {
         response = await handleWhatsappConnection(request, env, method, urlForRouting);
       } else if (pathname.startsWith("/api/lead-folders")) {
         response = await handleLeadFolders(request, env, method, urlForRouting);
+      } else if (
+        pathname === "/api/leads/heat" ||
+        pathname === "/api/leads/heat/analyze-all" ||
+        /^\/api\/leads\/\d+\/heat-analyze$/.test(pathname)
+      ) {
+        response = await handleLeadsHeat(request, env, method, urlForRouting);
       } else if (pathname.startsWith("/api/leads")) {
         response = await handleLeads(request, env, method, urlForRouting);
       } else if (pathname.startsWith("/api/agents")) {

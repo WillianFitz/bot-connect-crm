@@ -11,6 +11,7 @@ import {
   Wrench,
   Workflow,
   LogOut,
+  Flame,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useQuery } from "@tanstack/react-query";
@@ -25,6 +26,7 @@ const mainItems = [
   { title: "Dashboard", url: "/app", icon: LayoutDashboard },
   { title: "Conexões", url: "/app/connections", icon: Link2 },
   { title: "Leads", url: "/app/leads", icon: Users },
+  { title: "Mapa de Calor", url: "/app/heat-map", icon: Flame },
   { title: "CRM", url: "/app/crm", icon: GitBranch },
   { title: "Ferramentas", url: "/app/tools", icon: Wrench },
   { title: "Disparos", url: "/app/campaigns", icon: Megaphone },

@@ -501,5 +501,20 @@ export const api = {
       hasPassword: boolean;
       extensionToken?: string;
     }>("/tools/instagram/config"),
+
+  // Lead Heat Map
+  getLeadsHeat: () =>
+    request<any[]>("/leads/heat"),
+
+  analyzeLeadHeat: (id: number) =>
+    request<{ ok: boolean; heat_score: number; heat_label: string; heat_summary: string; heat_signals: string[] }>(
+      `/leads/${id}/heat-analyze`,
+      { method: "POST" }
+    ),
+
+  analyzeAllLeadsHeat: () =>
+    request<{ ok: boolean; analyzed: number }>("/leads/heat/analyze-all", {
+      method: "POST",
+    }),
 };
 
