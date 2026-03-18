@@ -1909,8 +1909,36 @@ async function handleProspectFunnels(request: Request, env: Env, method: string,
 
   const pathname = url.pathname;
   const parts = pathname.split("/").filter(Boolean);
-  // parts: ["api", "funnels"] or ["api", "funnels", ":id"]
+  // parts: ["api", "funnels"] or ["api", "funnels", ":id"] or ["api", "funnels", "upload"]
   const idParam = parts.length >= 3 ? parts[2] : null;
+
+  // POST /api/funnels/upload — upload de mídia direto para R2 para uso em blocos de funil
+  if (idParam === "upload" && method === "POST") {
+    let formData: FormData;
+    try {
+      formData = await request.formData();
+    } catch {
+      return json({ error: "Esperado multipart/form-data" }, { status: 400 });
+    }
+    const file = formData.get("file") as File | null;
+    if (!file) return json({ error: "Campo 'file' obrigatório" }, { status: 400 });
+
+    const ext = (file.name.split(".").pop() ?? "").toLowerCase();
+    const slug = `funnel_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const r2Key = `${tenantId}/funnels/${slug}${ext ? "." + ext : ""}`;
+
+    try {
+      await env.MEDIA_BUCKET.put(r2Key, file.stream(), {
+        httpMetadata: { contentType: file.type },
+      });
+    } catch (err: any) {
+      return json({ error: `Erro no upload: ${err?.message}` }, { status: 500 });
+    }
+
+    const publicUrl = `${env.MEDIA_PUBLIC_URL.replace(/\/$/, "")}/${r2Key}`;
+    return json({ ok: true, url: publicUrl });
+  }
+
   const isSingle = idParam && /^\d+$/.test(idParam);
   const funnelId = isSingle ? Number(idParam) : null;
 
@@ -3139,6 +3167,15 @@ export default {
       } catch (err) {
         console.error("[cron] funnel executions for tenant", row.id, err);
       }
+    }
+    // Limpeza periódica: remove conversas com mais de 90 dias (roda uma vez por cron tick, fora do loop de tenants)
+    try {
+      await env.DB.batch([
+        env.DB.prepare("DELETE FROM agent_conversations WHERE created_at < datetime('now', '-90 days')"),
+        env.DB.prepare("DELETE FROM webhook_dedup WHERE created_at < datetime('now', '-1 day')"),
+      ]);
+    } catch (err) {
+      console.error("[cron] cleanup error:", err);
     }
   },
 } satisfies ExportedHandler<Env>;

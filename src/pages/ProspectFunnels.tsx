@@ -1,19 +1,17 @@
-import { useState, useRef } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Pencil, ChevronDown, ChevronUp, GitBranch } from "lucide-react";
+import {
+  MessageSquare, Clock, ImageIcon, Mic, FileText, Video,
+  ChevronDown, ChevronUp, Trash2, Pencil, GitBranch, Upload, Link, Loader2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
+  AlertDialog, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { api } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
@@ -21,12 +19,13 @@ import { useToast } from "@/hooks/use-toast";
 type BlockType = "text" | "wait" | "image" | "audio" | "pdf" | "video";
 
 interface CanvasBlock {
-  id: string; // local temp id
+  id: string;
   type: BlockType;
   content: string;
   wait_seconds: number;
   caption: string;
   open: boolean;
+  uploading?: boolean;
 }
 
 interface FunnelStep {
@@ -48,34 +47,93 @@ interface Funnel {
   steps: FunnelStep[];
 }
 
-const BLOCK_TYPES: { type: BlockType; label: string; description: string }[] = [
-  { type: "text", label: "Enviar Texto", description: "Mensagem de texto com placeholders {{nome}} e {{empresa}}" },
-  { type: "wait", label: "Esperar", description: "Aguardar um tempo antes do próximo bloco" },
-  { type: "image", label: "Enviar Imagem", description: "Enviar uma imagem por URL" },
-  { type: "audio", label: "Enviar Áudio", description: "Enviar um áudio por URL" },
-  { type: "pdf", label: "Enviar PDF", description: "Enviar um documento PDF por URL" },
-  { type: "video", label: "Enviar Vídeo", description: "Enviar um vídeo por URL" },
+interface BlockMeta {
+  type: BlockType;
+  label: string;
+  icon: React.ElementType;
+  description: string;
+  color: string;       // tailwind bg/text for palette chip
+  borderColor: string; // tailwind border for canvas block
+  badgeColor: string;  // tailwind for badge in header
+}
+
+const BLOCK_META: BlockMeta[] = [
+  {
+    type: "text",
+    label: "Enviar Texto",
+    icon: MessageSquare,
+    description: "Mensagem com {{nome}} e {{empresa}}",
+    color: "bg-blue-500/10 text-blue-600 border-blue-400/40 hover:bg-blue-500/20",
+    borderColor: "border-blue-400/40",
+    badgeColor: "bg-blue-500/15 text-blue-600",
+  },
+  {
+    type: "wait",
+    label: "Esperar",
+    icon: Clock,
+    description: "Aguardar antes do próximo bloco",
+    color: "bg-amber-500/10 text-amber-600 border-amber-400/40 hover:bg-amber-500/20",
+    borderColor: "border-amber-400/40",
+    badgeColor: "bg-amber-500/15 text-amber-600",
+  },
+  {
+    type: "image",
+    label: "Enviar Imagem",
+    icon: ImageIcon,
+    description: "Enviar uma imagem (upload ou URL)",
+    color: "bg-emerald-500/10 text-emerald-600 border-emerald-400/40 hover:bg-emerald-500/20",
+    borderColor: "border-emerald-400/40",
+    badgeColor: "bg-emerald-500/15 text-emerald-600",
+  },
+  {
+    type: "audio",
+    label: "Enviar Áudio",
+    icon: Mic,
+    description: "Enviar um áudio (upload ou URL)",
+    color: "bg-purple-500/10 text-purple-600 border-purple-400/40 hover:bg-purple-500/20",
+    borderColor: "border-purple-400/40",
+    badgeColor: "bg-purple-500/15 text-purple-600",
+  },
+  {
+    type: "pdf",
+    label: "Enviar PDF",
+    icon: FileText,
+    description: "Enviar um documento PDF (upload ou URL)",
+    color: "bg-orange-500/10 text-orange-600 border-orange-400/40 hover:bg-orange-500/20",
+    borderColor: "border-orange-400/40",
+    badgeColor: "bg-orange-500/15 text-orange-600",
+  },
+  {
+    type: "video",
+    label: "Enviar Vídeo",
+    icon: Video,
+    description: "Enviar um vídeo (upload ou URL)",
+    color: "bg-rose-500/10 text-rose-600 border-rose-400/40 hover:bg-rose-500/20",
+    borderColor: "border-rose-400/40",
+    badgeColor: "bg-rose-500/15 text-rose-600",
+  },
 ];
 
-function blockLabel(type: string): string {
-  return BLOCK_TYPES.find((b) => b.type === type)?.label ?? type;
+const ACCEPT: Record<string, string> = {
+  image: "image/*",
+  audio: "audio/*",
+  pdf: "application/pdf",
+  video: "video/*",
+};
+
+function getMeta(type: string): BlockMeta {
+  return BLOCK_META.find((b) => b.type === type) ?? BLOCK_META[0];
 }
 
 function newBlock(type: BlockType): CanvasBlock {
-  return {
-    id: Math.random().toString(36).slice(2),
-    type,
-    content: "",
-    wait_seconds: 60,
-    caption: "",
-    open: true,
-  };
+  return { id: Math.random().toString(36).slice(2), type, content: "", wait_seconds: 60, caption: "", open: true };
 }
 
 function secondsDisplay(s: number): string {
-  if (s < 60) return `${s} segundo${s !== 1 ? "s" : ""}`;
-  const m = Math.round(s / 60);
-  return `${s}s (~${m} min)`;
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return r > 0 ? `${m}min ${r}s` : `${m} min`;
 }
 
 function stepsToBlocks(steps: FunnelStep[]): CanvasBlock[] {
@@ -96,208 +154,156 @@ export default function ProspectFunnels() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  // Editor state
   const [funnelName, setFunnelName] = useState("");
   const [editingId, setEditingId] = useState<number | null>(null);
   const [blocks, setBlocks] = useState<CanvasBlock[]>([]);
   const [funnelToDelete, setFunnelToDelete] = useState<Funnel | null>(null);
 
-  // Drag state
   const dragSrcIndex = useRef<number | null>(null);
   const dragOverIndex = useRef<number | null>(null);
+  const dragPaletteType = useRef<BlockType | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const uploadingBlockIdx = useRef<number | null>(null);
 
-  const funnelsQuery = useQuery({
-    queryKey: ["funnels"],
-    queryFn: api.getFunnels,
-  });
-
+  const funnelsQuery = useQuery({ queryKey: ["funnels"], queryFn: api.getFunnels });
   const funnels = (funnelsQuery.data ?? []) as Funnel[];
 
   const createFunnel = useMutation({
-    mutationFn: (payload: Parameters<typeof api.createFunnel>[0]) => api.createFunnel(payload),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["funnels"] });
-      resetEditor();
-      toast({ title: "Funil salvo." });
-    },
-    onError: (err: Error) => {
-      toast({ title: "Erro ao salvar funil", description: err.message, variant: "destructive" });
-    },
+    mutationFn: (p: Parameters<typeof api.createFunnel>[0]) => api.createFunnel(p),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["funnels"] }); resetEditor(); toast({ title: "Funil salvo." }); },
+    onError: (e: Error) => toast({ title: "Erro ao salvar", description: e.message, variant: "destructive" }),
   });
 
   const updateFunnel = useMutation({
-    mutationFn: ({ id, payload }: { id: number; payload: Parameters<typeof api.updateFunnel>[1] }) =>
-      api.updateFunnel(id, payload),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["funnels"] });
-      resetEditor();
-      toast({ title: "Funil atualizado." });
-    },
-    onError: (err: Error) => {
-      toast({ title: "Erro ao atualizar funil", description: err.message, variant: "destructive" });
-    },
+    mutationFn: ({ id, payload }: { id: number; payload: Parameters<typeof api.updateFunnel>[1] }) => api.updateFunnel(id, payload),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["funnels"] }); resetEditor(); toast({ title: "Funil atualizado." }); },
+    onError: (e: Error) => toast({ title: "Erro ao atualizar", description: e.message, variant: "destructive" }),
   });
 
   const deleteFunnel = useMutation({
     mutationFn: (id: number) => api.deleteFunnel(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["funnels"] });
-      setFunnelToDelete(null);
-      toast({ title: "Funil excluído." });
-    },
-    onError: (err: Error) => {
-      toast({ title: "Erro ao excluir", description: err.message, variant: "destructive" });
-    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["funnels"] }); setFunnelToDelete(null); toast({ title: "Funil excluído." }); },
+    onError: (e: Error) => toast({ title: "Erro ao excluir", description: e.message, variant: "destructive" }),
   });
 
-  function resetEditor() {
-    setFunnelName("");
-    setEditingId(null);
-    setBlocks([]);
-  }
+  function resetEditor() { setFunnelName(""); setEditingId(null); setBlocks([]); }
 
   function loadFunnelForEdit(f: Funnel) {
-    setFunnelName(f.name);
-    setEditingId(f.id);
-    setBlocks(stepsToBlocks(f.steps));
+    setFunnelName(f.name); setEditingId(f.id); setBlocks(stepsToBlocks(f.steps));
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function addBlock(type: BlockType) {
-    setBlocks((prev) => [...prev, newBlock(type)]);
-  }
-
-  function removeBlock(idx: number) {
-    setBlocks((prev) => prev.filter((_, i) => i !== idx));
-  }
-
-  function updateBlock(idx: number, patch: Partial<CanvasBlock>) {
-    setBlocks((prev) => prev.map((b, i) => (i === idx ? { ...b, ...patch } : b)));
-  }
-
-  function toggleBlock(idx: number) {
-    setBlocks((prev) => prev.map((b, i) => (i === idx ? { ...b, open: !b.open } : b)));
-  }
+  function addBlock(type: BlockType) { setBlocks((p) => [...p, newBlock(type)]); }
+  function removeBlock(idx: number) { setBlocks((p) => p.filter((_, i) => i !== idx)); }
+  function updateBlock(idx: number, patch: Partial<CanvasBlock>) { setBlocks((p) => p.map((b, i) => (i === idx ? { ...b, ...patch } : b))); }
+  function toggleBlock(idx: number) { setBlocks((p) => p.map((b, i) => (i === idx ? { ...b, open: !b.open } : b))); }
 
   function moveBlock(idx: number, dir: -1 | 1) {
-    setBlocks((prev) => {
-      const next = [...prev];
-      const target = idx + dir;
-      if (target < 0 || target >= next.length) return prev;
-      [next[idx], next[target]] = [next[target], next[idx]];
-      return next;
+    setBlocks((p) => {
+      const n = [...p];
+      const t = idx + dir;
+      if (t < 0 || t >= n.length) return p;
+      [n[idx], n[t]] = [n[t], n[idx]];
+      return n;
     });
   }
 
-  // Drag & drop handlers for canvas reorder
-  function onDragStartCanvas(idx: number) {
-    dragSrcIndex.current = idx;
-  }
-
-  function onDragOverCanvas(e: React.DragEvent, idx: number) {
-    e.preventDefault();
-    dragOverIndex.current = idx;
-  }
-
+  function onDragStartCanvas(idx: number) { dragSrcIndex.current = idx; }
+  function onDragOverCanvas(e: React.DragEvent, idx: number) { e.preventDefault(); dragOverIndex.current = idx; }
   function onDropCanvas() {
-    const from = dragSrcIndex.current;
-    const to = dragOverIndex.current;
+    const from = dragSrcIndex.current; const to = dragOverIndex.current;
     if (from === null || to === null || from === to) return;
-    setBlocks((prev) => {
-      const next = [...prev];
-      const [moved] = next.splice(from, 1);
-      next.splice(to, 0, moved);
-      return next;
-    });
-    dragSrcIndex.current = null;
-    dragOverIndex.current = null;
+    setBlocks((p) => { const n = [...p]; const [m] = n.splice(from, 1); n.splice(to, 0, m); return n; });
+    dragSrcIndex.current = null; dragOverIndex.current = null;
   }
 
-  // Drag from palette to canvas
-  const dragPaletteType = useRef<BlockType | null>(null);
-
-  function onDragStartPalette(type: BlockType) {
-    dragPaletteType.current = type;
-  }
-
+  function onDragStartPalette(type: BlockType) { dragPaletteType.current = type; }
   function onDropCanvas_palette(e: React.DragEvent) {
     e.preventDefault();
-    if (dragPaletteType.current) {
-      addBlock(dragPaletteType.current);
-      dragPaletteType.current = null;
+    if (dragPaletteType.current) { addBlock(dragPaletteType.current); dragPaletteType.current = null; }
+  }
+
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const idx = uploadingBlockIdx.current;
+    if (idx === null) return;
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+    updateBlock(idx, { uploading: true });
+    try {
+      const result = await api.uploadFunnelMedia(file);
+      updateBlock(idx, { content: result.url, uploading: false });
+      toast({ title: "Upload concluído!" });
+    } catch (err: unknown) {
+      updateBlock(idx, { uploading: false });
+      toast({ title: "Erro no upload", description: err instanceof Error ? err.message : "Tente novamente", variant: "destructive" });
     }
+  }
+
+  function triggerUpload(idx: number, type: BlockType) {
+    uploadingBlockIdx.current = idx;
+    if (fileInputRef.current) {
+      fileInputRef.current.accept = ACCEPT[type] ?? "*/*";
+      fileInputRef.current.click();
+    }
+  }
+
+  function buildSteps() {
+    return blocks.map((b, i) => ({ type: b.type, content: b.content || undefined, wait_seconds: b.wait_seconds, caption: b.caption || undefined, position: i }));
   }
 
   function handleSaveDraft() {
-    if (!funnelName.trim()) {
-      toast({ title: "Nome obrigatório", variant: "destructive" });
-      return;
-    }
-    const steps = blocks.map((b, i) => ({
-      type: b.type,
-      content: b.content || undefined,
-      wait_seconds: b.wait_seconds,
-      caption: b.caption || undefined,
-      position: i,
-    }));
-    if (editingId) {
-      updateFunnel.mutate({ id: editingId, payload: { name: funnelName.trim(), status: "draft", steps } });
-    } else {
-      createFunnel.mutate({ name: funnelName.trim(), status: "draft", steps });
-    }
+    if (!funnelName.trim()) { toast({ title: "Nome obrigatório", variant: "destructive" }); return; }
+    const steps = buildSteps();
+    if (editingId) updateFunnel.mutate({ id: editingId, payload: { name: funnelName.trim(), status: "draft", steps } });
+    else createFunnel.mutate({ name: funnelName.trim(), status: "draft", steps });
   }
 
   function handlePublish() {
-    if (!funnelName.trim()) {
-      toast({ title: "Nome obrigatório", variant: "destructive" });
-      return;
-    }
-    const steps = blocks.map((b, i) => ({
-      type: b.type,
-      content: b.content || undefined,
-      wait_seconds: b.wait_seconds,
-      caption: b.caption || undefined,
-      position: i,
-    }));
-    if (editingId) {
-      updateFunnel.mutate({ id: editingId, payload: { name: funnelName.trim(), status: "published", steps } });
-    } else {
-      createFunnel.mutate({ name: funnelName.trim(), status: "published", steps });
-    }
+    if (!funnelName.trim()) { toast({ title: "Nome obrigatório", variant: "destructive" }); return; }
+    const steps = buildSteps();
+    if (editingId) updateFunnel.mutate({ id: editingId, payload: { name: funnelName.trim(), status: "published", steps } });
+    else createFunnel.mutate({ name: funnelName.trim(), status: "published", steps });
   }
 
   const isSaving = createFunnel.isPending || updateFunnel.isPending;
-
-  function totalWait(): number {
-    return blocks.filter((b) => b.type === "wait").reduce((s, b) => s + (b.wait_seconds || 0), 0);
-  }
+  const totalWait = blocks.filter((b) => b.type === "wait").reduce((s, b) => s + (b.wait_seconds || 0), 0);
 
   return (
     <div className="space-y-6 animate-slide-in max-w-5xl">
+      {/* Hidden file input */}
+      <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileUpload} />
+
       <div>
         <h1 className="text-2xl font-bold text-foreground">Funil de Prospecção</h1>
-        <p className="text-sm text-muted-foreground">
-          Crie sequências automáticas de mensagens para prospects.
-        </p>
+        <p className="text-sm text-muted-foreground">Crie sequências automáticas de mensagens para prospects.</p>
       </div>
 
       {/* Editor */}
       <div className="rounded-xl border border-border/50 bg-card overflow-hidden">
-        <div className="grid grid-cols-[200px_1fr] divide-x divide-border/50 min-h-[340px]">
+        <div className="grid grid-cols-[190px_1fr] divide-x divide-border/50 min-h-[360px]">
+
           {/* Palette */}
-          <div className="p-4 space-y-2 bg-secondary/30">
-            <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold mb-3">Blocos</p>
-            {BLOCK_TYPES.map((bt) => (
-              <div
-                key={bt.type}
-                draggable
-                onDragStart={() => onDragStartPalette(bt.type)}
-                title={bt.description}
-                className="rounded-md border border-border/50 bg-card px-3 py-2 text-xs text-foreground cursor-grab hover:border-primary/50 hover:bg-primary/5 transition-colors select-none"
-              >
-                {bt.label}
-              </div>
-            ))}
+          <div className="p-4 space-y-2 bg-secondary/20">
+            <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold mb-3">
+              Blocos
+            </p>
+            <p className="text-[10px] text-muted-foreground mb-3">Arraste para a área do funil →</p>
+            {BLOCK_META.map((bt) => {
+              const Icon = bt.icon;
+              return (
+                <div
+                  key={bt.type}
+                  draggable
+                  onDragStart={() => onDragStartPalette(bt.type)}
+                  title={bt.description}
+                  className={`rounded-lg border px-3 py-2.5 text-xs font-medium cursor-grab transition-all select-none flex items-center gap-2 ${bt.color}`}
+                >
+                  <Icon className="h-3.5 w-3.5 shrink-0" />
+                  {bt.label}
+                </div>
+              );
+            })}
           </div>
 
           {/* Canvas */}
@@ -307,161 +313,196 @@ export default function ProspectFunnels() {
             onDrop={onDropCanvas_palette}
           >
             {blocks.length === 0 && (
-              <div className="flex-1 flex items-center justify-center rounded-lg border-2 border-dashed border-border/40 text-xs text-muted-foreground min-h-[120px]">
-                Arraste blocos da paleta ou use os botões abaixo
+              <div className="flex-1 flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-border/40 text-muted-foreground min-h-[140px] gap-2">
+                <GitBranch className="h-8 w-8 opacity-20" />
+                <p className="text-xs">Arraste blocos da paleta ou use os botões abaixo</p>
               </div>
             )}
 
-            {blocks.map((block, idx) => (
-              <div
-                key={block.id}
-                draggable
-                onDragStart={() => onDragStartCanvas(idx)}
-                onDragOver={(e) => onDragOverCanvas(e, idx)}
-                onDrop={onDropCanvas}
-                className="rounded-lg border border-border/50 bg-secondary/20 cursor-grab"
-                onKeyDown={(e) => {
-                  if (e.altKey && e.key === "ArrowUp") moveBlock(idx, -1);
-                  if (e.altKey && e.key === "ArrowDown") moveBlock(idx, 1);
-                  if (e.key === "Delete") removeBlock(idx);
-                }}
-                tabIndex={0}
-              >
-                {/* Block header */}
+            {blocks.map((block, idx) => {
+              const meta = getMeta(block.type);
+              const Icon = meta.icon;
+              return (
                 <div
-                  className="flex items-center justify-between px-3 py-2 cursor-pointer"
-                  onClick={() => toggleBlock(idx)}
+                  key={block.id}
+                  draggable
+                  onDragStart={() => onDragStartCanvas(idx)}
+                  onDragOver={(e) => onDragOverCanvas(e, idx)}
+                  onDrop={onDropCanvas}
+                  className={`rounded-lg border-2 bg-secondary/10 cursor-grab transition-all ${meta.borderColor}`}
+                  onKeyDown={(e) => {
+                    if (e.altKey && e.key === "ArrowUp") moveBlock(idx, -1);
+                    if (e.altKey && e.key === "ArrowDown") moveBlock(idx, 1);
+                    if (e.key === "Delete") removeBlock(idx);
+                  }}
+                  tabIndex={0}
                 >
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-muted-foreground font-mono">{idx + 1}</span>
-                    <span className="text-xs font-medium text-foreground">{blockLabel(block.type)}</span>
-                    {block.type === "wait" && (
-                      <span className="text-[10px] text-muted-foreground">{secondsDisplay(block.wait_seconds)}</span>
-                    )}
-                    {block.type === "text" && block.content && (
-                      <span className="text-[10px] text-muted-foreground truncate max-w-[160px]">{block.content.slice(0, 40)}{block.content.length > 40 ? "…" : ""}</span>
-                    )}
+                  {/* Block header */}
+                  <div
+                    className="flex items-center justify-between px-3 py-2.5 cursor-pointer"
+                    onClick={() => toggleBlock(idx)}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="flex items-center justify-center h-5 w-5 rounded-full bg-border/40 text-[10px] font-mono text-muted-foreground shrink-0">
+                        {idx + 1}
+                      </span>
+                      <span className={`inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-medium ${meta.badgeColor}`}>
+                        <Icon className="h-3 w-3" />
+                        {meta.label}
+                      </span>
+                      {block.type === "wait" && (
+                        <span className="text-[10px] text-muted-foreground">{secondsDisplay(block.wait_seconds)}</span>
+                      )}
+                      {block.type === "text" && block.content && (
+                        <span className="text-[10px] text-muted-foreground truncate max-w-[140px]">
+                          {block.content.slice(0, 40)}{block.content.length > 40 ? "…" : ""}
+                        </span>
+                      )}
+                      {block.type !== "text" && block.type !== "wait" && block.content && (
+                        <span className="text-[10px] text-muted-foreground truncate max-w-[140px]">✓ arquivo</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        className="h-6 w-6 rounded flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-border/40 transition-colors"
+                        onClick={(e) => { e.stopPropagation(); moveBlock(idx, -1); }}
+                        title="Mover para cima (Alt+↑)"
+                      >
+                        <ChevronUp className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        className="h-6 w-6 rounded flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-border/40 transition-colors"
+                        onClick={(e) => { e.stopPropagation(); moveBlock(idx, 1); }}
+                        title="Mover para baixo (Alt+↓)"
+                      >
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        className="h-6 w-6 rounded flex items-center justify-center text-red-500 hover:text-red-600 hover:bg-red-500/10 transition-colors"
+                        onClick={(e) => { e.stopPropagation(); removeBlock(idx); }}
+                        title="Remover bloco (Delete)"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                      {block.open
+                        ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
+                        : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                      onClick={(e) => { e.stopPropagation(); moveBlock(idx, -1); }}
-                      title="Mover para cima (Alt+↑)"
-                    >
-                      <ChevronUp className="h-3 w-3" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                      onClick={(e) => { e.stopPropagation(); moveBlock(idx, 1); }}
-                      title="Mover para baixo (Alt+↓)"
-                    >
-                      <ChevronDown className="h-3 w-3" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 text-red-500 hover:text-red-600 hover:bg-red-500/10"
-                      onClick={(e) => { e.stopPropagation(); removeBlock(idx); }}
-                      title="Remover bloco (Delete)"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
-                    {block.open ? <ChevronUp className="h-3 w-3 text-muted-foreground" /> : <ChevronDown className="h-3 w-3 text-muted-foreground" />}
-                  </div>
-                </div>
 
-                {/* Block config */}
-                {block.open && (
-                  <div className="px-3 pb-3 pt-1 space-y-3 border-t border-border/30">
-                    {block.type === "text" && (
-                      <div>
-                        <Label className="text-xs text-muted-foreground">Mensagem</Label>
-                        <Textarea
-                          className="mt-1 bg-background border-border/50 text-xs resize-none"
-                          rows={4}
-                          placeholder="Olá {{nome}}, tudo bem? Sou da {{empresa}}..."
-                          value={block.content}
-                          onChange={(e) => updateBlock(idx, { content: e.target.value })}
-                        />
-                        <p className="text-[10px] text-muted-foreground mt-1">
-                          Placeholders: <code>{"{{nome}}"}</code>, <code>{"{{empresa}}"}</code>
-                        </p>
-                      </div>
-                    )}
-
-                    {block.type === "wait" && (
-                      <div>
-                        <Label className="text-xs text-muted-foreground">Aguardar (segundos)</Label>
-                        <div className="flex items-center gap-3 mt-1">
-                          <Input
-                            type="number"
-                            min={1}
-                            className="bg-background border-border/50 text-xs w-32"
-                            value={block.wait_seconds}
-                            onChange={(e) => updateBlock(idx, { wait_seconds: Math.max(1, Number(e.target.value) || 1) })}
-                          />
-                          <span className="text-xs text-muted-foreground">{secondsDisplay(block.wait_seconds)}</span>
-                        </div>
-                      </div>
-                    )}
-
-                    {(block.type === "image" || block.type === "video" || block.type === "pdf") && (
-                      <>
+                  {/* Block config */}
+                  {block.open && (
+                    <div className="px-3 pb-3 pt-1 space-y-3 border-t border-border/30">
+                      {block.type === "text" && (
                         <div>
-                          <Label className="text-xs text-muted-foreground">URL do arquivo</Label>
-                          <Input
-                            className="mt-1 bg-background border-border/50 text-xs"
-                            placeholder="https://..."
+                          <Label className="text-xs text-muted-foreground">Mensagem</Label>
+                          <Textarea
+                            className="mt-1.5 bg-background border-border/50 text-xs resize-none"
+                            rows={4}
+                            placeholder={"Oi {{nome}}, tudo bem?\nSou da LeadFlowAI e tenho uma proposta incrível pra você!"}
                             value={block.content}
                             onChange={(e) => updateBlock(idx, { content: e.target.value })}
                           />
+                          <p className="text-[10px] text-muted-foreground mt-1">
+                            Placeholders: <code className="bg-secondary px-1 rounded">{"{{nome}}"}</code>{" "}
+                            <code className="bg-secondary px-1 rounded">{"{{empresa}}"}</code>
+                          </p>
                         </div>
-                        <div>
-                          <Label className="text-xs text-muted-foreground">Legenda (opcional)</Label>
-                          <Input
-                            className="mt-1 bg-background border-border/50 text-xs"
-                            placeholder="Legenda da mídia..."
-                            value={block.caption}
-                            onChange={(e) => updateBlock(idx, { caption: e.target.value })}
-                          />
-                        </div>
-                      </>
-                    )}
+                      )}
 
-                    {block.type === "audio" && (
-                      <div>
-                        <Label className="text-xs text-muted-foreground">URL do áudio</Label>
-                        <Input
-                          className="mt-1 bg-background border-border/50 text-xs"
-                          placeholder="https://..."
-                          value={block.content}
-                          onChange={(e) => updateBlock(idx, { content: e.target.value })}
-                        />
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
+                      {block.type === "wait" && (
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Intervalo em Segundos</Label>
+                          <div className="flex items-center gap-3 mt-1.5">
+                            <Input
+                              type="number"
+                              min={1}
+                              className="bg-background border-border/50 text-xs w-28"
+                              value={block.wait_seconds}
+                              onChange={(e) => updateBlock(idx, { wait_seconds: Math.max(1, Number(e.target.value) || 1) })}
+                            />
+                            <span className="text-xs text-muted-foreground font-medium">{secondsDisplay(block.wait_seconds)}</span>
+                            <div className="flex gap-1 ml-2">
+                              {[30, 60, 300, 3600].map((s) => (
+                                <button
+                                  key={s}
+                                  className="text-[10px] px-2 py-0.5 rounded border border-border/50 hover:bg-secondary text-muted-foreground transition-colors"
+                                  onClick={() => updateBlock(idx, { wait_seconds: s })}
+                                >
+                                  {s < 60 ? `${s}s` : s < 3600 ? `${s / 60}min` : "1h"}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {(block.type === "image" || block.type === "video" || block.type === "pdf" || block.type === "audio") && (
+                        <>
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1.5 block">Arquivo</Label>
+                            <div className="flex gap-2">
+                              <Button
+                                type="button"
+                                size="sm"
+                                className={`gap-1.5 text-xs h-8 ${meta.color} border`}
+                                variant="outline"
+                                disabled={block.uploading}
+                                onClick={() => triggerUpload(idx, block.type)}
+                              >
+                                {block.uploading
+                                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  : <Upload className="h-3.5 w-3.5" />}
+                                {block.uploading ? "Enviando..." : "Upload"}
+                              </Button>
+                              <div className="relative flex-1">
+                                <Link className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                                <Input
+                                  className="pl-8 bg-background border-border/50 text-xs h-8"
+                                  placeholder="Ou cole uma URL..."
+                                  value={block.content}
+                                  onChange={(e) => updateBlock(idx, { content: e.target.value })}
+                                />
+                              </div>
+                            </div>
+                            {block.content && (
+                              <p className="text-[10px] text-emerald-600 mt-1 truncate">✓ {block.content}</p>
+                            )}
+                          </div>
+                          {block.type !== "audio" && (
+                            <div>
+                              <Label className="text-xs text-muted-foreground">Legenda (opcional)</Label>
+                              <Input
+                                className="mt-1.5 bg-background border-border/50 text-xs"
+                                placeholder="Texto que acompanha o arquivo..."
+                                value={block.caption}
+                                onChange={(e) => updateBlock(idx, { caption: e.target.value })}
+                              />
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
 
             {/* Quick-add buttons */}
             <div className="flex flex-wrap gap-2 pt-2 border-t border-border/20">
-              {BLOCK_TYPES.map((bt) => (
-                <Button
-                  key={bt.type}
-                  variant="outline"
-                  size="sm"
-                  className="text-xs h-7 gap-1"
-                  onClick={() => addBlock(bt.type)}
-                >
-                  <Plus className="h-3 w-3" />
-                  {bt.label}
-                </Button>
-              ))}
+              {BLOCK_META.map((bt) => {
+                const Icon = bt.icon;
+                return (
+                  <button
+                    key={bt.type}
+                    className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-all ${bt.color}`}
+                    onClick={() => addBlock(bt.type)}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    + {bt.label}
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -478,7 +519,7 @@ export default function ProspectFunnels() {
           </div>
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <span>{blocks.length} bloco{blocks.length !== 1 ? "s" : ""}</span>
-            {totalWait() > 0 && <span>· ~{secondsDisplay(totalWait())}</span>}
+            {totalWait > 0 && <span>· ~{secondsDisplay(totalWait)}</span>}
           </div>
           {editingId && (
             <Button variant="ghost" size="sm" onClick={resetEditor} className="text-xs">
@@ -490,21 +531,30 @@ export default function ProspectFunnels() {
             size="sm"
             disabled={isSaving || !funnelName.trim()}
             onClick={handleSaveDraft}
+            className="border-amber-400/60 text-amber-600 hover:bg-amber-500/10 hover:border-amber-400"
           >
-            {isSaving ? "Salvando..." : "Salvar rascunho"}
+            {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
+            {isSaving ? "Salvando..." : "💾 Salvar rascunho"}
           </Button>
           <Button
             size="sm"
             disabled={isSaving || !funnelName.trim()}
             onClick={handlePublish}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white"
           >
-            {isSaving ? "Publicando..." : "Publicar"}
+            {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
+            {isSaving ? "Publicando..." : "🚀 Publicar"}
           </Button>
         </div>
 
         <div className="px-4 py-2 bg-secondary/10 border-t border-border/20">
           <p className="text-[10px] text-muted-foreground">
-            Dica: arraste blocos para reordenar. No bloco focado, use <kbd className="px-1 rounded border border-border/50 font-mono">Alt+↑</kbd> / <kbd className="px-1 rounded border border-border/50 font-mono">Alt+↓</kbd> para mover e <kbd className="px-1 rounded border border-border/50 font-mono">Delete</kbd> para remover.
+            Dica: arraste blocos para reordenar. Use{" "}
+            <kbd className="px-1 rounded border border-border/50 font-mono">Alt+↑</kbd>{" / "}
+            <kbd className="px-1 rounded border border-border/50 font-mono">Alt+↓</kbd>{" "}
+            para mover e{" "}
+            <kbd className="px-1 rounded border border-border/50 font-mono">Delete</kbd>{" "}
+            para remover o bloco focado.
           </p>
         </div>
       </div>
@@ -516,11 +566,7 @@ export default function ProspectFunnels() {
             <GitBranch className="h-4 w-4 text-primary" />
             Meus funis
           </h2>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => queryClient.invalidateQueries({ queryKey: ["funnels"] })}
-          >
+          <Button variant="outline" size="sm" onClick={() => queryClient.invalidateQueries({ queryKey: ["funnels"] })}>
             Atualizar
           </Button>
         </div>
@@ -530,10 +576,7 @@ export default function ProspectFunnels() {
             <thead className="bg-secondary/50 border-b border-border/40">
               <tr>
                 {["Nome", "Status", "Blocos", "Versão", "Ações"].map((h) => (
-                  <th
-                    key={h}
-                    className="px-3 py-2 text-left text-[11px] uppercase text-muted-foreground tracking-wide"
-                  >
+                  <th key={h} className="px-3 py-2 text-left text-[11px] uppercase text-muted-foreground tracking-wide">
                     {h}
                   </th>
                 ))}
@@ -542,43 +585,38 @@ export default function ProspectFunnels() {
             <tbody>
               {funnels.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-3 py-6 text-center text-xs text-muted-foreground">
+                  <td colSpan={5} className="px-3 py-8 text-center text-xs text-muted-foreground">
                     {funnelsQuery.isLoading ? "Carregando..." : "Nenhum funil criado"}
                   </td>
                 </tr>
               ) : (
                 funnels.map((f) => (
-                  <tr
-                    key={f.id}
-                    className="border-b border-border/20 hover:bg-secondary/30 transition-colors"
-                  >
-                    <td className="px-3 py-2 text-xs text-foreground">{f.name}</td>
+                  <tr key={f.id} className="border-b border-border/20 hover:bg-secondary/30 transition-colors">
+                    <td className="px-3 py-2 text-xs font-medium text-foreground">{f.name}</td>
                     <td className="px-3 py-2 text-xs">
-                      <Badge variant="secondary" className="text-[10px]">
-                        {f.status === "published" ? "Publicado" : "Rascunho"}
-                      </Badge>
+                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${f.status === "published" ? "bg-emerald-500/15 text-emerald-600" : "bg-amber-500/15 text-amber-600"}`}>
+                        {f.status === "published" ? "✓ Publicado" : "✎ Rascunho"}
+                      </span>
                     </td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">{f.steps.length}</td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">v{f.version}</td>
-                    <td className="px-3 py-2 text-xs">
-                      <div className="flex items-center gap-0.5">
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-1">
                         <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 gap-1 text-xs"
                           onClick={() => loadFunnelForEdit(f)}
-                          title="Editar funil"
                         >
-                          <Pencil className="h-3.5 w-3.5" />
+                          <Pencil className="h-3 w-3" /> Editar
                         </Button>
                         <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-500/10"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 gap-1 text-xs border-red-300 text-red-600 hover:bg-red-500/10 hover:border-red-400"
                           onClick={() => setFunnelToDelete(f)}
-                          title="Excluir funil"
                         >
-                          <Trash2 className="h-3.5 w-3.5" />
+                          <Trash2 className="h-3 w-3" /> Excluir
                         </Button>
                       </div>
                     </td>
@@ -595,7 +633,7 @@ export default function ProspectFunnels() {
           <AlertDialogHeader>
             <AlertDialogTitle>Excluir funil</AlertDialogTitle>
             <AlertDialogDescription>
-              Tem certeza que deseja excluir o funil &quot;{funnelToDelete?.name}&quot;? Todas as execuções ativas serão canceladas. Esta ação não pode ser desfeita.
+              Tem certeza que deseja excluir &quot;{funnelToDelete?.name}&quot;? Todas as execuções ativas serão canceladas. Esta ação não pode ser desfeita.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

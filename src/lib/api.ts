@@ -388,6 +388,27 @@ export const api = {
   deleteFunnel: (id: number) =>
     request<{ ok: true }>(`/funnels/${id}`, { method: "DELETE" }),
 
+  uploadFunnelMedia: async (file: File): Promise<{ ok: true; url: string }> => {
+    const token = typeof localStorage !== "undefined" ? localStorage.getItem("auth_token") || undefined : undefined;
+    const tenantId = (window as any)?.TENANT_ID ||
+      (typeof localStorage !== "undefined" ? localStorage.getItem("tenant_id") || undefined : undefined);
+    const form = new FormData();
+    form.append("file", file);
+    const BASE_URL = import.meta.env.VITE_API_URL || "";
+    const res = await fetch(`${BASE_URL}/api/funnels/upload`, {
+      method: "POST",
+      headers: token
+        ? { Authorization: `Bearer ${token}` }
+        : tenantId ? { "x-tenant-id": tenantId } : {},
+      body: form,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: "Erro no upload" })) as { error?: string };
+      throw new Error(err?.error ?? "Erro no upload");
+    }
+    return res.json();
+  },
+
   // Ferramentas - Instagram
   startInstagramExtraction: (payload: { profile: string }) =>
     request<{ ok: true; jobId: number }>("/tools/instagram/start", {
