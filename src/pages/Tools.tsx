@@ -125,7 +125,7 @@ export default function Tools() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Ferramentas</h1>
+        <h1 className="text-2xl lg:text-3xl font-bold tracking-tight">Ferramentas</h1>
         <p className="text-sm text-muted-foreground">
           Conecte fontes externas e extraia leads automaticamente.
         </p>
@@ -156,7 +156,7 @@ export default function Tools() {
         </TabsList>
 
         <TabsContent value="instagram">
-          <div className="grid gap-6 md:grid-cols-1 max-w-2xl">
+          <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3 w-full">
             <Card>
               <CardHeader>
                 <CardTitle>Conexão Instagram</CardTitle>

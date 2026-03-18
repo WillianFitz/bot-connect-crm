@@ -142,12 +142,12 @@ export default function Funnels() {
     <div className="space-y-6 animate-slide-in">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">CRM Kanban</h1>
+          <h1 className="text-2xl lg:text-3xl font-bold text-foreground">CRM Kanban</h1>
           <p className="text-sm text-muted-foreground">
             Funil de Prospecção com colunas: Leads, Em contato, Proposta e Fechado. Arraste os cartões para mudar de etapa.
           </p>
         </div>
-        <div className="w-full max-w-xs relative">
+        <div className="w-full md:max-w-xs relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             className="pl-9 bg-secondary border-border/50 h-9 text-xs"
@@ -162,7 +162,7 @@ export default function Funnels() {
         {columns.map((column) => (
           <div
             key={column.id}
-            className="min-w-[280px] max-w-[320px] flex-shrink-0"
+            className="min-w-[280px] w-full flex-1 flex-shrink-0 xl:min-w-[320px] 2xl:min-w-[360px]"
             onDragOver={(e) => e.preventDefault()}
             onDrop={() => handleDropOnColumn(column.id)}
           >

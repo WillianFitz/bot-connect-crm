@@ -270,18 +270,18 @@ export default function ProspectFunnels() {
   const totalWait = blocks.filter((b) => b.type === "wait").reduce((s, b) => s + (b.wait_seconds || 0), 0);
 
   return (
-    <div className="space-y-6 animate-slide-in max-w-5xl">
+    <div className="space-y-6 animate-slide-in w-full">
       {/* Hidden file input */}
       <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileUpload} />
 
       <div>
-        <h1 className="text-2xl font-bold text-foreground">Funil de Prospecção</h1>
+        <h1 className="text-2xl lg:text-3xl font-bold text-foreground">Funil de Prospecção</h1>
         <p className="text-sm text-muted-foreground">Crie sequências automáticas de mensagens para prospects.</p>
       </div>
 
       {/* Editor */}
       <div className="rounded-xl border border-border/50 bg-card overflow-hidden">
-        <div className="grid grid-cols-[190px_1fr] divide-x divide-border/50 min-h-[360px]">
+        <div className="grid grid-cols-[190px_1fr] xl:grid-cols-[220px_1fr] 2xl:grid-cols-[260px_1fr] divide-x divide-border/50 min-h-[360px]">
 
           {/* Palette */}
           <div className="p-4 space-y-2 bg-secondary/20">
@@ -571,8 +571,8 @@ export default function ProspectFunnels() {
           </Button>
         </div>
 
-        <div className="border border-border/30 rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="border border-border/30 rounded-lg overflow-x-auto">
+          <table className="w-full text-sm min-w-[480px]">
             <thead className="bg-secondary/50 border-b border-border/40">
               <tr>
                 {["Nome", "Status", "Blocos", "Versão", "Ações"].map((h) => (

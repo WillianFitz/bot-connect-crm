@@ -237,9 +237,9 @@ export default function Campaigns() {
   const campaigns = (campaignsQuery.data || []) as Campaign[];
 
   return (
-    <div className="space-y-6 animate-slide-in max-w-5xl">
+    <div className="space-y-6 animate-slide-in w-full">
       <div>
-        <h1 className="text-2xl font-bold text-foreground">Disparos</h1>
+        <h1 className="text-2xl lg:text-3xl font-bold text-foreground">Disparos</h1>
         <p className="text-sm text-muted-foreground">
           Configure campanhas de disparo em massa com regras de horário e
           intervalo.
@@ -330,8 +330,8 @@ export default function Campaigns() {
           </div>
         </div>
 
-        <div className="border border-border/30 rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="border border-border/30 rounded-lg overflow-x-auto">
+          <table className="w-full text-sm min-w-[640px]">
             <thead className="bg-secondary/50 border-b border-border/40">
               <tr>
                 {[

@@ -15,13 +15,13 @@ export default function Appointments() {
     <div className="space-y-6 animate-slide-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Agendamentos</h1>
+          <h1 className="text-2xl lg:text-3xl font-bold text-foreground">Agendamentos</h1>
           <p className="text-sm text-muted-foreground">Reuniões agendadas pelos agentes de IA</p>
         </div>
         <Button size="sm" className="gap-2"><Plus className="h-4 w-4" /> Novo Agendamento</Button>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
         {mockAppointments.map(apt => {
           const config = statusConfig[apt.status];
           const StatusIcon = config.icon;

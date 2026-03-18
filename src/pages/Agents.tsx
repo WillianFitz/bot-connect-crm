@@ -974,7 +974,7 @@ export default function Agents() {
           <div className="space-y-3 rounded-lg border border-dashed border-border/60 bg-background/30 p-4">
             <p className="text-xs font-semibold text-foreground">Nova mídia</p>
 
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               <div className="space-y-1">
                 <Label className="text-[11px] text-muted-foreground">Arquivo</Label>
                 <input
@@ -1042,7 +1042,7 @@ export default function Agents() {
               <p className="text-[11px] text-muted-foreground italic py-2">Nenhuma mídia cadastrada ainda.</p>
             )}
             {rawMediaList.length > 0 && (
-              <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3">
+              <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
                 {rawMediaList.map((m) => {
                   const v = buildMediaVisual(m);
                   return (
@@ -1111,7 +1111,7 @@ export default function Agents() {
         <h3 className="text-xs font-semibold text-foreground">
           Itens padrões (tokens para o prompt)
         </h3>
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">🗓️ Agenda</Label>
             <Input
@@ -1165,7 +1165,7 @@ export default function Agents() {
   );
 
   return (
-    <div className="space-y-6 animate-slide-in max-w-5xl">
+    <div className="space-y-6 animate-slide-in w-full">
       <div>
         <h1 className="text-2xl font-bold text-foreground">Agentes de IA</h1>
         <p className="text-sm text-muted-foreground">

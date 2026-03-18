@@ -70,13 +70,13 @@ export default function Dashboard() {
   return (
     <div className="space-y-8 animate-in fade-in duration-300">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight text-foreground">Dashboard</h1>
+        <h1 className="text-2xl lg:text-3xl font-bold tracking-tight text-foreground">Dashboard</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
           Visão geral dos seus leads e campanhas
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6">
         <StatCard
           title="Total de leads"
           value={stats.leadsTotal.toLocaleString("pt-BR")}
@@ -115,7 +115,7 @@ export default function Dashboard() {
         />
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 2xl:grid-cols-3">
         <div className="rounded-xl border border-border/50 bg-card p-5 shadow-sm">
           <h3 className="text-sm font-semibold text-foreground mb-4">
             Leads capturados (últimos 7 dias)
@@ -218,7 +218,7 @@ export default function Dashboard() {
 
       <div className="rounded-xl border border-border/50 bg-card p-5 shadow-sm">
         <h3 className="text-sm font-semibold text-foreground mb-3">Resumo rápido</h3>
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 text-sm">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 xl:grid-cols-6 text-sm">
           <div>
             <p className="text-muted-foreground">Campanhas</p>
             <p className="text-xl font-semibold text-foreground">

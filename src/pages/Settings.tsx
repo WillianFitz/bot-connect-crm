@@ -7,9 +7,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function SettingsPage() {
   return (
-    <div className="space-y-6 animate-slide-in max-w-3xl">
+    <div className="space-y-6 animate-slide-in w-full max-w-4xl xl:max-w-5xl 2xl:max-w-6xl">
       <div>
-        <h1 className="text-2xl font-bold text-foreground">Configurações</h1>
+        <h1 className="text-2xl lg:text-3xl font-bold text-foreground">Configurações</h1>
         <p className="text-sm text-muted-foreground">Gerencie as configurações do sistema</p>
       </div>
 

@@ -90,9 +90,9 @@ export default function Connections() {
   }
 
   return (
-    <div className="space-y-6 animate-slide-in max-w-3xl">
+    <div className="space-y-6 animate-slide-in w-full max-w-4xl xl:max-w-5xl 2xl:max-w-6xl">
       <div>
-        <h1 className="text-2xl font-bold text-foreground">Conexões</h1>
+        <h1 className="text-2xl lg:text-3xl font-bold text-foreground">Conexões</h1>
         <p className="text-sm text-muted-foreground">
           Gerencie a conexão do seu WhatsApp com o bot.
         </p>

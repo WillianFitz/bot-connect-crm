@@ -118,7 +118,7 @@ export default function Leads() {
     <div className="space-y-6 animate-slide-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Leads</h1>
+          <h1 className="text-2xl lg:text-3xl font-bold text-foreground">Leads</h1>
           <p className="text-sm text-muted-foreground">
             Organize e gerencie seus leads por pastas.
           </p>
@@ -219,7 +219,7 @@ export default function Leads() {
         </div>
       </div>
 
-      <div className="rounded-xl border border-border/50 bg-card overflow-hidden">
+      <div className="rounded-xl border border-border/50 bg-card overflow-hidden w-full">
         <div className="border-b border-border/50 bg-secondary/50 px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2 text-xs">
             <span className="font-semibold text-foreground">Pastas</span>
@@ -244,7 +244,8 @@ export default function Leads() {
           </div>
         </div>
 
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[600px]">
           <thead>
             <tr className="border-b border-border/50 bg-secondary/30">
               {["Empresa", "Telefone", "Criado", "Pasta", "Ações"].map((h) => (
@@ -317,6 +318,7 @@ export default function Leads() {
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* Dialog de edição de lead */}
