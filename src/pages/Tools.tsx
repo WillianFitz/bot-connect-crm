@@ -181,8 +181,8 @@ export default function Tools() {
                     Baixar extensão (já configurada para sua conta)
                   </Button>
                   <p className="text-xs text-muted-foreground">
-                    O ZIP virá com seu Tenant e Token já preenchidos. Assim os leads
-                    não vão para outro cliente. Descompacte e carregue em Extensões
+                    O ZIP virá com o ID da sua conta e Token já preenchidos. Assim os leads
+                    não vão para outra conta. Descompacte e carregue em Extensões
                     (modo desenvolvedor) no Chrome.
                   </p>
                 </div>
@@ -196,7 +196,7 @@ export default function Tools() {
 
                 <div className="space-y-2">
                   <label className="text-xs font-medium">
-                    Tenant ID (já incluso no download; só altere se instalou a extensão manualmente)
+                    ID da Conta (já incluso no download; só altere se instalou a extensão manualmente)
                   </label>
                   <div className="flex gap-2">
                     <Input
@@ -212,9 +212,9 @@ export default function Tools() {
                         if (tenantId) {
                           navigator.clipboard.writeText(tenantId);
                           toast({
-                            title: "Tenant ID copiado",
+                            title: "ID da Conta copiado",
                             description:
-                              "Cole o Tenant ID na configuração da extensão.",
+                              "Cole o ID da Conta na configuração da extensão.",
                           });
                         }
                       }}

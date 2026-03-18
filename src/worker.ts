@@ -293,7 +293,7 @@ async function handleAdminCreateTenantUser(request: Request, env: Env): Promise<
   }>(request);
 
   if (!body.tenantName || !body.username || !body.password || !body.document) {
-    return json({ error: "tenantName, username, password e document são obrigatórios" }, { status: 400 });
+    return json({ error: "Nome da conta, usuário, senha e documento são obrigatórios" }, { status: 400 });
   }
 
   const tenantId = body.tenantId && body.tenantId.trim().length > 0
