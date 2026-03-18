@@ -2165,31 +2165,39 @@ export default function Agents() {
             </div>
           </div>
 
-          {/* Mídias — sempre visíveis */}
+          {/* Mídias — sempre visíveis, por tipo */}
           <div className="space-y-2">
             <p className="text-[10px] text-muted-foreground/70 uppercase tracking-widest font-semibold">
               Mídias
             </p>
             <div className="flex flex-wrap gap-2">
-              {mediaVisuals.length > 0
-                ? mediaVisuals.map((v) => <ToolChip key={v.token} visual={v} />)
-                : PLACEHOLDER_MEDIA_VISUALS.map((p) => (
-                    <button
-                      key={p.mediaType}
-                      type="button"
-                      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium opacity-50 ${p.chipClass}`}
-                      onClick={() =>
-                        toast({
-                          title: "Nenhuma mídia enviada ainda",
-                          description: `Suba um arquivo de ${p.label.toLowerCase()} na seção "Mídias" abaixo para liberar este botão.`,
-                          variant: "destructive",
-                        })
-                      }
-                    >
-                      <span>{p.emoji}</span>
-                      <span>{p.label}</span>
-                    </button>
-                  ))}
+              {PLACEHOLDER_MEDIA_VISUALS.map((p) => {
+                const uploaded = mediaVisuals.filter((v) =>
+                  p.mediaType === "video" ? v.label.startsWith("Enviar Vídeo") :
+                  p.mediaType === "image" ? v.label.startsWith("Enviar Imagem") :
+                  v.label.startsWith("Enviar Áudio")
+                );
+                if (uploaded.length > 0) {
+                  return uploaded.map((v) => <ToolChip key={v.token} visual={v} />);
+                }
+                return (
+                  <button
+                    key={p.mediaType}
+                    type="button"
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium opacity-50 ${p.chipClass}`}
+                    onClick={() =>
+                      toast({
+                        title: `Nenhum ${p.label.toLowerCase()} enviado ainda`,
+                        description: `Suba um arquivo na seção "Mídias" abaixo para liberar este botão.`,
+                        variant: "destructive",
+                      })
+                    }
+                  >
+                    <span>{p.emoji}</span>
+                    <span>{p.label}</span>
+                  </button>
+                );
+              })}
             </div>
             {rawMediaList.length === 0 && (
               <p className="text-[11px] text-amber-400/80 flex items-center gap-1.5">
