@@ -298,7 +298,7 @@ async function handleAdminCreateTenantUser(request: Request, env: Env): Promise<
 
   const tenantId = body.tenantId && body.tenantId.trim().length > 0
     ? body.tenantId.trim()
-    : `tenant_${crypto.randomUUID()}`;
+    : `conta_${crypto.randomUUID()}`;
 
   await env.DB.prepare(
     "INSERT OR IGNORE INTO tenants (id, name) VALUES (?, ?)",
