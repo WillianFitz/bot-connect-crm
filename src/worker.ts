@@ -1403,6 +1403,8 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
         await storeLidMapping(env, tenantId, phone, result.remoteJid);
       }
       if (result.ok) {
+        // Salva mensagem da campanha no histórico do agente para que ele saiba o contexto ao receber resposta
+        await appendConversation(env, tenantId, phone, "assistant", text);
         await env.DB.prepare(
           `INSERT INTO campaign_sends (campaign_id, lead_id, status) VALUES (?, ?, 'sent')
            ON CONFLICT(campaign_id, lead_id) DO UPDATE SET status = 'sent', sent_at = datetime('now'), error_message = NULL`,
@@ -2374,6 +2376,60 @@ async function isRateLimited(env: Env, tenantId: string, phone: string): Promise
   return (result?.cnt ?? 0) >= 10;
 }
 
+/**
+ * Detecta se o pushName indica claramente um chatbot/sistema automatizado.
+ * Evita o agente conversar com outro bot.
+ */
+function isBotPushName(pushName: string): boolean {
+  if (!pushName) return false;
+  const lower = pushName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const botPatterns = [
+    /\bbot\b/, /\bchatbot\b/, /\bautomat/, /\bvirtual\b/, /\bassistant\b/,
+    /\bai\b/, /\b(i\.?a\.?)\b/, /\bsistema\b/, /\bsuporte.?auto/, /\bwhatsapp.?bot/,
+    /\brobô\b/, /\brobo\b/, /\bagente.?virtual/, /\bapplication\b/, /\bservice\b/,
+    /\bapi\b/, /\bwebhook\b/,
+  ];
+  return botPatterns.some((p) => p.test(lower));
+}
+
+/**
+ * Detecta padrão de resposta automatizada: muitas respostas em janela curta
+ * ou respostas instantâneas repetidas (< 4 segundos após mensagem do agente).
+ * Retorna true se suspeito de ser bot.
+ */
+async function isSuspectedBot(env: Env, tenantId: string, phone: string): Promise<boolean> {
+  // 5+ mensagens do contato nos últimos 20 segundos = resposta automatizada
+  const rapid = await env.DB.prepare(
+    `SELECT COUNT(*) as cnt FROM agent_conversations
+     WHERE tenant_id = ? AND phone = ? AND role = 'user'
+     AND created_at >= datetime('now', '-20 seconds')`,
+  ).bind(tenantId, phone).first<{ cnt: number }>();
+  if ((rapid?.cnt ?? 0) >= 5) return true;
+
+  // Última mensagem do agente + resposta do usuário chegou em < 4 segundos
+  const lastPair = await env.DB.prepare(
+    `SELECT
+       (SELECT created_at FROM agent_conversations WHERE tenant_id=? AND phone=? AND role='assistant' ORDER BY id DESC LIMIT 1) as last_bot,
+       (SELECT created_at FROM agent_conversations WHERE tenant_id=? AND phone=? AND role='user'      ORDER BY id DESC LIMIT 1) as last_user`,
+  ).bind(tenantId, phone, tenantId, phone).first<{ last_bot: string; last_user: string }>();
+
+  if (lastPair?.last_bot && lastPair?.last_user) {
+    const botTime = new Date(lastPair.last_bot + "Z").getTime();
+    const userTime = new Date(lastPair.last_user + "Z").getTime();
+    const diffSec = (userTime - botTime) / 1000;
+    // Resposta em < 4 segundos: suspeito. Confirmamos com 3 ocorrências via rate limit
+    if (diffSec >= 0 && diffSec < 4) {
+      const recentRapid = await env.DB.prepare(
+        `SELECT COUNT(*) as cnt FROM agent_conversations
+         WHERE tenant_id = ? AND phone = ? AND role = 'user'
+         AND created_at >= datetime('now', '-2 minutes')`,
+      ).bind(tenantId, phone).first<{ cnt: number }>();
+      if ((recentRapid?.cnt ?? 0) >= 3) return true;
+    }
+  }
+  return false;
+}
+
 /** Detecta pedido explícito de atendimento humano */
 function isHumanRequest(text: string): boolean {
   const lower = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -2553,6 +2609,23 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
   // Resolve contact name: 1º pushName do WhatsApp (limpo), 2º nome cadastrado nos leads
   const rawPushName: string = (data?.data?.pushName || data?.pushName || "").trim();
   const cleanedPushName = sanitizeContactName(rawPushName);
+
+  // Proteção anti-bot: pushName com palavras-chave de sistema automatizado
+  if (isBotPushName(rawPushName)) {
+    console.log(`[webhook] pushName indica chatbot ("${rawPushName}") — ignorando phone:${phone}`);
+    return json({ ok: true });
+  }
+
+  // Proteção anti-bot: padrão de respostas automatizadas (velocidade/frequência suspeita)
+  if (await isSuspectedBot(env, tenantId, phone)) {
+    console.log(`[webhook] padrão de chatbot detectado — pausando agente para phone:${phone}`);
+    await env.DB.prepare(
+      `INSERT INTO agent_pauses (tenant_id, phone, paused_until, pause_definitive)
+       VALUES (?, ?, NULL, 1)
+       ON CONFLICT(tenant_id, phone) DO UPDATE SET paused_until = NULL, pause_definitive = 1`,
+    ).bind(tenantId, phone).run();
+    return json({ ok: true });
+  }
 
   // Verifica se o lead já existe (pelo phone)
   const existingLead = await env.DB.prepare(
