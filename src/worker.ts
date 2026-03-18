@@ -2926,15 +2926,22 @@ function resolvePromptDefaults(
   prompt: string,
   agentRow: { agenda_link?: string | null; human_number?: string | null; human_group_id?: string | null },
   contactName?: string,
+  bookingUrl?: string,
 ): string {
   const name = sanitizeContactName(contactName || "");
   const resolved = prompt
     .replace(/\{\{agenda\}\}/g, agentRow.agenda_link || "[link da agenda não configurado]")
+    .replace(/\{\{link_agendamento\}\}/g, bookingUrl || agentRow.agenda_link || "[link da agenda não configurado]")
     .replace(/\{\{numero_humano\}\}/g, agentRow.human_number || "[número humano não configurado]")
     .replace(/\{\{grupo_humano\}\}/g, agentRow.human_group_id || "[grupo não configurado]")
     .replace(/\{\{contact_name\}\}/g, name || "desconhecido");
-  if (!name) return resolved;
-  return `[Contexto do sistema]\nNome do contato: ${name}\n\n${resolved}`;
+
+  const contextLines: string[] = [];
+  if (name) contextLines.push(`Nome do contato: ${name}`);
+  if (bookingUrl) contextLines.push(`Link de agendamento: ${bookingUrl}`);
+
+  if (contextLines.length === 0) return resolved;
+  return `[Contexto do sistema]\n${contextLines.join("\n")}\n\n${resolved}`;
 }
 
 interface MessageSegment {
@@ -3305,11 +3312,12 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
   }>();
 
   const rawPrompt = agent?.base_prompt || "Você é um agente de atendimento da LeadFlowAI. Responda de forma educada, clara e objetiva.";
+  const bookingUrl = `${getFrontendUrl(env)}/agendar/${tenantId}?phone=${encodeURIComponent(phone)}`;
   const systemPrompt = resolvePromptDefaults(rawPrompt, {
     agenda_link: agent?.agenda_link,
     human_number: agent?.human_number,
     human_group_id: agent?.human_group_id,
-  }, contactName);
+  }, contactName, bookingUrl);
 
   // Load conversation history (truncado para evitar context overflow)
   const rawHistory = await getConversationHistory(env, tenantId, phone, 20);
@@ -3368,6 +3376,9 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
       "Desculpe, estou com uma instabilidade técnica no momento. Um de nossos atendentes entrará em contato em breve 🙏");
     return json({ ok: true });
   }
+
+  // Substitui variáveis dinâmicas que o modelo possa ter escrito literalmente
+  aiResponse = aiResponse.replace(/\{\{link_agendamento\}\}/g, bookingUrl);
 
   // Save assistant response
   await appendConversation(env, tenantId, phone, "assistant", aiResponse);
