@@ -1843,6 +1843,157 @@ async function handleChangePassword(request: Request, env: Env) {
   return json({ ok: true });
 }
 
+async function handleAppointments(request: Request, env: Env, method: string, url: URL) {
+  const tenantId = await getTenantId(request, env);
+  await ensureTenant(env, tenantId);
+  const parts = url.pathname.split("/").filter(Boolean);
+  const id = parts[2] ? parseInt(parts[2]) : null;
+
+  if (method === "GET") {
+    const month = url.searchParams.get("month"); // YYYY-MM
+    let query = `SELECT a.id, a.lead_id, a.title, a.description, a.scheduled_at,
+      a.type, a.status, a.reminder_minutes, a.reminder_sent, a.created_at,
+      l.company as lead_name, l.phone as lead_phone
+      FROM appointments a
+      LEFT JOIN leads l ON l.id = a.lead_id
+      WHERE a.tenant_id = ?`;
+    const params: (string | number)[] = [tenantId];
+    if (month) {
+      query += ` AND strftime('%Y-%m', a.scheduled_at) = ?`;
+      params.push(month);
+    }
+    query += ` ORDER BY a.scheduled_at ASC`;
+    const res = await env.DB.prepare(query).bind(...params).all();
+    return json(res.results || []);
+  }
+
+  if (method === "POST") {
+    const body = await readBody<{
+      lead_id?: number | null;
+      title: string;
+      description?: string;
+      scheduled_at: string;
+      type?: string;
+      status?: string;
+      reminder_minutes?: number;
+    }>(request);
+    if (!body.title || !body.scheduled_at) {
+      return json({ error: "Título e data/hora são obrigatórios" }, { status: 400 });
+    }
+    const res = await env.DB.prepare(
+      `INSERT INTO appointments (tenant_id, lead_id, title, description, scheduled_at, type, status, reminder_minutes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
+    ).bind(
+      tenantId,
+      body.lead_id ?? null,
+      body.title,
+      body.description ?? null,
+      body.scheduled_at,
+      body.type ?? "meeting",
+      body.status ?? "pending",
+      body.reminder_minutes ?? 30,
+    ).first<{ id: number }>();
+    return json({ ok: true, id: res?.id });
+  }
+
+  if (method === "PUT" && id) {
+    const body = await readBody<{
+      lead_id?: number | null;
+      title?: string;
+      description?: string;
+      scheduled_at?: string;
+      type?: string;
+      status?: string;
+      reminder_minutes?: number;
+    }>(request);
+    const fields: string[] = [];
+    const vals: (string | number | null)[] = [];
+    if (body.title !== undefined) { fields.push("title = ?"); vals.push(body.title); }
+    if (body.description !== undefined) { fields.push("description = ?"); vals.push(body.description); }
+    if (body.scheduled_at !== undefined) { fields.push("scheduled_at = ?"); vals.push(body.scheduled_at); }
+    if (body.type !== undefined) { fields.push("type = ?"); vals.push(body.type); }
+    if (body.status !== undefined) { fields.push("status = ?"); vals.push(body.status); }
+    if (body.reminder_minutes !== undefined) { fields.push("reminder_minutes = ?"); vals.push(body.reminder_minutes); }
+    if ("lead_id" in body) { fields.push("lead_id = ?"); vals.push(body.lead_id ?? null); }
+    if (fields.length === 0) return json({ error: "Nenhum campo para atualizar" }, { status: 400 });
+    // Reset reminder_sent if date changed
+    if (body.scheduled_at !== undefined) { fields.push("reminder_sent = 0"); }
+    vals.push(id, tenantId);
+    await env.DB.prepare(
+      `UPDATE appointments SET ${fields.join(", ")} WHERE id = ? AND tenant_id = ?`
+    ).bind(...vals).run();
+    return json({ ok: true });
+  }
+
+  if (method === "DELETE" && id) {
+    await env.DB.prepare("DELETE FROM appointments WHERE id = ? AND tenant_id = ?")
+      .bind(id, tenantId).run();
+    return json({ ok: true });
+  }
+
+  return new Response("Method not allowed", { status: 405 });
+}
+
+async function processAppointmentReminders(env: Env, tenantId: string) {
+  // Find appointments with reminders due in the next minute
+  const due = await env.DB.prepare(`
+    SELECT a.id, a.title, a.scheduled_at, a.reminder_minutes,
+           l.phone as lead_phone, l.company as lead_name
+    FROM appointments a
+    LEFT JOIN leads l ON l.id = a.lead_id
+    WHERE a.tenant_id = ?
+      AND a.reminder_sent = 0
+      AND a.status IN ('pending', 'confirmed')
+      AND a.lead_id IS NOT NULL
+      AND datetime(a.scheduled_at, '-' || a.reminder_minutes || ' minutes') <= datetime('now')
+      AND datetime(a.scheduled_at) > datetime('now')
+  `).bind(tenantId).all<{ id: number; title: string; scheduled_at: string; reminder_minutes: number; lead_phone: string; lead_name: string }>();
+
+  const conn = await env.DB.prepare(
+    "SELECT base_url, api_key, instance_name FROM connections WHERE tenant_id = ? AND type = 'whatsapp' LIMIT 1"
+  ).bind(tenantId).first<{ base_url: string; api_key: string; instance_name: string }>();
+
+  for (const apt of (due.results || [])) {
+    // Mark sent first to avoid double-sends
+    await env.DB.prepare("UPDATE appointments SET reminder_sent = 1 WHERE id = ?").bind(apt.id).run();
+
+    if (conn && apt.lead_phone) {
+      try {
+        const date = new Date(apt.scheduled_at);
+        const timeStr = date.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+        const msg = `⏰ *Lembrete de compromisso*\n\n*${apt.title}*\nAgendado para: ${timeStr}\n\nTe esperamos! 😊`;
+        await fetch(`${conn.base_url}/message/sendText/${conn.instance_name}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "apikey": conn.api_key },
+          body: JSON.stringify({ number: apt.lead_phone, text: msg }),
+        });
+      } catch (e) {
+        console.error("[reminder] send error", e);
+      }
+    }
+  }
+}
+
+async function processScheduledCampaigns(env: Env, tenantId: string) {
+  const due = await env.DB.prepare(`
+    SELECT id FROM campaigns
+    WHERE tenant_id = ?
+      AND scheduled_at IS NOT NULL
+      AND scheduled_at <= datetime('now')
+      AND scheduled_dispatched = 0
+      AND status = 'active'
+  `).bind(tenantId).all<{ id: number }>();
+
+  for (const camp of (due.results || [])) {
+    await env.DB.prepare("UPDATE campaigns SET scheduled_dispatched = 1 WHERE id = ?").bind(camp.id).run();
+    try {
+      await handleCampaignRun(env, tenantId, false);
+    } catch (e) {
+      console.error("[scheduled-campaign] error", e);
+    }
+  }
+}
+
 async function handleCRM(request: Request, env: Env, method: string, url: URL) {
   const pathname = url.pathname;
   const parts = pathname.split("/").filter(Boolean);
@@ -3157,6 +3308,8 @@ export default {
         response = await handleAccountSettings(request, env, method);
       } else if (pathname === "/api/settings/password" && method === "PUT") {
         response = await handleChangePassword(request, env);
+      } else if (pathname.startsWith("/api/appointments")) {
+        response = await handleAppointments(request, env, method, urlForRouting);
       } else if (pathname.startsWith("/api/connections/whatsapp")) {
         response = await handleWhatsappConnection(request, env, method, urlForRouting);
       } else if (pathname.startsWith("/api/lead-folders")) {
@@ -3215,6 +3368,16 @@ export default {
         await processFunnelExecutions(env, row.id);
       } catch (err) {
         console.error("[cron] funnel executions for tenant", row.id, err);
+      }
+      try {
+        await processAppointmentReminders(env, row.id);
+      } catch (err) {
+        console.error("[cron] appointment reminders for tenant", row.id, err);
+      }
+      try {
+        await processScheduledCampaigns(env, row.id);
+      } catch (err) {
+        console.error("[cron] scheduled campaigns for tenant", row.id, err);
       }
     }
     // Limpeza periódica: remove conversas com mais de 90 dias (roda uma vez por cron tick, fora do loop de tenants)

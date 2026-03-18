@@ -235,6 +235,45 @@ export const api = {
       totalErrors: number;
     }>("/dashboard/stats"),
 
+  // Appointments
+  getAppointments: (month?: string) => {
+    const qs = month ? `?month=${month}` : "";
+    return request<Array<{
+      id: number;
+      lead_id: number | null;
+      title: string;
+      description: string | null;
+      scheduled_at: string;
+      type: string;
+      status: string;
+      reminder_minutes: number;
+      reminder_sent: number;
+      lead_name: string | null;
+      lead_phone: string | null;
+      created_at: string;
+    }>>(`/appointments${qs}`);
+  },
+  createAppointment: (payload: {
+    lead_id?: number | null;
+    title: string;
+    description?: string;
+    scheduled_at: string;
+    type?: string;
+    status?: string;
+    reminder_minutes?: number;
+  }) => request<{ ok: true; id: number }>("/appointments", { method: "POST", body: JSON.stringify(payload) }),
+  updateAppointment: (id: number, payload: {
+    lead_id?: number | null;
+    title?: string;
+    description?: string;
+    scheduled_at?: string;
+    type?: string;
+    status?: string;
+    reminder_minutes?: number;
+  }) => request<{ ok: true }>(`/appointments/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
+  deleteAppointment: (id: number) =>
+    request<{ ok: true }>(`/appointments/${id}`, { method: "DELETE" }),
+
   getAgentMedia: () =>
     request<
       Array<{
