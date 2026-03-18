@@ -50,9 +50,9 @@ export default function Admin() {
     <div className="space-y-6 animate-slide-in max-w-5xl mx-auto py-8">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Admin - Clientes</h1>
+          <h1 className="text-2xl font-bold text-foreground">Admin — Contas</h1>
           <p className="text-sm text-muted-foreground">
-            Gerencie todas as empresas, usuários e acessos do seu SaaS.
+            Gerencie todas as contas, usuários e acessos do LeadFlowAI.
           </p>
         </div>
       </div>
@@ -60,17 +60,17 @@ export default function Admin() {
       <div className="grid gap-6 md:grid-cols-[2fr,1.2fr]">
         <div className="rounded-xl border border-border/50 bg-card p-5">
           <h2 className="text-sm font-semibold text-foreground mb-4">
-            Clientes cadastrados
+            Contas cadastradas
           </h2>
           <div className="border border-border/30 rounded-lg overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-secondary/50 border-b border-border/40">
                 <tr>
                   <th className="px-3 py-2 text-left text-[11px] uppercase text-muted-foreground tracking-wide">
-                    Empresa
+                    Conta
                   </th>
                   <th className="px-3 py-2 text-left text-[11px] uppercase text-muted-foreground tracking-wide">
-                    Tenant ID
+                    ID da Conta
                   </th>
                   <th className="px-3 py-2 text-left text-[11px] uppercase text-muted-foreground tracking-wide">
                     Usuário
@@ -122,7 +122,7 @@ export default function Admin() {
                       colSpan={5}
                       className="px-3 py-6 text-center text-xs text-muted-foreground"
                     >
-                      Nenhum cliente cadastrado ainda.
+                      Nenhuma conta cadastrada ainda.
                     </td>
                   </tr>
                 )}
@@ -136,18 +136,18 @@ export default function Admin() {
           className="rounded-xl border border-border/50 bg-card p-5 space-y-4"
         >
           <h2 className="text-sm font-semibold text-foreground">
-            Novo cliente
+            Nova conta
           </h2>
           <div className="grid gap-3">
             <div>
               <Label className="text-xs text-muted-foreground">
-                Nome da empresa
+                Nome da conta
               </Label>
               <Input
                 className="mt-1 bg-secondary border-border/50"
                 value={tenantName}
                 onChange={(e) => setTenantName(e.target.value)}
-                placeholder="Empresa XPTO"
+                placeholder="Ex: Empresa XPTO"
                 required
               />
             </div>
@@ -192,7 +192,7 @@ export default function Admin() {
             className="w-full mt-2"
             disabled={mutation.isPending}
           >
-            {mutation.isPending ? "Salvando..." : "Criar cliente"}
+            {mutation.isPending ? "Criando..." : "Criar conta"}
           </Button>
 
           {mutation.isError && (
