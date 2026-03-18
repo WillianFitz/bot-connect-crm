@@ -1,12 +1,17 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Save, Bell, Key, Building2, Loader2, Check } from "lucide-react";
+import { Save, Bell, Key, Building2, Loader2, Check, Calendar, Copy, ExternalLink, Link2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
+
+const DAY_LABELS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
 export default function SettingsPage() {
   const { toast } = useToast();
@@ -93,10 +98,11 @@ export default function SettingsPage() {
       </div>
 
       <Tabs defaultValue="account" className="space-y-4">
-        <TabsList className="bg-secondary border border-border/50">
+        <TabsList className="bg-secondary border border-border/50 flex-wrap h-auto gap-0.5">
           <TabsTrigger value="account">Minha Empresa</TabsTrigger>
           <TabsTrigger value="security">Segurança</TabsTrigger>
           <TabsTrigger value="notifications">Notificações</TabsTrigger>
+          <TabsTrigger value="booking">Agenda Pública</TabsTrigger>
         </TabsList>
 
         {/* ── Minha Empresa ── */}
@@ -258,7 +264,197 @@ export default function SettingsPage() {
             )}
           </div>
         </TabsContent>
+
+        {/* ── Agenda Pública ── */}
+        <BookingSettingsTab />
       </Tabs>
     </div>
+  );
+}
+
+function BookingSettingsTab() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const query = useQuery({ queryKey: ["availability-settings"], queryFn: api.getAvailabilitySettings });
+
+  const [enabled, setEnabled] = useState(false);
+  const [title, setTitle] = useState("Agende uma conversa");
+  const [description, setDescription] = useState("Escolha um horário disponível para conversarmos.");
+  const [days, setDays] = useState<number[]>([1, 2, 3, 4, 5]);
+  const [start, setStart] = useState("09:00");
+  const [end, setEnd] = useState("18:00");
+  const [slotMin, setSlotMin] = useState("30");
+  const [advanceDays, setAdvanceDays] = useState("30");
+  const [minAdvanceH, setMinAdvanceH] = useState("1");
+  const [bookingUrl, setBookingUrl] = useState("");
+
+  useEffect(() => {
+    if (query.data) {
+      setEnabled(query.data.enabled);
+      setTitle(query.data.title);
+      setDescription(query.data.description);
+      setDays(query.data.days);
+      setStart(query.data.start);
+      setEnd(query.data.end);
+      setSlotMin(String(query.data.slot_min));
+      setAdvanceDays(String(query.data.advance_days));
+      setMinAdvanceH(String(query.data.min_advance_h));
+      setBookingUrl(query.data.booking_url);
+    }
+  }, [query.data]);
+
+  const saveMut = useMutation({
+    mutationFn: () => api.updateAvailabilitySettings({
+      enabled, title, description, days,
+      start, end,
+      slot_min: parseInt(slotMin),
+      advance_days: parseInt(advanceDays),
+      min_advance_h: parseInt(minAdvanceH),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["availability-settings"] });
+      toast({ title: "Agenda pública salva!" });
+    },
+    onError: (e: Error) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
+  });
+
+  function toggleDay(d: number) {
+    setDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d]);
+  }
+
+  function copyLink() {
+    navigator.clipboard.writeText(bookingUrl);
+    toast({ title: "Link copiado!", description: "Cole no disparo com {{link_agendamento}} ou compartilhe diretamente." });
+  }
+
+  return (
+    <TabsContent value="booking" className="space-y-4">
+      {/* Link box */}
+      {bookingUrl && (
+        <div className="rounded-xl border border-border/50 bg-card p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+            <Link2 className="h-4 w-4 text-primary" /> Seu link de agendamento
+          </h3>
+          <div className="flex gap-2">
+            <Input readOnly value={bookingUrl} className="bg-secondary border-border/50 text-xs font-mono" />
+            <Button variant="outline" size="icon" className="shrink-0 border-border/50" onClick={copyLink}>
+              <Copy className="h-4 w-4" />
+            </Button>
+            <Button variant="outline" size="icon" className="shrink-0 border-border/50" onClick={() => window.open(bookingUrl, "_blank")}>
+              <ExternalLink className="h-4 w-4" />
+            </Button>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Use <code className="bg-secondary px-1 rounded">{"{{link_agendamento}}"}</code> nos textos dos funis e campanhas para inserir este link automaticamente com o telefone do lead.
+          </p>
+        </div>
+      )}
+
+      <div className="rounded-xl border border-border/50 bg-card p-5 space-y-5">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+            <Calendar className="h-4 w-4 text-primary" /> Configurações da Agenda
+          </h3>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">{enabled ? "Ativa" : "Inativa"}</span>
+            <Switch checked={enabled} onCheckedChange={setEnabled} />
+          </div>
+        </div>
+
+        {query.isLoading ? (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+            <Loader2 className="h-4 w-4 animate-spin" /> Carregando...
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <Label className="text-xs text-muted-foreground">Título da página</Label>
+                <Input className="mt-1 bg-secondary border-border/50" value={title}
+                  onChange={e => setTitle(e.target.value)} placeholder="Agende uma conversa" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-xs text-muted-foreground">Início</Label>
+                  <Input type="time" className="mt-1 bg-secondary border-border/50" value={start}
+                    onChange={e => setStart(e.target.value)} />
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Fim</Label>
+                  <Input type="time" className="mt-1 bg-secondary border-border/50" value={end}
+                    onChange={e => setEnd(e.target.value)} />
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <Label className="text-xs text-muted-foreground">Descrição</Label>
+              <Textarea className="mt-1 bg-secondary border-border/50 resize-none text-sm" rows={2}
+                value={description} onChange={e => setDescription(e.target.value)} />
+            </div>
+
+            <div>
+              <Label className="text-xs text-muted-foreground mb-2 block">Dias disponíveis</Label>
+              <div className="flex gap-1.5 flex-wrap">
+                {DAY_LABELS.map((d, i) => (
+                  <button key={i} onClick={() => toggleDay(i)}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-medium border transition-colors
+                      ${days.includes(i)
+                        ? "border-transparent text-white"
+                        : "border-border/50 text-muted-foreground hover:bg-secondary"
+                      }`}
+                    style={days.includes(i) ? { background: "linear-gradient(135deg, hsl(192 91% 52%), hsl(265 80% 60%))" } : undefined}
+                  >
+                    {d}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <Label className="text-xs text-muted-foreground">Duração do slot</Label>
+                <Select value={slotMin} onValueChange={setSlotMin}>
+                  <SelectTrigger className="mt-1 bg-secondary border-border/50 h-9 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {["15","30","45","60","90","120"].map(v => (
+                      <SelectItem key={v} value={v}>{v} min</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">Antecedência mín.</Label>
+                <Select value={minAdvanceH} onValueChange={setMinAdvanceH}>
+                  <SelectTrigger className="mt-1 bg-secondary border-border/50 h-9 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {[["0","Sem mínimo"],["1","1 hora"],["2","2 horas"],["4","4 horas"],["24","1 dia"],["48","2 dias"]].map(([v, l]) => (
+                      <SelectItem key={v} value={v}>{l}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">Agenda até</Label>
+                <Select value={advanceDays} onValueChange={setAdvanceDays}>
+                  <SelectTrigger className="mt-1 bg-secondary border-border/50 h-9 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {[["7","7 dias"],["14","14 dias"],["30","30 dias"],["60","60 dias"],["90","90 dias"]].map(([v, l]) => (
+                      <SelectItem key={v} value={v}>{l}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <Button size="sm" className="gap-2" disabled={saveMut.isPending} onClick={() => saveMut.mutate()}>
+              {saveMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              Salvar configurações
+            </Button>
+          </div>
+        )}
+      </div>
+    </TabsContent>
   );
 }

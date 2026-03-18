@@ -1432,6 +1432,8 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
       } catch {
         text = "Olá! Tudo bem?";
       }
+      const bookingLink = `${getFrontendUrl(env)}/agendar/${tenantId}?phone=${encodeURIComponent(phone)}`;
+      text = text.replace(/\{\{link_agendamento\}\}/g, bookingLink);
 
       const result = await sendWhatsAppMessage(env, tenantId, phone, text);
       // Se o Evolution retornou um @lid, armazena o mapeamento phone → lid
@@ -1815,6 +1817,173 @@ async function handleAccountSettings(request: Request, env: Env, method: string)
     const name = (body.tenantName ?? "").trim();
     if (!name) return json({ error: "Nome da conta é obrigatório" }, { status: 400 });
     await env.DB.prepare("UPDATE tenants SET name = ? WHERE id = ?").bind(name, tenantId).run();
+    return json({ ok: true });
+  }
+
+  return new Response("Method not allowed", { status: 405 });
+}
+
+// ── Booking / Availability ─────────────────────────────────────────────────────
+
+function getFrontendUrl(env: Env): string {
+  const origins = (env.ALLOWED_ORIGINS || "").split(",");
+  return origins.find(o => o.trim().startsWith("https://") && !o.includes("localhost"))?.trim()
+    || "https://bot-connect-crm.pages.dev";
+}
+
+interface AvailabilitySettings {
+  enabled: boolean;
+  title: string;
+  description: string;
+  days: number[];
+  start: string;
+  end: string;
+  slot_min: number;
+  advance_days: number;
+  min_advance_h: number;
+}
+
+const DEFAULT_AVAILABILITY: AvailabilitySettings = {
+  enabled: false,
+  title: "Agende uma conversa",
+  description: "Escolha um horário disponível para conversarmos.",
+  days: [1, 2, 3, 4, 5],
+  start: "09:00",
+  end: "18:00",
+  slot_min: 30,
+  advance_days: 30,
+  min_advance_h: 1,
+};
+
+async function getAvailabilitySettings(env: Env, tenantId: string): Promise<AvailabilitySettings> {
+  const row = await env.DB.prepare(
+    "SELECT value FROM tenant_settings WHERE tenant_id = ? AND key = 'availability'"
+  ).bind(tenantId).first<{ value: string }>();
+  if (!row?.value) return DEFAULT_AVAILABILITY;
+  try { return { ...DEFAULT_AVAILABILITY, ...JSON.parse(row.value) }; }
+  catch { return DEFAULT_AVAILABILITY; }
+}
+
+async function handleAvailabilitySettings(request: Request, env: Env, method: string) {
+  const tenantId = await getTenantId(request, env);
+  await ensureTenant(env, tenantId);
+
+  if (method === "GET") {
+    const settings = await getAvailabilitySettings(env, tenantId);
+    const bookingUrl = `${getFrontendUrl(env)}/agendar/${tenantId}`;
+    return json({ ...settings, booking_url: bookingUrl });
+  }
+
+  if (method === "PUT") {
+    const body = await readBody<Partial<AvailabilitySettings>>(request);
+    const current = await getAvailabilitySettings(env, tenantId);
+    const updated = { ...current, ...body };
+    await env.DB.prepare(
+      "INSERT OR REPLACE INTO tenant_settings (tenant_id, key, value) VALUES (?, 'availability', ?)"
+    ).bind(tenantId, JSON.stringify(updated)).run();
+    return json({ ok: true });
+  }
+
+  return new Response("Method not allowed", { status: 405 });
+}
+
+async function handlePublicBooking(request: Request, env: Env, method: string, url: URL, tenantId: string) {
+  const availability = await getAvailabilitySettings(env, tenantId);
+
+  if (method === "GET") {
+    const dateStr = url.searchParams.get("date");
+    if (!dateStr) return json({ availability, slots: [] });
+
+    if (!availability.enabled) return json({ availability, slots: [] });
+
+    const date = new Date(dateStr + "T12:00:00");
+    const dayOfWeek = date.getDay();
+    if (!availability.days.includes(dayOfWeek)) return json({ availability, slots: [] });
+
+    // Generate slots
+    const [startH, startM] = availability.start.split(":").map(Number);
+    const [endH, endM] = availability.end.split(":").map(Number);
+    const startMins = (startH ?? 9) * 60 + (startM ?? 0);
+    const endMins = (endH ?? 18) * 60 + (endM ?? 0);
+    const allSlots: string[] = [];
+    for (let m = startMins; m + availability.slot_min <= endMins; m += availability.slot_min) {
+      allSlots.push(`${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`);
+    }
+
+    // Filter past + min advance
+    const now = Date.now();
+    const minAdvanceMs = (availability.min_advance_h ?? 1) * 3600000;
+    const filtered = allSlots.filter(slot => {
+      const slotTs = new Date(`${dateStr}T${slot}:00`).getTime();
+      return slotTs - now >= minAdvanceMs;
+    });
+
+    // Filter booked
+    const booked = await env.DB.prepare(
+      `SELECT scheduled_at FROM appointments WHERE tenant_id = ? AND strftime('%Y-%m-%d', scheduled_at) = ? AND status != 'cancelled'`
+    ).bind(tenantId, dateStr).all<{ scheduled_at: string }>();
+    const bookedSet = new Set((booked.results || []).map(r => {
+      const d = new Date(r.scheduled_at.replace(" ", "T"));
+      return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    }));
+
+    return json({ availability, slots: filtered.filter(s => !bookedSet.has(s)) });
+  }
+
+  if (method === "POST") {
+    if (!availability.enabled) return json({ error: "Agenda não disponível" }, { status: 404 });
+
+    const body = await readBody<{ date: string; time: string; name: string; phone: string }>(request);
+    if (!body.date || !body.time || !body.name || !body.phone)
+      return json({ error: "Preencha todos os campos" }, { status: 400 });
+
+    const scheduled_at = `${body.date}T${body.time}:00`;
+    const phone = normalizeBrazilNumber(body.phone) || body.phone;
+
+    // Check slot still available
+    const conflict = await env.DB.prepare(
+      `SELECT id FROM appointments WHERE tenant_id = ? AND scheduled_at = ? AND status != 'cancelled'`
+    ).bind(tenantId, scheduled_at).first();
+    if (conflict) return json({ error: "Este horário já foi reservado. Por favor, escolha outro." }, { status: 409 });
+
+    // Find or create lead
+    let leadId: number | null = null;
+    const existing = await env.DB.prepare(
+      "SELECT id FROM leads WHERE tenant_id = ? AND phone = ? LIMIT 1"
+    ).bind(tenantId, phone).first<{ id: number }>();
+    if (existing) {
+      leadId = existing.id;
+    } else {
+      const newLead = await env.DB.prepare(
+        "INSERT INTO leads (tenant_id, company, phone) VALUES (?, ?, ?) RETURNING id"
+      ).bind(tenantId, body.name, phone).first<{ id: number }>();
+      leadId = newLead?.id ?? null;
+    }
+
+    await env.DB.prepare(
+      `INSERT INTO appointments (tenant_id, lead_id, title, description, scheduled_at, type, status, reminder_minutes)
+       VALUES (?, ?, ?, ?, ?, 'meeting', 'confirmed', 30)`
+    ).bind(tenantId, leadId, availability.title || "Reunião", `Agendado por ${body.name}`, scheduled_at).run();
+
+    // Send WhatsApp confirmation
+    const conn = await env.DB.prepare(
+      "SELECT base_url, api_key, instance_name FROM connections WHERE tenant_id = ? AND type = 'whatsapp' LIMIT 1"
+    ).bind(tenantId).first<{ base_url: string; api_key: string; instance_name: string }>();
+    if (conn && phone) {
+      try {
+        const d = new Date(scheduled_at);
+        const timeStr = d.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+        const msg = `✅ *Agendamento confirmado!*\n\nOlá, ${body.name}! 😊\n\nSeu agendamento foi confirmado para:\n📅 *${timeStr}*\n\nEm caso de dúvidas, entre em contato. Até lá! 🚀`;
+        await fetch(`${conn.base_url}/message/sendText/${conn.instance_name}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "apikey": conn.api_key },
+          body: JSON.stringify({ number: phone, text: msg }),
+        });
+      } catch (e) {
+        console.error("[booking] whatsapp confirm error", e);
+      }
+    }
+
     return json({ ok: true });
   }
 
@@ -2295,9 +2464,11 @@ async function processFunnelExecutions(env: Env, tenantId: string): Promise<void
 
       // For message steps: send then advance
       if (step.type === "text" && step.content) {
+        const bookingLink = `${getFrontendUrl(env)}/agendar/${tenantId}${phone ? `?phone=${encodeURIComponent(phone)}` : ""}`;
         const text = step.content
           .replace(/\{\{nome\}\}/g, lead.company || "")
-          .replace(/\{\{empresa\}\}/g, lead.company || "");
+          .replace(/\{\{empresa\}\}/g, lead.company || "")
+          .replace(/\{\{link_agendamento\}\}/g, bookingLink);
         if (phone) {
           const result = await sendWhatsAppMessage(env, tenantId, phone, text);
           if (result.ok && result.remoteJid?.endsWith("@lid")) {
@@ -3275,7 +3446,8 @@ export default {
 
     const allowedOrigins = (env.ALLOWED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean);
     const origin = request.headers.get("Origin") || "";
-    const allowOrigin = allowedOrigins.includes(origin) ? origin : null;
+    const isPublicRoute = pathname.startsWith("/api/public/");
+    const allowOrigin = isPublicRoute ? "*" : (allowedOrigins.includes(origin) ? origin : null);
     if (method === "OPTIONS") {
       const headers: Record<string, string> = {
         "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
@@ -3308,6 +3480,14 @@ export default {
         response = await handleAccountSettings(request, env, method);
       } else if (pathname === "/api/settings/password" && method === "PUT") {
         response = await handleChangePassword(request, env);
+      } else if (pathname === "/api/settings/availability" && (method === "GET" || method === "PUT")) {
+        response = await handleAvailabilitySettings(request, env, method);
+      } else if (pathname.startsWith("/api/public/slots/")) {
+        const pubTenantId = pathname.split("/")[4] ?? "";
+        response = await handlePublicBooking(request, env, "GET", urlForRouting, pubTenantId);
+      } else if (pathname.startsWith("/api/public/book/") && method === "POST") {
+        const pubTenantId = pathname.split("/")[4] ?? "";
+        response = await handlePublicBooking(request, env, "POST", urlForRouting, pubTenantId);
       } else if (pathname.startsWith("/api/appointments")) {
         response = await handleAppointments(request, env, method, urlForRouting);
       } else if (pathname.startsWith("/api/connections/whatsapp")) {

@@ -170,6 +170,20 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  // Booking / Availability
+  getAvailabilitySettings: () =>
+    request<{
+      enabled: boolean; title: string; description: string;
+      days: number[]; start: string; end: string;
+      slot_min: number; advance_days: number; min_advance_h: number;
+      booking_url: string;
+    }>("/settings/availability"),
+  updateAvailabilitySettings: (payload: {
+    enabled?: boolean; title?: string; description?: string;
+    days?: number[]; start?: string; end?: string;
+    slot_min?: number; advance_days?: number; min_advance_h?: number;
+  }) => request<{ ok: true }>("/settings/availability", { method: "PUT", body: JSON.stringify(payload) }),
+
   getAccountSettings: () =>
     request<{ tenantName: string; username: string }>("/settings/account"),
   updateAccountSettings: (payload: { tenantName: string }) =>

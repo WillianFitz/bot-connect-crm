@@ -18,6 +18,7 @@ import ClientLogin from "./pages/ClientLogin";
 import AdminLogin from "./pages/AdminLogin";
 import Tools from "./pages/Tools";
 import ProspectFunnels from "./pages/ProspectFunnels";
+import BookingPage from "./pages/BookingPage";
 
 const queryClient = new QueryClient();
 
@@ -78,6 +79,9 @@ const App = () => (
           {/* Admin (fora do layout do app dos clientes) */}
           <Route path="/admin-login" element={<AdminLogin />} />
           <Route path="/admin" element={<AdminRoute />} />
+
+          {/* Página pública de agendamento — sem autenticação */}
+          <Route path="/agendar/:tenantId" element={<BookingPage />} />
 
           {/* App dos clientes, com sidebar/layout */}
           <Route
