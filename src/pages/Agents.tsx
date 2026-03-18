@@ -1896,16 +1896,10 @@ export default function Agents() {
   const clearMemoryMutation = useMutation({
     mutationFn: (agentId: "disparo" | "atendimento" | "agendamento" | "all") =>
       api.clearAgentMemory(agentId),
-    onSuccess: (_, agentId) => {
-      const labels: Record<string, string> = {
-        disparo: "Disparo",
-        atendimento: "Atendimento",
-        agendamento: "Agendamento",
-        all: "todos os agentes",
-      };
+    onSuccess: () => {
       toast({
         title: "Memória limpa",
-        description: `Histórico de conversas do agente de ${labels[agentId] ?? agentId} foi apagado.`,
+        description: "Todo o histórico de conversas foi apagado. Os agentes começarão do zero.",
       });
     },
   });

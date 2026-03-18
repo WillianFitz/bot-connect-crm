@@ -956,18 +956,12 @@ async function handleAgents(request: Request, env: Env, method: string, url: URL
   if (parts.length === 4 && parts[3] === "clear-memory") {
     const agentId = parts[2]; // disparo | atendimento | agendamento
     if (method === "POST") {
-      if (agentId === "all") {
-        // Clear everything for this tenant
-        await env.DB.batch([
-          env.DB.prepare("DELETE FROM agent_conversations WHERE tenant_id = ?").bind(tenantId),
-          env.DB.prepare("DELETE FROM agent_pauses WHERE tenant_id = ?").bind(tenantId),
-        ]);
-      } else {
-        await env.DB.batch([
-          env.DB.prepare("DELETE FROM agent_conversations WHERE tenant_id = ? AND agent_id = ?").bind(tenantId, agentId),
-          env.DB.prepare("DELETE FROM agent_pauses WHERE tenant_id = ?").bind(tenantId),
-        ]);
-      }
+      // All conversations are stored under agent_id='atendimento' (shared timeline per lead).
+      // Clearing any agent clears the full conversation history for this tenant.
+      await env.DB.batch([
+        env.DB.prepare("DELETE FROM agent_conversations WHERE tenant_id = ?").bind(tenantId),
+        env.DB.prepare("DELETE FROM agent_pauses WHERE tenant_id = ?").bind(tenantId),
+      ]);
       return json({ ok: true, agent: agentId });
     }
     return new Response("Method not allowed", { status: 405 });
@@ -1474,7 +1468,7 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
       }
       if (result.ok) {
         // Salva mensagem da campanha no histórico do agente para que ele saiba o contexto ao receber resposta
-        await appendConversation(env, tenantId, phone, "assistant", text, "disparo");
+        await appendConversation(env, tenantId, phone, "assistant", text, "atendimento");
         await env.DB.prepare(
           `INSERT INTO campaign_sends (campaign_id, lead_id, status) VALUES (?, ?, 'sent')
            ON CONFLICT(campaign_id, lead_id) DO UPDATE SET status = 'sent', sent_at = datetime('now'), error_message = NULL`,
@@ -2500,7 +2494,7 @@ async function processFunnelExecutions(env: Env, tenantId: string): Promise<void
             await storeLidMapping(env, tenantId, phone, result.remoteJid);
           }
           if (result.ok) {
-            await appendConversation(env, tenantId, phone, "assistant", text, "agendamento");
+            await appendConversation(env, tenantId, phone, "assistant", text, "atendimento");
           }
         }
       } else if ((step.type === "image" || step.type === "video" || step.type === "audio" || step.type === "pdf") && step.content) {
