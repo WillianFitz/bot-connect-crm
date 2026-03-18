@@ -103,7 +103,7 @@ async function handleAdminLogin(request: Request, env: Env): Promise<Response> {
   return json({ ok: true, token });
 }
 
-const PBKDF2_ITERATIONS = 120000;
+const PBKDF2_ITERATIONS = 10000;
 const SALT_LEN = 16;
 
 async function hashPassword(password: string): Promise<string> {
