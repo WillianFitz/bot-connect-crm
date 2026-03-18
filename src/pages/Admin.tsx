@@ -8,7 +8,6 @@ import { Trash2 } from "lucide-react";
 
 export default function Admin() {
   const [tenantName, setTenantName] = useState("");
-  const [tenantId, setTenantId] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [document, setDocument] = useState("");
@@ -24,7 +23,6 @@ export default function Admin() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["admin-users"] });
       setTenantName("");
-      setTenantId("");
       setUsername("");
       setPassword("");
       setDocument("");
@@ -41,7 +39,6 @@ export default function Admin() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     mutation.mutate({
-      tenantId: tenantId || undefined,
       tenantName,
       username,
       password,
@@ -152,17 +149,6 @@ export default function Admin() {
                 onChange={(e) => setTenantName(e.target.value)}
                 placeholder="Empresa XPTO"
                 required
-              />
-            </div>
-            <div>
-              <Label className="text-xs text-muted-foreground">
-                ID da empresa (opcional)
-              </Label>
-              <Input
-                className="mt-1 bg-secondary border-border/50"
-                value={tenantId}
-                onChange={(e) => setTenantId(e.target.value)}
-                placeholder="Deixe em branco para gerar automático"
               />
             </div>
             <div>

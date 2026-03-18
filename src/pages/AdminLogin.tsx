@@ -30,6 +30,7 @@ export default function AdminLogin() {
       const data = (await res.json()) as { ok: boolean; token?: string };
       if (data.ok && data.token) {
         localStorage.setItem("admin_token", data.token);
+        localStorage.setItem("admin_logged", "1");
         navigate("/admin");
       } else {
         setError("Falha na autenticação. Verifique se JWT_SECRET está configurado.");
