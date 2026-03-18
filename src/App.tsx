@@ -17,6 +17,7 @@ import Admin from "./pages/Admin";
 import ClientLogin from "./pages/ClientLogin";
 import AdminLogin from "./pages/AdminLogin";
 import Tools from "./pages/Tools";
+import ProspectFunnels from "./pages/ProspectFunnels";
 
 const queryClient = new QueryClient();
 
@@ -53,6 +54,7 @@ function ProtectedAppLayout() {
         <Route path="crm" element={<Funnels />} />
         <Route path="tools" element={<Tools />} />
         <Route path="campaigns" element={<Campaigns />} />
+        <Route path="funnels" element={<ProspectFunnels />} />
         <Route path="agents" element={<Agents />} />
         <Route path="appointments" element={<Appointments />} />
         <Route path="settings" element={<SettingsPage />} />

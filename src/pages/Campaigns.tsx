@@ -24,6 +24,12 @@ import {
 import { api } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 
+interface FunnelOption {
+  id: number;
+  name: string;
+  status: string;
+}
+
 interface Campaign {
   id: number;
   name: string;
@@ -37,6 +43,7 @@ interface Campaign {
   sent: number;
   errors: number;
   no_whatsapp: number;
+  funnel_id: number | null;
 }
 
 const weekDays = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
@@ -55,6 +62,13 @@ export default function Campaigns() {
   const [timeFrom, setTimeFrom] = useState("09:00");
   const [timeTo, setTimeTo] = useState("18:00");
   const [blockedDays, setBlockedDays] = useState<string[]>([]);
+  const [selectedFunnelId, setSelectedFunnelId] = useState<number | null>(null);
+
+  const funnelsQuery = useQuery({
+    queryKey: ["funnels"],
+    queryFn: api.getFunnels,
+  });
+  const funnelOptions = (funnelsQuery.data ?? []) as FunnelOption[];
 
   const settingsQuery = useQuery({
     queryKey: ["settings"],
@@ -93,6 +107,7 @@ export default function Campaigns() {
       setTimeFrom("09:00");
       setTimeTo("18:00");
       setBlockedDays([]);
+      setSelectedFunnelId(null);
       setShowCreateDialog(false);
       toast({ title: "Campanha criada." });
     },
@@ -184,6 +199,7 @@ export default function Campaigns() {
       time_from: timeFrom,
       time_to: timeTo,
       days_blocked: blockedDays,
+      funnel_id: selectedFunnelId,
     });
   };
 
@@ -198,6 +214,7 @@ export default function Campaigns() {
     setTimeFrom(c.time_from ?? "09:00");
     setTimeTo(c.time_to ?? "18:00");
     setBlockedDays(Array.isArray(days) ? days : []);
+    setSelectedFunnelId(c.funnel_id ?? null);
   };
 
   const handleSaveEdit = () => {
@@ -212,6 +229,7 @@ export default function Campaigns() {
         time_from: timeFrom,
         time_to: timeTo,
         days_blocked: blockedDays,
+        funnel_id: selectedFunnelId,
       },
     });
   };
@@ -276,6 +294,7 @@ export default function Campaigns() {
               setTimeFrom("09:00");
               setTimeTo("18:00");
               setBlockedDays([]);
+              setSelectedFunnelId(null);
               setShowCreateDialog(true);
             }}
           >
@@ -503,6 +522,24 @@ export default function Campaigns() {
                 ))}
               </div>
             </div>
+            <div>
+              <Label className="text-xs text-muted-foreground">Funil de prospecção (opcional)</Label>
+              <select
+                className="mt-1 w-full rounded-md border border-border/50 bg-secondary text-xs px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary"
+                value={selectedFunnelId ?? ""}
+                onChange={(e) => setSelectedFunnelId(e.target.value ? Number(e.target.value) : null)}
+              >
+                <option value="">— Nenhum (usar IA) —</option>
+                {funnelOptions.map((f) => (
+                  <option key={f.id} value={f.id}>{f.name}</option>
+                ))}
+              </select>
+              {selectedFunnelId && (
+                <p className="text-[10px] text-amber-600 mt-1">
+                  Se um funil for selecionado, o bot enviará as mensagens do funil em sequência ao invés da IA.
+                </p>
+              )}
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
@@ -592,6 +629,24 @@ export default function Campaigns() {
                   </button>
                 ))}
               </div>
+            </div>
+            <div>
+              <Label className="text-xs text-muted-foreground">Funil de prospecção (opcional)</Label>
+              <select
+                className="mt-1 w-full rounded-md border border-border/50 bg-secondary text-xs px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary"
+                value={selectedFunnelId ?? ""}
+                onChange={(e) => setSelectedFunnelId(e.target.value ? Number(e.target.value) : null)}
+              >
+                <option value="">— Nenhum (usar IA) —</option>
+                {funnelOptions.map((f) => (
+                  <option key={f.id} value={f.id}>{f.name}</option>
+                ))}
+              </select>
+              {selectedFunnelId && (
+                <p className="text-[10px] text-amber-600 mt-1">
+                  Se um funil for selecionado, o bot enviará as mensagens do funil em sequência ao invés da IA.
+                </p>
+              )}
             </div>
           </div>
           <DialogFooter>

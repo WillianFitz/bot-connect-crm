@@ -1163,8 +1163,14 @@ async function generateDisparoMessage(env: Env, tenantId: string, company: strin
   }
   const basePrompt =
     savedPrompt ||
-    `Você gera a primeira mensagem que a EMPRESA envia para um LEAD (prospecção). A empresa está entrando em contato com o lead. Responda EXCLUSIVAMENTE em JSON: {"mensagem": "texto"}.`;
-  const userPrompt = `Nome/empresa do lead: "${company}". Gere a mensagem seguindo exatamente as instruções do sistema acima. Responda só em JSON: {"mensagem": "sua mensagem"}.`;
+    `Você gera a primeira mensagem que a LeadFlowAI envia para um LEAD (prospecção). Regras obrigatórias:
+- SEMPRE comece a mensagem com "Oi, [nome do lead]!" usando o nome fornecido
+- Apresente-se como sendo da LeadFlowAI
+- Pergunte se o lead tem 1 minutinho para ouvir uma proposta
+- Tom casual e amigável, sem parecer robótico
+- Mensagem curta (máx 2 frases após a saudação)
+Responda EXCLUSIVAMENTE em JSON: {"mensagem": "texto"}.`;
+  const userPrompt = `Nome do lead: "${company}". OBRIGATÓRIO: use este nome na saudação ("Oi, ${company}!"). Gere a mensagem seguindo as instruções acima. Responda só em JSON: {"mensagem": "sua mensagem"}.`;
   const disparoOptions = { temperature: 0.9, top_p: 0.95 };
   try {
     const content = await callOpenAI(
@@ -1279,10 +1285,10 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
   }
 
   const campaigns = await env.DB.prepare(
-    "SELECT id, name, time_from, time_to, days_blocked, delay_min, delay_max, status FROM campaigns WHERE tenant_id = ? AND (status = 'active' OR status = 'completed')",
+    "SELECT id, name, time_from, time_to, days_blocked, delay_min, delay_max, status, funnel_id FROM campaigns WHERE tenant_id = ? AND (status = 'active' OR status = 'completed')",
   )
     .bind(tenantId)
-    .all<{ id: number; name: string; time_from: string; time_to: string; days_blocked: string; delay_min: number; delay_max: number; status: string }>();
+    .all<{ id: number; name: string; time_from: string; time_to: string; days_blocked: string; delay_min: number; delay_max: number; status: string; funnel_id: number | null }>();
 
   const list = (campaigns.results || []) as Array<{
     id: number;
@@ -1293,6 +1299,7 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
     delay_min: number;
     delay_max: number;
     status: string;
+    funnel_id: number | null;
   }>;
 
   let processed = 0;
@@ -1386,6 +1393,37 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
         )
           .bind(camp.id, tenantId)
           .run();
+        processed++;
+        continue;
+      }
+
+      // If campaign has a funnel, create a funnel execution instead of sending AI message
+      if (camp.funnel_id) {
+        try {
+          await env.DB.prepare(
+            `INSERT OR IGNORE INTO funnel_executions (funnel_id, lead_id, tenant_id, current_step, status, next_execute_at)
+             VALUES (?, ?, ?, 0, 'running', datetime('now'))`,
+          ).bind(camp.funnel_id, lead.id, tenantId).run();
+          await env.DB.prepare(
+            `INSERT INTO campaign_sends (campaign_id, lead_id, status) VALUES (?, ?, 'sent')
+             ON CONFLICT(campaign_id, lead_id) DO UPDATE SET status = 'sent', sent_at = datetime('now'), error_message = NULL`,
+          ).bind(camp.id, lead.id).run();
+          await env.DB.prepare(
+            "UPDATE campaigns SET sent = sent + 1 WHERE id = ? AND tenant_id = ?",
+          ).bind(camp.id, tenantId).run();
+          sent++;
+        } catch (err: any) {
+          const errMsg = err?.message || "Erro ao criar execução do funil";
+          campaignErrors.push(errMsg);
+          globalErrors.push(errMsg);
+          await env.DB.prepare(
+            "INSERT OR IGNORE INTO campaign_sends (campaign_id, lead_id, status, error_message) VALUES (?, ?, 'error', ?)",
+          ).bind(camp.id, lead.id, errMsg).run();
+          await env.DB.prepare(
+            "UPDATE campaigns SET errors = errors + 1 WHERE id = ? AND tenant_id = ?",
+          ).bind(camp.id, tenantId).run();
+          errs++;
+        }
         processed++;
         continue;
       }
@@ -1649,6 +1687,7 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
       time_to,
       days_blocked,
       status: newStatus,
+      funnel_id: newFunnelId,
     } = body;
 
     const existing = await env.DB.prepare(
@@ -1697,6 +1736,10 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
         updates.push("total_leads = ?");
         params.push(total);
       }
+    }
+    if (newFunnelId !== undefined) {
+      updates.push("funnel_id = ?");
+      params.push(newFunnelId === null || newFunnelId === "" ? null : Number(newFunnelId));
     }
     if (updates.length === 0) return json({ error: "Nenhum campo para atualizar" }, { status: 400 });
     params.push(campaignId, tenantId);
@@ -1860,6 +1903,229 @@ async function handleCRM(request: Request, env: Env, method: string, url: URL) {
   }
 
   return new Response("Not found", { status: 404 });
+}
+
+async function handleProspectFunnels(request: Request, env: Env, method: string, url: URL): Promise<Response> {
+  const tenantId = await getTenantId(request, env);
+  await ensureTenant(env, tenantId);
+
+  const pathname = url.pathname;
+  const parts = pathname.split("/").filter(Boolean);
+  // parts: ["api", "funnels"] or ["api", "funnels", ":id"]
+  const idParam = parts.length >= 3 ? parts[2] : null;
+  const isSingle = idParam && /^\d+$/.test(idParam);
+  const funnelId = isSingle ? Number(idParam) : null;
+
+  if (method === "GET") {
+    if (funnelId) {
+      const row = await env.DB.prepare(
+        "SELECT id, name, status, version, created_at, updated_at FROM prospect_funnels WHERE id = ? AND tenant_id = ?",
+      ).bind(funnelId, tenantId).first<{ id: number; name: string; status: string; version: number; created_at: string; updated_at: string }>();
+      if (!row) return json({ error: "Funil não encontrado" }, { status: 404 });
+      const stepsRes = await env.DB.prepare(
+        "SELECT id, position, type, content, wait_seconds, caption FROM funnel_steps WHERE funnel_id = ? ORDER BY position ASC",
+      ).bind(funnelId).all();
+      return json({ ...row, steps: stepsRes.results || [] });
+    }
+    // List all funnels
+    const funnelsRes = await env.DB.prepare(
+      "SELECT id, name, status, version, created_at, updated_at FROM prospect_funnels WHERE tenant_id = ? ORDER BY created_at DESC",
+    ).bind(tenantId).all<{ id: number; name: string; status: string; version: number; created_at: string; updated_at: string }>();
+    const funnels = funnelsRes.results || [];
+    // Attach steps for each
+    const result = await Promise.all(funnels.map(async (f) => {
+      const stepsRes = await env.DB.prepare(
+        "SELECT id, position, type, content, wait_seconds, caption FROM funnel_steps WHERE funnel_id = ? ORDER BY position ASC",
+      ).bind(f.id).all();
+      return { ...f, steps: stepsRes.results || [] };
+    }));
+    return json(result);
+  }
+
+  if (method === "POST" && !funnelId) {
+    const body = await readBody<{ name?: string; status?: string; steps?: Array<{ type: string; content?: string; wait_seconds?: number; caption?: string; position?: number }> }>(request);
+    if (!body.name || typeof body.name !== "string" || !body.name.trim()) {
+      return json({ error: "Nome obrigatório" }, { status: 400 });
+    }
+    const status = body.status ?? "draft";
+    const res = await env.DB.prepare(
+      "INSERT INTO prospect_funnels (tenant_id, name, status) VALUES (?, ?, ?)",
+    ).bind(tenantId, body.name.trim(), status).run();
+    const newId = res.lastRowId;
+
+    const steps = Array.isArray(body.steps) ? body.steps : [];
+    for (let i = 0; i < steps.length; i++) {
+      const s = steps[i];
+      await env.DB.prepare(
+        "INSERT INTO funnel_steps (funnel_id, position, type, content, wait_seconds, caption) VALUES (?, ?, ?, ?, ?, ?)",
+      ).bind(newId, s.position ?? i, s.type, s.content ?? null, s.wait_seconds ?? 60, s.caption ?? null).run();
+    }
+
+    const created = await env.DB.prepare(
+      "SELECT id, name, status, version, created_at, updated_at FROM prospect_funnels WHERE id = ? AND tenant_id = ?",
+    ).bind(newId, tenantId).first();
+    const stepsRes = await env.DB.prepare(
+      "SELECT id, position, type, content, wait_seconds, caption FROM funnel_steps WHERE funnel_id = ? ORDER BY position ASC",
+    ).bind(newId).all();
+    return json({ ...(created as object), steps: stepsRes.results || [] }, { status: 201 });
+  }
+
+  if (method === "PUT" && funnelId) {
+    const body = await readBody<{ name?: string; status?: string; steps?: Array<{ type: string; content?: string; wait_seconds?: number; caption?: string; position?: number }> }>(request);
+    const existing = await env.DB.prepare(
+      "SELECT id, version FROM prospect_funnels WHERE id = ? AND tenant_id = ?",
+    ).bind(funnelId, tenantId).first<{ id: number; version: number }>();
+    if (!existing) return json({ error: "Funil não encontrado" }, { status: 404 });
+
+    const updates: string[] = ["updated_at = datetime('now')", "version = version + 1"];
+    const params: unknown[] = [];
+    if (body.name !== undefined) { updates.unshift("name = ?"); params.push(String(body.name).trim()); }
+    if (body.status !== undefined) { updates.unshift("status = ?"); params.push(String(body.status)); }
+    params.push(funnelId, tenantId);
+
+    await env.DB.prepare(
+      `UPDATE prospect_funnels SET ${updates.join(", ")} WHERE id = ? AND tenant_id = ?`,
+    ).bind(...params).run();
+
+    // Replace all steps
+    await env.DB.prepare("DELETE FROM funnel_steps WHERE funnel_id = ?").bind(funnelId).run();
+    const steps = Array.isArray(body.steps) ? body.steps : [];
+    for (let i = 0; i < steps.length; i++) {
+      const s = steps[i];
+      await env.DB.prepare(
+        "INSERT INTO funnel_steps (funnel_id, position, type, content, wait_seconds, caption) VALUES (?, ?, ?, ?, ?, ?)",
+      ).bind(funnelId, s.position ?? i, s.type, s.content ?? null, s.wait_seconds ?? 60, s.caption ?? null).run();
+    }
+
+    const updated = await env.DB.prepare(
+      "SELECT id, name, status, version, created_at, updated_at FROM prospect_funnels WHERE id = ? AND tenant_id = ?",
+    ).bind(funnelId, tenantId).first();
+    const stepsRes = await env.DB.prepare(
+      "SELECT id, position, type, content, wait_seconds, caption FROM funnel_steps WHERE funnel_id = ? ORDER BY position ASC",
+    ).bind(funnelId).all();
+    return json({ ...(updated as object), steps: stepsRes.results || [] });
+  }
+
+  if (method === "DELETE" && funnelId) {
+    const existing = await env.DB.prepare(
+      "SELECT id FROM prospect_funnels WHERE id = ? AND tenant_id = ?",
+    ).bind(funnelId, tenantId).first();
+    if (!existing) return json({ error: "Funil não encontrado" }, { status: 404 });
+    await env.DB.prepare("DELETE FROM prospect_funnels WHERE id = ? AND tenant_id = ?").bind(funnelId, tenantId).run();
+    return json({ ok: true });
+  }
+
+  return new Response("Method not allowed", { status: 405 });
+}
+
+async function processFunnelExecutions(env: Env, tenantId: string): Promise<void> {
+  const pendingRes = await env.DB.prepare(
+    `SELECT fe.id, fe.funnel_id, fe.lead_id, fe.current_step, fe.status
+     FROM funnel_executions fe
+     WHERE fe.tenant_id = ? AND fe.status = 'running' AND fe.next_execute_at <= datetime('now')
+     LIMIT 10`,
+  ).bind(tenantId).all<{ id: number; funnel_id: number; lead_id: number; current_step: number; status: string }>();
+
+  const executions = (pendingRes.results || []) as Array<{ id: number; funnel_id: number; lead_id: number; current_step: number; status: string }>;
+
+  for (const exec of executions) {
+    try {
+      const step = await env.DB.prepare(
+        "SELECT id, position, type, content, wait_seconds, caption FROM funnel_steps WHERE funnel_id = ? AND position = ?",
+      ).bind(exec.funnel_id, exec.current_step).first<{ id: number; position: number; type: string; content: string | null; wait_seconds: number | null; caption: string | null }>();
+
+      if (!step) {
+        // No more steps — complete execution
+        await env.DB.prepare(
+          "UPDATE funnel_executions SET status = 'completed' WHERE id = ?",
+        ).bind(exec.id).run();
+        continue;
+      }
+
+      const lead = await env.DB.prepare(
+        "SELECT id, company, phone FROM leads WHERE id = ? AND tenant_id = ?",
+      ).bind(exec.lead_id, tenantId).first<{ id: number; company: string; phone: string }>();
+
+      if (!lead) {
+        await env.DB.prepare(
+          "UPDATE funnel_executions SET status = 'completed' WHERE id = ?",
+        ).bind(exec.id).run();
+        continue;
+      }
+
+      const phone = normalizeBrazilNumber(lead.phone || "");
+      const nextStep = exec.current_step + 1;
+
+      // Check if there's a next step to determine next_execute_at
+      const nextStepRow = await env.DB.prepare(
+        "SELECT position, wait_seconds FROM funnel_steps WHERE funnel_id = ? AND position = ?",
+      ).bind(exec.funnel_id, nextStep).first<{ position: number; wait_seconds: number | null }>();
+
+      const hasNextStep = !!nextStepRow;
+
+      if (step.type === "wait") {
+        const waitSecs = step.wait_seconds ?? 60;
+        await env.DB.prepare(
+          `UPDATE funnel_executions SET current_step = ?, next_execute_at = datetime('now', '+' || ? || ' seconds') WHERE id = ?`,
+        ).bind(nextStep, String(waitSecs), exec.id).run();
+        continue;
+      }
+
+      // For message steps: send then advance
+      if (step.type === "text" && step.content) {
+        const text = step.content
+          .replace(/\{\{nome\}\}/g, lead.company || "")
+          .replace(/\{\{empresa\}\}/g, lead.company || "");
+        if (phone) {
+          const result = await sendWhatsAppMessage(env, tenantId, phone, text);
+          if (result.ok && result.remoteJid?.endsWith("@lid")) {
+            await storeLidMapping(env, tenantId, phone, result.remoteJid);
+          }
+          if (result.ok) {
+            await appendConversation(env, tenantId, phone, "assistant", text);
+          }
+        }
+      } else if ((step.type === "image" || step.type === "video" || step.type === "audio" || step.type === "pdf") && step.content) {
+        if (phone) {
+          let mediaType: "image" | "video" | "audio" = "image";
+          if (step.type === "video") mediaType = "video";
+          else if (step.type === "audio") mediaType = "audio";
+          else if (step.type === "pdf") mediaType = "image"; // fallback for pdf via media endpoint
+
+          if (step.type === "pdf") {
+            // Send as document via sendMedia endpoint
+            const baseUrl = getEvolutionBaseUrl(env);
+            if (baseUrl && env.EVOLUTION_API_KEY) {
+              try {
+                await fetch(`${baseUrl}/message/sendMedia/${tenantId}`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json", apikey: env.EVOLUTION_API_KEY },
+                  body: JSON.stringify({ number: phone, mediatype: "document", media: step.content, caption: step.caption || "" }),
+                });
+              } catch {
+                // ignore send error, still advance step
+              }
+            }
+          } else {
+            await sendWhatsAppMedia(env, tenantId, phone, step.content, mediaType, step.caption ?? undefined);
+          }
+        }
+      }
+
+      // Advance to next step
+      if (!hasNextStep) {
+        await env.DB.prepare(
+          "UPDATE funnel_executions SET current_step = ?, status = 'completed' WHERE id = ?",
+        ).bind(nextStep, exec.id).run();
+      } else {
+        await env.DB.prepare(
+          "UPDATE funnel_executions SET current_step = ?, next_execute_at = datetime('now') WHERE id = ?",
+        ).bind(nextStep, exec.id).run();
+      }
+    } catch (err) {
+      console.error("[funnel_exec] error processing execution", exec.id, err);
+    }
+  }
 }
 
 async function handleInstagramTools(request: Request, env: Env, method: string, url: URL) {
@@ -2828,6 +3094,8 @@ export default {
         response = await handleCampaigns(request, env, method, urlForRouting);
       } else if (pathname.startsWith("/api/crm")) {
         response = await handleCRM(request, env, method, urlForRouting);
+      } else if (pathname.startsWith("/api/funnels")) {
+        response = await handleProspectFunnels(request, env, method, urlForRouting);
       } else if (pathname.startsWith("/api/tools/instagram")) {
         response = await handleInstagramTools(request, env, method, urlForRouting);
       } else if (pathname === "/api/ai/disparo" && method === "POST") {
@@ -2867,7 +3135,12 @@ export default {
         await handleCampaignRun(env, row.id, false);
       } catch (err) {
         console.error("[cron] campaign run for tenant", row.id, err);
-          }
+      }
+      try {
+        await processFunnelExecutions(env, row.id);
+      } catch (err) {
+        console.error("[cron] funnel executions for tenant", row.id, err);
+      }
     }
   },
 } satisfies ExportedHandler<Env>;

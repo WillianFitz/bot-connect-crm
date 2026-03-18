@@ -342,6 +342,52 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  // Funis de Prospecção
+  getFunnels: () =>
+    request<Array<{
+      id: number;
+      name: string;
+      status: string;
+      version: number;
+      created_at: string;
+      updated_at: string;
+      steps: Array<{ id: number; position: number; type: string; content: string | null; wait_seconds: number | null; caption: string | null }>;
+    }>>("/funnels"),
+
+  getFunnel: (id: number) =>
+    request<{
+      id: number;
+      name: string;
+      status: string;
+      version: number;
+      created_at: string;
+      updated_at: string;
+      steps: Array<{ id: number; position: number; type: string; content: string | null; wait_seconds: number | null; caption: string | null }>;
+    }>(`/funnels/${id}`),
+
+  createFunnel: (data: {
+    name: string;
+    status?: string;
+    steps: Array<{ type: string; content?: string; wait_seconds?: number; caption?: string; position: number }>;
+  }) =>
+    request<{ id: number; name: string; status: string; version: number; created_at: string; steps: unknown[] }>("/funnels", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  updateFunnel: (id: number, data: {
+    name?: string;
+    status?: string;
+    steps?: Array<{ type: string; content?: string; wait_seconds?: number; caption?: string; position: number }>;
+  }) =>
+    request<{ id: number; name: string; status: string; version: number; updated_at: string; steps: unknown[] }>(`/funnels/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+
+  deleteFunnel: (id: number) =>
+    request<{ ok: true }>(`/funnels/${id}`, { method: "DELETE" }),
+
   // Ferramentas - Instagram
   startInstagramExtraction: (payload: { profile: string }) =>
     request<{ ok: true; jobId: number }>("/tools/instagram/start", {
