@@ -1894,9 +1894,19 @@ export default function Agents() {
   });
 
   const clearMemoryMutation = useMutation({
-    mutationFn: () => api.clearAgentMemory(),
-    onSuccess: () => {
-      toast({ title: "Memória limpa", description: "Contexto de conversa resetado para testes." });
+    mutationFn: (agentId: "disparo" | "atendimento" | "agendamento" | "all") =>
+      api.clearAgentMemory(agentId),
+    onSuccess: (_, agentId) => {
+      const labels: Record<string, string> = {
+        disparo: "Disparo",
+        atendimento: "Atendimento",
+        agendamento: "Agendamento",
+        all: "todos os agentes",
+      };
+      toast({
+        title: "Memória limpa",
+        description: `Histórico de conversas do agente de ${labels[agentId] ?? agentId} foi apagado.`,
+      });
     },
   });
 
@@ -2082,7 +2092,16 @@ export default function Agents() {
         </p>
       </div>
 
-      <div className="flex justify-end gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 text-xs gap-1.5 text-muted-foreground hover:text-destructive"
+          onClick={() => clearMemoryMutation.mutate("disparo")}
+          disabled={clearMemoryMutation.isPending}
+        >
+          🧹 Limpar memória do disparo
+        </Button>
         <Button
           size="sm"
           onClick={() => saveMutation.mutate(forms.disparo)}
@@ -2222,10 +2241,10 @@ export default function Agents() {
               variant="ghost"
               size="sm"
               className="h-7 text-xs gap-1.5 text-muted-foreground hover:text-destructive"
-              onClick={() => clearMemoryMutation.mutate()}
+              onClick={() => clearMemoryMutation.mutate("atendimento")}
               disabled={clearMemoryMutation.isPending}
             >
-              🧹 Limpar memória do agente para testes
+              🧹 Limpar memória do atendimento
             </Button>
           </div>
 
@@ -2553,7 +2572,16 @@ export default function Agents() {
         </div>
       </div>
 
-      <div className="flex justify-end gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 text-xs gap-1.5 text-muted-foreground hover:text-destructive"
+          onClick={() => clearMemoryMutation.mutate("agendamento")}
+          disabled={clearMemoryMutation.isPending}
+        >
+          🧹 Limpar memória do agendamento
+        </Button>
         <Button
           size="sm"
           onClick={() => saveMutation.mutate(forms.agendamento)}
@@ -2567,11 +2595,22 @@ export default function Agents() {
 
   return (
     <div className="space-y-6 animate-slide-in w-full">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Agentes de IA</h1>
-        <p className="text-sm text-muted-foreground">
-          Configure os agentes de disparo, atendimento e agendamento usados pelo seu bot.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">Agentes de IA</h1>
+          <p className="text-sm text-muted-foreground">
+            Configure os agentes de disparo, atendimento e agendamento usados pelo seu bot.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="text-xs gap-1.5 text-muted-foreground hover:text-destructive shrink-0"
+          onClick={() => clearMemoryMutation.mutate("all")}
+          disabled={clearMemoryMutation.isPending}
+        >
+          🧹 Limpar memória de todos os agentes
+        </Button>
       </div>
 
       <Tabs

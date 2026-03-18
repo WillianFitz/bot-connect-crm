@@ -952,8 +952,28 @@ async function handleAgents(request: Request, env: Env, method: string, url: URL
     return new Response("Method not allowed", { status: 405 });
   }
 
+  // /api/agents/:agentId/clear-memory — clear conversation memory per agent
+  if (parts.length === 4 && parts[3] === "clear-memory") {
+    const agentId = parts[2]; // disparo | atendimento | agendamento
+    if (method === "POST") {
+      if (agentId === "all") {
+        // Clear everything for this tenant
+        await env.DB.batch([
+          env.DB.prepare("DELETE FROM agent_conversations WHERE tenant_id = ?").bind(tenantId),
+          env.DB.prepare("DELETE FROM agent_pauses WHERE tenant_id = ?").bind(tenantId),
+        ]);
+      } else {
+        await env.DB.batch([
+          env.DB.prepare("DELETE FROM agent_conversations WHERE tenant_id = ? AND agent_id = ?").bind(tenantId, agentId),
+          env.DB.prepare("DELETE FROM agent_pauses WHERE tenant_id = ?").bind(tenantId),
+        ]);
+      }
+      return json({ ok: true, agent: agentId });
+    }
+    return new Response("Method not allowed", { status: 405 });
+  }
+
   // /api/agents/atendimento/media   — upload/list/delete agent media
-  // /api/agents/atendimento/clear-memory — clear conversation memory
   if (parts.length === 4 && parts[2] === "atendimento") {
     const sub = parts[3];
 
@@ -1043,16 +1063,6 @@ async function handleAgents(request: Request, env: Env, method: string, url: URL
       return new Response("Method not allowed", { status: 405 });
     }
 
-    if (sub === "clear-memory") {
-      if (method === "POST") {
-        await env.DB.batch([
-          env.DB.prepare("DELETE FROM agent_conversations WHERE tenant_id = ?").bind(tenantId),
-          env.DB.prepare("DELETE FROM agent_pauses WHERE tenant_id = ?").bind(tenantId),
-        ]);
-        return json({ ok: true });
-      }
-      return new Response("Method not allowed", { status: 405 });
-    }
   }
 
   // /api/agents/:id
@@ -1464,7 +1474,7 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
       }
       if (result.ok) {
         // Salva mensagem da campanha no histórico do agente para que ele saiba o contexto ao receber resposta
-        await appendConversation(env, tenantId, phone, "assistant", text);
+        await appendConversation(env, tenantId, phone, "assistant", text, "disparo");
         await env.DB.prepare(
           `INSERT INTO campaign_sends (campaign_id, lead_id, status) VALUES (?, ?, 'sent')
            ON CONFLICT(campaign_id, lead_id) DO UPDATE SET status = 'sent', sent_at = datetime('now'), error_message = NULL`,
@@ -2490,7 +2500,7 @@ async function processFunnelExecutions(env: Env, tenantId: string): Promise<void
             await storeLidMapping(env, tenantId, phone, result.remoteJid);
           }
           if (result.ok) {
-            await appendConversation(env, tenantId, phone, "assistant", text);
+            await appendConversation(env, tenantId, phone, "assistant", text, "agendamento");
           }
         }
       } else if ((step.type === "image" || step.type === "video" || step.type === "audio" || step.type === "pdf") && step.content) {
@@ -2874,12 +2884,13 @@ async function getConversationHistory(
   tenantId: string,
   phone: string,
   limit = 20,
+  agentId = "atendimento",
 ): Promise<Array<{ role: "user" | "assistant"; content: string }>> {
   const res = await env.DB.prepare(
     `SELECT role, content FROM agent_conversations
-     WHERE tenant_id = ? AND phone = ?
+     WHERE tenant_id = ? AND phone = ? AND agent_id = ?
      ORDER BY created_at DESC LIMIT ?`,
-  ).bind(tenantId, phone, limit).all<{ role: string; content: string }>();
+  ).bind(tenantId, phone, agentId, limit).all<{ role: string; content: string }>();
   return ((res.results || []) as Array<{ role: string; content: string }>)
     .reverse()
     .map((r) => ({ role: r.role as "user" | "assistant", content: r.content }));
@@ -2891,10 +2902,11 @@ async function appendConversation(
   phone: string,
   role: "user" | "assistant",
   content: string,
+  agentId = "atendimento",
 ): Promise<void> {
   await env.DB.prepare(
-    "INSERT INTO agent_conversations (tenant_id, phone, role, content) VALUES (?, ?, ?, ?)",
-  ).bind(tenantId, phone, role, content).run();
+    "INSERT INTO agent_conversations (tenant_id, phone, role, content, agent_id) VALUES (?, ?, ?, ?, ?)",
+  ).bind(tenantId, phone, role, content, agentId).run();
 }
 
 /**

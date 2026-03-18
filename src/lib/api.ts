@@ -331,8 +331,8 @@ export const api = {
       method: "DELETE",
     }),
 
-  clearAgentMemory: () =>
-    request<{ ok: true }>("/agents/atendimento/clear-memory", {
+  clearAgentMemory: (agentId: "disparo" | "atendimento" | "agendamento" | "all" = "atendimento") =>
+    request<{ ok: true }>(`/agents/${agentId}/clear-memory`, {
       method: "POST",
     }),
 
