@@ -6,7 +6,7 @@ Este arquivo orienta o Claude Code sobre a arquitetura, convenções e fluxo de 
 
 ## Visão Geral do Projeto
 
-**bot-connect-crm** é um CRM com extração de leads, automação via bot e integração com redes sociais (Instagram). Gerado inicialmente via Lovable, evoluído para desenvolvimento local.
+**LeadFlowAI** é um CRM SaaS com extração de leads, automação via bot e integração com redes sociais (Instagram).
 
 ---
 
