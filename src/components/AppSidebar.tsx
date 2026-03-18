@@ -10,10 +10,12 @@ import {
   Link2,
   Wrench,
   Workflow,
+  LogOut,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { useNavigate } from "react-router-dom";
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel,
   SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarHeader, SidebarFooter, useSidebar,
@@ -66,6 +68,13 @@ function SidebarSection({ label, items }: { label: string; items: typeof mainIte
 export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
+  const navigate = useNavigate();
+
+  function handleLogout() {
+    localStorage.removeItem("auth_token");
+    localStorage.removeItem("tenant_id");
+    navigate("/login");
+  }
   const { data: countData } = useQuery({
     queryKey: ["leads-count"],
     queryFn: () => api.getLeadsCount(),
@@ -88,7 +97,7 @@ export function AppSidebar() {
         <SidebarSection label="Automação" items={automationItems} />
         <SidebarSection label="Sistema" items={systemItems} />
       </SidebarContent>
-      <SidebarFooter className="p-4">
+      <SidebarFooter className="p-4 space-y-2">
         {!collapsed && (
           <div className="rounded-lg border border-border/50 bg-secondary/50 p-3">
             <p className="text-[11px] text-muted-foreground">
@@ -102,6 +111,13 @@ export function AppSidebar() {
             </div>
           </div>
         )}
+        <button
+          onClick={handleLogout}
+          className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-sidebar-accent hover:text-destructive transition-colors"
+        >
+          <LogOut className="h-4 w-4 shrink-0" />
+          {!collapsed && <span>Sair</span>}
+        </button>
       </SidebarFooter>
     </Sidebar>
   );

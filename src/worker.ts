@@ -438,6 +438,7 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
       const workerOrigin = new URL(request.url).origin;
       const webhookUrl = `${workerOrigin}/api/webhook/evolution`;
 
+      // Tenta criar a instância
       const res = await fetch(`${baseUrl}/instance/create`, {
         method: "POST",
         headers: {
@@ -459,32 +460,53 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
 
       const data = (await res.json()) as any;
 
-      if (!res.ok) {
-        console.error("[worker] Evolution API error (QR create):", JSON.stringify(data));
-        return json(
-          {
-            qr: null,
-            error:
-              data?.response?.message?.[0] ||
-              "Não foi possível gerar o QR. Verifique a instância na Evolution API.",
-          },
-          { status: res.status },
-        );
+      // Se criar com sucesso, retorna o QR
+      if (res.ok) {
+        const base64 = data?.qrcode?.base64 || null;
+        if (base64) return json({ qr: base64 });
+        // QR ainda não disponível mesmo com create ok — tenta connect abaixo
       }
 
-      const base64 = data?.qrcode?.base64 || null;
-      if (!base64) {
-        return json(
-          {
-            qr: null,
-            error:
-              "QR ainda não disponível. Tente novamente em alguns segundos ou confira no painel da Evolution.",
-          },
-          { status: 200 },
-        );
-      }
+      // Se criação falhou (instância já existe ou outro erro), tenta buscar QR da instância existente
+      console.warn("[worker] QR create falhou, tentando /instance/connect:", JSON.stringify(data));
 
-      return json({ qr: base64 });
+      const connectRes = await fetch(`${baseUrl}/instance/connect/${tenantId}`, {
+        method: "GET",
+        headers: { apikey: env.EVOLUTION_API_KEY },
+      });
+      const connectData = (await connectRes.json()) as any;
+      const connectBase64 = connectData?.base64 || connectData?.qrcode?.base64 || null;
+
+      if (connectBase64) return json({ qr: connectBase64 });
+
+      // Se connect também não retornou QR, deleta a instância travada e recria
+      console.warn("[worker] connect sem QR, deletando instância travada e recriando...");
+      await fetch(`${baseUrl}/instance/delete/${tenantId}`, {
+        method: "DELETE",
+        headers: { apikey: env.EVOLUTION_API_KEY },
+      });
+
+      const res2 = await fetch(`${baseUrl}/instance/create`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: env.EVOLUTION_API_KEY },
+        body: JSON.stringify({
+          instanceName: tenantId,
+          integration: "WHATSAPP-BAILEYS",
+          qrcode: true,
+          webhook: {
+            url: webhookUrl,
+            byEvents: false,
+            base64: false,
+            events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE"],
+          },
+        }),
+      });
+      const data2 = (await res2.json()) as any;
+      const base64Final = data2?.qrcode?.base64 || null;
+
+      if (base64Final) return json({ qr: base64Final });
+
+      return json({ qr: null, error: "QR ainda não disponível. Aguarde alguns segundos e tente novamente." }, { status: 200 });
     } catch (err: any) {
       return json(
         { qr: null, error: err?.message || "Erro ao criar instância/QR na Evolution API" },
