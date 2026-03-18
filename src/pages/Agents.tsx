@@ -195,10 +195,30 @@ interface PromptTemplate {
   description: string;
   type: "atendimento" | "disparo";
   category: string;
+  featured?: boolean;
   prompt: string;
 }
 
 const PROMPT_TEMPLATES: PromptTemplate[] = [
+  // ── DESTAQUES (prompts padrão recomendados) ───────────────────────────────
+  {
+    id: "atendimento_leadflowai",
+    label: "LeadFlowAI — Padrão Recomendado",
+    description: "Fluxo completo: apresentação → mídia → áudio → agendamento. Testado e aprovado.",
+    type: "atendimento",
+    category: "Atendimento",
+    featured: true,
+    prompt: ATENDIMENTO_PROMPT_DEFAULT,
+  },
+  {
+    id: "disparo_leadflowai",
+    label: "LeadFlowAI — Padrão Recomendado",
+    description: "Disparo com variações de saudação, apresentação e pedido de atenção. Testado e aprovado.",
+    type: "disparo",
+    category: "Disparo",
+    featured: true,
+    prompt: DISPARO_PROMPT_DEFAULT,
+  },
   // ── ATENDIMENTO ──────────────────────────────────────────────────────────
   {
     id: "atendimento_imobiliaria",
@@ -1427,12 +1447,41 @@ function PromptTemplatesPanel({
       </button>
 
       {open && (
-        <div className="border-t border-border/50 px-4 pb-4 pt-3 space-y-2">
-          <p className="text-[11px] text-muted-foreground mb-3">
+        <div className="border-t border-border/50 px-4 pb-4 pt-3 space-y-4">
+          <p className="text-[11px] text-muted-foreground">
             Clique em <strong>Usar este</strong> para carregar o modelo no editor. Você pode editar antes de salvar.
           </p>
+
+          {/* Destaques */}
+          {filtered.filter((t) => t.featured).map((tpl) => (
+            <div
+              key={tpl.id}
+              className="flex items-start justify-between gap-3 rounded-xl border border-primary/40 bg-primary/5 px-4 py-3 ring-1 ring-primary/20"
+            >
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Sparkles className="h-3.5 w-3.5 text-primary shrink-0" />
+                  <p className="text-xs font-semibold text-foreground">{tpl.label}</p>
+                  <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] text-primary font-semibold">
+                    Recomendado
+                  </span>
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-1">{tpl.description}</p>
+              </div>
+              <Button
+                variant="default"
+                size="sm"
+                className="h-7 text-xs shrink-0"
+                onClick={() => { onSelect(tpl.prompt); setOpen(false); }}
+              >
+                Usar este
+              </Button>
+            </div>
+          ))}
+
+          {/* Demais modelos */}
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {filtered.map((tpl) => (
+            {filtered.filter((t) => !t.featured).map((tpl) => (
               <div
                 key={tpl.id}
                 className="flex flex-col gap-2 rounded-lg border border-border/40 bg-secondary/40 p-3"
@@ -1445,10 +1494,7 @@ function PromptTemplatesPanel({
                   variant="outline"
                   size="sm"
                   className="h-7 text-xs self-start"
-                  onClick={() => {
-                    onSelect(tpl.prompt);
-                    setOpen(false);
-                  }}
+                  onClick={() => { onSelect(tpl.prompt); setOpen(false); }}
                 >
                   Usar este
                 </Button>
@@ -1487,9 +1533,9 @@ function escapeRegex(s: string) {
 
 const DEFAULT_TOKEN_VISUALS: TokenVisual[] = [
   {
-    token: "{{agenda}}",
-    label: "Agenda",
-    emoji: "🗓️",
+    token: "{{link_agendamento}}",
+    label: "Link de Agendamento",
+    emoji: "📅",
     chipClass:
       "bg-amber-500/20 border-amber-400/60 text-amber-300 hover:bg-amber-500/30",
     badgeClass:
@@ -1512,6 +1558,28 @@ const DEFAULT_TOKEN_VISUALS: TokenVisual[] = [
       "bg-cyan-500/20 border-cyan-400/60 text-cyan-300 hover:bg-cyan-500/30",
     badgeClass:
       "bg-cyan-500/20 border-cyan-400/60 text-cyan-300",
+  },
+];
+
+// Placeholder media visuals shown when no media is uploaded yet
+const PLACEHOLDER_MEDIA_VISUALS = [
+  {
+    mediaType: "video",
+    label: "Enviar Vídeo",
+    emoji: "🎥",
+    chipClass: "bg-violet-500/20 border-violet-400/60 text-violet-300",
+  },
+  {
+    mediaType: "image",
+    label: "Enviar Imagem",
+    emoji: "🖼️",
+    chipClass: "bg-emerald-500/20 border-emerald-400/60 text-emerald-300",
+  },
+  {
+    mediaType: "audio",
+    label: "Enviar Áudio",
+    emoji: "🎵",
+    chipClass: "bg-pink-500/20 border-pink-400/60 text-pink-300",
   },
 ];
 
@@ -2016,19 +2084,6 @@ export default function Agents() {
 
       <div className="flex justify-end gap-2">
         <Button
-          variant="outline"
-          size="sm"
-          onClick={() =>
-            updateField("disparo", {
-              base_prompt: DISPARO_PROMPT_DEFAULT,
-              default_message: "Oi, tudo bem? 😊",
-            })
-          }
-          title="Carrega o prompt padrão de prospecção LeadFlowAI"
-        >
-          Usar prompt padrão
-        </Button>
-        <Button
           size="sm"
           onClick={() => saveMutation.mutate(forms.disparo)}
           disabled={saveMutation.isPending}
@@ -2110,25 +2165,39 @@ export default function Agents() {
             </div>
           </div>
 
-          {/* Mídias */}
-          {mediaVisuals.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-[10px] text-muted-foreground/70 uppercase tracking-widest font-semibold">
-                Mídias enviadas
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {mediaVisuals.map((v) => (
-                  <ToolChip key={v.token} visual={v} />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {rawMediaList.length === 0 && (
-            <p className="text-[11px] text-muted-foreground/60 italic">
-              Nenhuma mídia enviada ainda. Envie na seção abaixo para adicionar botões de vídeo, áudio e imagem.
+          {/* Mídias — sempre visíveis */}
+          <div className="space-y-2">
+            <p className="text-[10px] text-muted-foreground/70 uppercase tracking-widest font-semibold">
+              Mídias
             </p>
-          )}
+            <div className="flex flex-wrap gap-2">
+              {mediaVisuals.length > 0
+                ? mediaVisuals.map((v) => <ToolChip key={v.token} visual={v} />)
+                : PLACEHOLDER_MEDIA_VISUALS.map((p) => (
+                    <button
+                      key={p.mediaType}
+                      type="button"
+                      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium opacity-50 ${p.chipClass}`}
+                      onClick={() =>
+                        toast({
+                          title: "Nenhuma mídia enviada ainda",
+                          description: `Suba um arquivo de ${p.label.toLowerCase()} na seção "Mídias" abaixo para liberar este botão.`,
+                          variant: "destructive",
+                        })
+                      }
+                    >
+                      <span>{p.emoji}</span>
+                      <span>{p.label}</span>
+                    </button>
+                  ))}
+            </div>
+            {rawMediaList.length === 0 && (
+              <p className="text-[11px] text-amber-400/80 flex items-center gap-1.5">
+                <span>⚠️</span>
+                Envie seus arquivos na seção <strong>Mídias</strong> abaixo para liberar os botões.
+              </p>
+            )}
+          </div>
         </div>
 
         {/* Modelos prontos */}
@@ -2171,14 +2240,6 @@ export default function Agents() {
                 onClick={() => updateField("atendimento", { base_prompt: "" })}
               >
                 Limpar
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs"
-                onClick={() => updateField("atendimento", { base_prompt: ATENDIMENTO_PROMPT_DEFAULT })}
-              >
-                Usar prompt pronto
               </Button>
               <Button
                 size="sm"
