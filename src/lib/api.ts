@@ -170,6 +170,19 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  getAccountSettings: () =>
+    request<{ tenantName: string; username: string }>("/settings/account"),
+  updateAccountSettings: (payload: { tenantName: string }) =>
+    request<{ ok: true }>("/settings/account", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+  changePassword: (payload: { currentPassword: string; newPassword: string }) =>
+    request<{ ok: true }>("/settings/password", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+
   getCrmColumns: () =>
     request<Array<{ id: number; name: string; position: number }>>(
       "/crm/columns",

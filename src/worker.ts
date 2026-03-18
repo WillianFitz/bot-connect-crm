@@ -1798,6 +1798,51 @@ async function handleSettings(request: Request, env: Env, method: string) {
   return new Response("Method not allowed", { status: 405 });
 }
 
+async function handleAccountSettings(request: Request, env: Env, method: string) {
+  const tenantId = await getTenantId(request, env);
+  await ensureTenant(env, tenantId);
+
+  if (method === "GET") {
+    const tenant = await env.DB.prepare("SELECT name FROM tenants WHERE id = ?")
+      .bind(tenantId).first<{ name: string }>();
+    const user = await env.DB.prepare("SELECT username FROM users WHERE tenant_id = ? LIMIT 1")
+      .bind(tenantId).first<{ username: string }>();
+    return json({ tenantName: tenant?.name ?? "", username: user?.username ?? "" });
+  }
+
+  if (method === "PUT") {
+    const body = await readBody<{ tenantName?: string }>(request);
+    const name = (body.tenantName ?? "").trim();
+    if (!name) return json({ error: "Nome da conta é obrigatório" }, { status: 400 });
+    await env.DB.prepare("UPDATE tenants SET name = ? WHERE id = ?").bind(name, tenantId).run();
+    return json({ ok: true });
+  }
+
+  return new Response("Method not allowed", { status: 405 });
+}
+
+async function handleChangePassword(request: Request, env: Env) {
+  const tenantId = await getTenantId(request, env);
+  const body = await readBody<{ currentPassword?: string; newPassword?: string }>(request);
+  if (!body.currentPassword || !body.newPassword)
+    return json({ error: "Senha atual e nova senha são obrigatórias" }, { status: 400 });
+  if (body.newPassword.length < 6)
+    return json({ error: "A nova senha deve ter pelo menos 6 caracteres" }, { status: 400 });
+
+  const user = await env.DB.prepare(
+    "SELECT id, password_hash FROM users WHERE tenant_id = ? LIMIT 1",
+  ).bind(tenantId).first<{ id: number; password_hash: string }>();
+  if (!user) return json({ error: "Usuário não encontrado" }, { status: 404 });
+
+  const valid = await verifyPassword(body.currentPassword, user.password_hash);
+  if (!valid) return json({ error: "Senha atual incorreta" }, { status: 401 });
+
+  const newHash = await hashPassword(body.newPassword);
+  await env.DB.prepare("UPDATE users SET password_hash = ? WHERE id = ?")
+    .bind(newHash, user.id).run();
+  return json({ ok: true });
+}
+
 async function handleCRM(request: Request, env: Env, method: string, url: URL) {
   const pathname = url.pathname;
   const parts = pathname.split("/").filter(Boolean);
@@ -3108,6 +3153,10 @@ export default {
         response = await handleDashboardStats(request, env);
       } else if (pathname === "/api/settings" && (method === "GET" || method === "PUT")) {
         response = await handleSettings(request, env, method);
+      } else if (pathname === "/api/settings/account" && (method === "GET" || method === "PUT")) {
+        response = await handleAccountSettings(request, env, method);
+      } else if (pathname === "/api/settings/password" && method === "PUT") {
+        response = await handleChangePassword(request, env);
       } else if (pathname.startsWith("/api/connections/whatsapp")) {
         response = await handleWhatsappConnection(request, env, method, urlForRouting);
       } else if (pathname.startsWith("/api/lead-folders")) {
