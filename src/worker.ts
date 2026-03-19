@@ -3951,6 +3951,7 @@ async function handleEvolutionWebhook(request: Request, env: Env, ctx: Execution
          AND NOT EXISTS (
            SELECT 1 FROM whatsapp_buffer
            WHERE tenant_id = ? AND phone = ? AND processed = 0 AND processor_claimed = 1
+             AND received_at > datetime('now', '-35 seconds')
          )
        ORDER BY id ASC LIMIT 1
      )`,
@@ -3969,7 +3970,7 @@ async function handleEvolutionWebhook(request: Request, env: Env, ctx: Execution
   const POLL_MS            = 1_200;
   const COMPOSING_GRACE_MS = 5_000;
   const IDLE_GRACE_MS      = 15_000;
-  const MAX_SAFETY_MS      = 120_000; // 2 minutos — segurança absoluta
+  const MAX_SAFETY_MS      = 25_000; // limite do Cloudflare Worker (~30s wall time)
   const startWait = Date.now();
   let lastComposingDetectedAt = 0; // rastreia quando o composing foi detectado por último
 
