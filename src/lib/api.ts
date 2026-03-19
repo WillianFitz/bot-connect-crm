@@ -163,12 +163,18 @@ export const api = {
     }>(`/campaigns/run${options?.ignoreWindow ? "?ignoreWindow=1" : ""}`, { method: "POST" }),
 
   getSettings: () =>
-    request<{ notification_whatsapp_phone: string }>("/settings"),
-  updateSettings: (payload: { notification_whatsapp_phone: string }) =>
-    request<{ notification_whatsapp_phone: string }>("/settings", {
+    request<{ notification_whatsapp_phone: string; notification_group_jid: string }>("/settings"),
+  updateSettings: (payload: { notification_whatsapp_phone?: string; notification_group_jid?: string }) =>
+    request<{ ok: boolean }>("/settings", {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
+  getGroups: () =>
+    request<Array<{ id: string; name: string }>>("/groups"),
+  getNotificationSettings: () =>
+    request<{ notification_whatsapp_phone: string; notification_group_jid: string }>("/settings"),
+  saveNotificationSettings: (data: { notification_whatsapp_phone?: string; notification_group_jid?: string }) =>
+    request<{ ok: boolean }>("/settings", { method: "PUT", body: JSON.stringify(data) }),
 
   // Booking / Availability
   getAvailabilitySettings: () =>

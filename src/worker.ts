@@ -1543,6 +1543,22 @@ async function sendWhatsAppMessage(
   }
 }
 
+async function sendNotificationMessage(env: Env, tenantId: string, text: string): Promise<void> {
+  try {
+    const rows = await env.DB.prepare(
+      "SELECT key, value FROM tenant_settings WHERE tenant_id = ? AND key IN ('notification_whatsapp_phone','notification_group_jid')",
+    ).bind(tenantId).all<{ key: string; value: string }>();
+    const map: Record<string, string> = {};
+    for (const r of rows.results ?? []) map[r.key] = r.value;
+    const phone = map["notification_whatsapp_phone"];
+    const group = map["notification_group_jid"];
+    if (phone) await sendWhatsAppMessage(env, tenantId, phone, text);
+    if (group) await sendWhatsAppMessage(env, tenantId, group, text);
+  } catch (e) {
+    console.error("[notification] sendNotificationMessage error", e);
+  }
+}
+
 const BR_DAY_MAP: Record<string, string> = { dom: "Dom", seg: "Seg", ter: "Ter", qua: "Qua", qui: "Qui", sex: "Sex", sáb: "Sáb", sab: "Sáb" };
 
 function normalizeTimeToHHMM(s: string): string {
@@ -1834,6 +1850,11 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
       )
         .bind(camp.id, tenantId)
         .run();
+      const totalSentRow = await env.DB.prepare(
+        "SELECT COUNT(*) as c FROM campaign_sends WHERE campaign_id = ? AND status = 'sent'",
+      ).bind(camp.id).first<{ c: number }>();
+      const sentCount = Number(totalSentRow?.c ?? 0);
+      await sendNotificationMessage(env, tenantId, `✅ Campanha "${camp.name}" finalizada. ${sentCount} mensagens enviadas.`);
     }
 
   }
@@ -2115,28 +2136,51 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
   return new Response("Method not allowed", { status: 405 });
 }
 
+async function handleGetGroups(request: Request, env: Env): Promise<Response> {
+  const tenantId = await getTenantId(request, env);
+  const baseUrl = getEvolutionBaseUrl(env);
+  if (!baseUrl || !env.EVOLUTION_API_KEY) return json([]);
+  try {
+    const res = await fetch(`${baseUrl}/group/fetchAllGroups/${tenantId}?getParticipants=false`, {
+      headers: { apikey: env.EVOLUTION_API_KEY },
+    });
+    if (!res.ok) return json([]);
+    const data = await res.json() as any[];
+    const groups = (Array.isArray(data) ? data : []).map((g: any) => ({
+      id: g.id || g.jid || "",
+      name: g.subject || g.name || g.id || "",
+    })).filter((g: any) => g.id);
+    return json(groups);
+  } catch {
+    return json([]);
+  }
+}
+
 async function handleSettings(request: Request, env: Env, method: string) {
   const tenantId = await getTenantId(request, env);
   await ensureTenant(env, tenantId);
 
   if (method === "GET") {
-    const row = await env.DB.prepare(
-      "SELECT value FROM tenant_settings WHERE tenant_id = ? AND key = ?",
-    )
-      .bind(tenantId, "notification_whatsapp_phone")
-      .first<{ value: string | null }>();
-    return json({ notification_whatsapp_phone: row?.value ?? "" });
+    const rows = await env.DB.prepare(
+      "SELECT key, value FROM tenant_settings WHERE tenant_id = ? AND key IN ('notification_whatsapp_phone','notification_group_jid')",
+    ).bind(tenantId).all<{ key: string; value: string }>();
+    const map: Record<string, string> = {};
+    for (const r of rows.results ?? []) map[r.key] = r.value;
+    return json({
+      notification_whatsapp_phone: map["notification_whatsapp_phone"] ?? "",
+      notification_group_jid: map["notification_group_jid"] ?? "",
+    });
   }
 
   if (method === "PUT") {
-    const body = await readBody<{ notification_whatsapp_phone?: string }>(request);
-    const value = body.notification_whatsapp_phone != null ? String(body.notification_whatsapp_phone).trim() : "";
-    await env.DB.prepare(
-      "INSERT OR REPLACE INTO tenant_settings (tenant_id, key, value) VALUES (?, ?, ?)",
-    )
-      .bind(tenantId, "notification_whatsapp_phone", value)
-      .run();
-    return json({ notification_whatsapp_phone: value });
+    const body = await readBody<{ notification_whatsapp_phone?: string; notification_group_jid?: string }>(request);
+    const phone = body.notification_whatsapp_phone != null ? String(body.notification_whatsapp_phone).trim() : null;
+    const group = body.notification_group_jid != null ? String(body.notification_group_jid).trim() : null;
+    const stmts: D1PreparedStatement[] = [];
+    if (phone !== null) stmts.push(env.DB.prepare("INSERT OR REPLACE INTO tenant_settings (tenant_id, key, value) VALUES (?, 'notification_whatsapp_phone', ?)").bind(tenantId, phone));
+    if (group !== null) stmts.push(env.DB.prepare("INSERT OR REPLACE INTO tenant_settings (tenant_id, key, value) VALUES (?, 'notification_group_jid', ?)").bind(tenantId, group));
+    if (stmts.length) await env.DB.batch(stmts);
+    return json({ ok: true });
   }
 
   return new Response("Method not allowed", { status: 405 });
@@ -2319,6 +2363,15 @@ async function handlePublicBooking(request: Request, env: Env, method: string, u
       }
     }
 
+    // Notify tenant about new booking
+    try {
+      const d = new Date(scheduled_at);
+      const dateStr = d.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+      await sendNotificationMessage(env, tenantId, `📅 Novo agendamento: ${body.name} para ${dateStr}.`);
+    } catch (e) {
+      console.error("[booking] notification error", e);
+    }
+
     return json({ ok: true });
   }
 
@@ -2397,6 +2450,11 @@ async function handleAppointments(request: Request, env: Env, method: string, ur
       body.status ?? "pending",
       body.reminder_minutes ?? 30,
     ).first<{ id: number }>();
+    try {
+      const dateStr = new Date(body.scheduled_at).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+      const clientName = body.title;
+      await sendNotificationMessage(env, tenantId, `📅 Novo agendamento: ${clientName} para ${dateStr}.`);
+    } catch { /* ignore notification errors */ }
     return json({ ok: true, id: res?.id });
   }
 
@@ -2457,15 +2515,26 @@ async function processAppointmentReminders(env: Env, tenantId: string) {
     // Mark sent first to avoid double-sends
     await env.DB.prepare("UPDATE appointments SET reminder_sent = 1 WHERE id = ?").bind(apt.id).run();
 
+    const date = new Date(apt.scheduled_at.replace(" ", "T") + (apt.scheduled_at.includes("Z") ? "" : "Z"));
+    const timeStr = date.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" });
+
     if (apt.lead_phone) {
       try {
-        const date = new Date(apt.scheduled_at);
-        const timeStr = date.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
         const msg = `⏰ *Lembrete de compromisso*\n\n*${apt.title}*\nAgendado para: ${timeStr}\n\nTe esperamos! 😊`;
         await sendWhatsAppMessage(env, tenantId, apt.lead_phone, msg);
       } catch (e) {
         console.error("[reminder] send error", e);
       }
+    }
+
+    // Notify the tenant
+    try {
+      const clientLabel = apt.lead_name ? `${apt.lead_name}` : apt.title;
+      const phoneLabel = apt.lead_phone ? ` | 📞 ${apt.lead_phone}` : "";
+      const notifMsg = `⏰ *Lembrete de agendamento*\n\n👤 Cliente: *${clientLabel}*${phoneLabel}\n📅 Horário: *${timeStr}*\n📋 Assunto: ${apt.title}`;
+      await sendNotificationMessage(env, tenantId, notifMsg);
+    } catch (e) {
+      console.error("[reminder] tenant notification error", e);
     }
   }
 }
@@ -4373,6 +4442,8 @@ export default {
         response = await handleClientLogin(request, env);
       } else if (pathname === "/api/dashboard/stats" && method === "GET") {
         response = await handleDashboardStats(request, env);
+      } else if (pathname === "/api/groups" && method === "GET") {
+        response = await handleGetGroups(request, env);
       } else if (pathname === "/api/settings" && (method === "GET" || method === "PUT")) {
         response = await handleSettings(request, env, method);
       } else if (pathname === "/api/settings/account" && (method === "GET" || method === "PUT")) {

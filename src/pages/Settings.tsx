@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Save, Bell, Key, Building2, Loader2, Check, Calendar, Copy, ExternalLink, Link2 } from "lucide-react";
+import { Save, Bell, Key, Building2, Loader2, Check, Calendar, Copy, ExternalLink, Link2, Users, Phone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -73,16 +73,34 @@ export default function SettingsPage() {
     queryFn: api.getSettings,
   });
 
+  const groupsQuery = useQuery({
+    queryKey: ["whatsapp-groups"],
+    queryFn: api.getGroups,
+  });
+
+  const [notifMode, setNotifMode] = useState<"phone" | "group">("phone");
   const [notifPhone, setNotifPhone] = useState("");
+  const [notifGroupJid, setNotifGroupJid] = useState("");
 
   useEffect(() => {
     if (settingsQuery.data) {
       setNotifPhone(settingsQuery.data.notification_whatsapp_phone ?? "");
+      setNotifGroupJid(settingsQuery.data.notification_group_jid ?? "");
+      if (settingsQuery.data.notification_group_jid) {
+        setNotifMode("group");
+      } else {
+        setNotifMode("phone");
+      }
     }
   }, [settingsQuery.data]);
 
   const saveNotifMutation = useMutation({
-    mutationFn: () => api.updateSettings({ notification_whatsapp_phone: notifPhone }),
+    mutationFn: () => {
+      if (notifMode === "group") {
+        return api.updateSettings({ notification_group_jid: notifGroupJid, notification_whatsapp_phone: "" });
+      }
+      return api.updateSettings({ notification_whatsapp_phone: notifPhone, notification_group_jid: "" });
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["settings"] });
       toast({ title: "Notificações salvas", description: "Configuração de WhatsApp atualizada." });
@@ -228,7 +246,7 @@ export default function SettingsPage() {
               <Bell className="h-4 w-4 text-primary" /> Notificações via WhatsApp
             </h3>
             <p className="text-xs text-muted-foreground">
-              Informe o número que receberá alertas do sistema (erros de campanha, novos leads, etc.).
+              Escolha onde receber alertas do sistema (conclusão de campanhas, novos agendamentos, etc.).
             </p>
 
             {settingsQuery.isLoading ? (
@@ -236,16 +254,72 @@ export default function SettingsPage() {
                 <Loader2 className="h-4 w-4 animate-spin" /> Carregando...
               </div>
             ) : (
-              <div className="max-w-sm space-y-3">
-                <div>
-                  <Label className="text-xs text-muted-foreground">Número WhatsApp (com DDI)</Label>
-                  <Input
-                    className="mt-1 bg-secondary border-border/50"
-                    value={notifPhone}
-                    onChange={(e) => setNotifPhone(e.target.value)}
-                    placeholder="5511999999999"
-                  />
+              <div className="max-w-sm space-y-4">
+                {/* Mode selector */}
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setNotifMode("phone")}
+                    className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium border transition-colors flex-1 justify-center
+                      ${notifMode === "phone"
+                        ? "border-transparent text-white"
+                        : "border-border/50 text-muted-foreground hover:bg-secondary"
+                      }`}
+                    style={notifMode === "phone" ? { background: "linear-gradient(135deg, hsl(192 91% 52%), hsl(265 80% 60%))" } : undefined}
+                  >
+                    <Phone className="h-3.5 w-3.5" />
+                    Número de telefone
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNotifMode("group")}
+                    className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium border transition-colors flex-1 justify-center
+                      ${notifMode === "group"
+                        ? "border-transparent text-white"
+                        : "border-border/50 text-muted-foreground hover:bg-secondary"
+                      }`}
+                    style={notifMode === "group" ? { background: "linear-gradient(135deg, hsl(192 91% 52%), hsl(265 80% 60%))" } : undefined}
+                  >
+                    <Users className="h-3.5 w-3.5" />
+                    Grupo do WhatsApp
+                  </button>
                 </div>
+
+                {notifMode === "phone" ? (
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Número WhatsApp (com DDI)</Label>
+                    <Input
+                      className="mt-1 bg-secondary border-border/50"
+                      value={notifPhone}
+                      onChange={(e) => setNotifPhone(e.target.value)}
+                      placeholder="5511999999999"
+                    />
+                  </div>
+                ) : (
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Grupo do WhatsApp</Label>
+                    {groupsQuery.isLoading ? (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground mt-2">
+                        <Loader2 className="h-4 w-4 animate-spin" /> Carregando grupos...
+                      </div>
+                    ) : (groupsQuery.data?.length ?? 0) === 0 ? (
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Nenhum grupo encontrado. Verifique se o WhatsApp está conectado.
+                      </p>
+                    ) : (
+                      <Select value={notifGroupJid} onValueChange={setNotifGroupJid}>
+                        <SelectTrigger className="mt-1 bg-secondary border-border/50 h-9 text-sm">
+                          <SelectValue placeholder="Selecione um grupo..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(groupsQuery.data ?? []).map((g) => (
+                            <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  </div>
+                )}
 
                 <Button
                   size="sm"
