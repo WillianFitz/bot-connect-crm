@@ -1,70 +1,58 @@
 import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import type { Handoff, HandoffMessage } from "@/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import {
-  MessageSquare,
-  CheckCheck,
-  Clock,
-  User,
-  Bot,
-  Send,
-  RefreshCw,
-  PhoneCall,
-  CircleCheck,
-  Inbox,
+  MessageSquare, CheckCheck, Clock, User, Bot, Send, RefreshCw,
+  PhoneCall, CircleCheck, Inbox, PauseCircle, PlayCircle,
 } from "lucide-react";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
+  AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 
-function formatTime(dateStr: string) {
+type ConvRow = {
+  phone: string;
+  contact_name: string | null;
+  last_message: string | null;
+  last_message_role: string | null;
+  last_message_at: string | null;
+  bot_status: "active" | "paused";
+  handoff_id: number | null;
+  handoff_status: "pending" | "active" | null;
+  message_count: number;
+};
+
+type Message = { role: "user" | "assistant"; content: string; created_at: string };
+
+function formatTime(dateStr: string | null) {
   if (!dateStr) return "";
   try {
     const d = new Date(dateStr.endsWith("Z") ? dateStr : dateStr + "Z");
-    const now = new Date();
-    const diffMs = now.getTime() - d.getTime();
-    const diffMin = Math.floor(diffMs / 60_000);
+    const diffMin = Math.floor((Date.now() - d.getTime()) / 60_000);
     if (diffMin < 1) return "agora";
     if (diffMin < 60) return `${diffMin}min`;
     const diffH = Math.floor(diffMin / 60);
     if (diffH < 24) return `${diffH}h`;
     return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
-  } catch {
-    return "";
-  }
+  } catch { return ""; }
 }
 
-function formatMessageTime(dateStr: string) {
-  if (!dateStr) return "";
+function formatMsgTime(dateStr: string) {
   try {
     const d = new Date(dateStr.endsWith("Z") ? dateStr : dateStr + "Z");
     return d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-  } catch {
-    return "";
-  }
+  } catch { return ""; }
 }
 
-function statusBadge(status: Handoff["status"]) {
-  if (status === "pending")
-    return <Badge variant="outline" className="text-yellow-600 border-yellow-400 bg-yellow-50 dark:bg-yellow-950/20 text-[10px]">Aguardando</Badge>;
-  if (status === "active")
-    return <Badge variant="outline" className="text-green-600 border-green-400 bg-green-50 dark:bg-green-950/20 text-[10px]">Em atendimento</Badge>;
-  return <Badge variant="outline" className="text-muted-foreground text-[10px]">Encerrado</Badge>;
+function BotBadge({ status }: { status: "active" | "paused" }) {
+  if (status === "paused")
+    return <Badge variant="outline" className="text-amber-500 border-amber-400 bg-amber-50 dark:bg-amber-950/20 text-[10px] gap-1"><PauseCircle className="h-2.5 w-2.5" />Bot pausado</Badge>;
+  return <Badge variant="outline" className="text-emerald-500 border-emerald-400 bg-emerald-50 dark:bg-emerald-950/20 text-[10px] gap-1"><PlayCircle className="h-2.5 w-2.5" />Bot ativo</Badge>;
 }
 
 export default function InboxPage() {
@@ -72,10 +60,10 @@ export default function InboxPage() {
   const qc = useQueryClient();
   const [selectedPhone, setSelectedPhone] = useState<string | null>(null);
   const [reply, setReply] = useState("");
-  const [filter, setFilter] = useState<"open" | "all">("open");
+  const [search, setSearch] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  const handoffsQuery = useQuery({
+  const convsQuery = useQuery({
     queryKey: ["inbox-handoffs"],
     queryFn: () => api.getInboxHandoffs(),
     refetchInterval: 8_000,
@@ -98,28 +86,40 @@ export default function InboxPage() {
     onError: (e: Error) => toast({ title: "Erro ao enviar", description: e.message, variant: "destructive" }),
   });
 
-  const resolveMutation = useMutation({
-    mutationFn: (phone: string) => api.resolveInbox(phone),
+  const pauseMutation = useMutation({
+    mutationFn: (phone: string) => api.pauseInboxBot(phone),
     onSuccess: () => {
-      toast({ title: "Atendimento encerrado", description: "Bot reativado para este contato." });
-      setSelectedPhone(null);
+      toast({ title: "Bot pausado", description: "Você pode responder manualmente." });
       qc.invalidateQueries({ queryKey: ["inbox-handoffs"] });
     },
     onError: (e: Error) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
-  // Scroll to bottom when messages change
+  const resolveMutation = useMutation({
+    mutationFn: (phone: string) => api.resolveInbox(phone),
+    onSuccess: () => {
+      toast({ title: "Bot reativado" });
+      qc.invalidateQueries({ queryKey: ["inbox-handoffs"] });
+    },
+    onError: (e: Error) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
+  });
+
+  // Scroll to bottom when messages load
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messagesQuery.data]);
+    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 80);
+  }, [messagesQuery.data?.length]);
 
-  const handoffs = handoffsQuery.data ?? [];
-  const filtered = filter === "open"
-    ? handoffs.filter((h) => h.status !== "resolved")
-    : handoffs;
+  const convs = convsQuery.data ?? [];
+  const filtered = convs.filter((c) => {
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    return (c.contact_name || "").toLowerCase().includes(q) || c.phone.includes(q);
+  });
 
-  const selected = handoffs.find((h) => h.phone === selectedPhone) ?? null;
-  const messages: HandoffMessage[] = (messagesQuery.data ?? []) as HandoffMessage[];
+  const selected = convs.find((c) => c.phone === selectedPhone) ?? null;
+  const messages = (messagesQuery.data ?? []) as Message[];
+
+  const pausedCount = convs.filter((c) => c.bot_status === "paused").length;
 
   function handleSend() {
     const text = reply.trim();
@@ -127,127 +127,108 @@ export default function InboxPage() {
     replyMutation.mutate(text);
   }
 
-  const openCount = handoffs.filter((h) => h.status !== "resolved").length;
-
   return (
-    <div className="space-y-4 animate-slide-in">
+    // Layout ocupa a altura disponível sem crescer além da tela
+    <div className="flex flex-col gap-4 h-[calc(100vh-120px)] animate-slide-in">
+
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between shrink-0">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
             <Inbox className="h-6 w-6 text-primary" />
             Inbox
-            {openCount > 0 && (
-              <Badge className="bg-primary text-primary-foreground text-xs">{openCount}</Badge>
+            {pausedCount > 0 && (
+              <Badge className="bg-amber-500 text-white text-xs">{pausedCount} pausado{pausedCount > 1 ? "s" : ""}</Badge>
             )}
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Atendimentos transferidos do bot para humano
+            Monitore e intervenha em qualquer conversa do bot
           </p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => qc.invalidateQueries({ queryKey: ["inbox-handoffs"] })}
-          className="gap-2"
-        >
+        <Button variant="outline" size="sm" onClick={() => qc.invalidateQueries({ queryKey: ["inbox-handoffs"] })} className="gap-2">
           <RefreshCw className="h-4 w-4" />
           Atualizar
         </Button>
       </div>
 
-      {/* Main layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-4" style={{ minHeight: 520 }}>
-        {/* Left panel — conversation list */}
-        <div className="rounded-xl border border-border/50 bg-card flex flex-col overflow-hidden">
-          {/* Filter tabs */}
-          <div className="flex border-b border-border/50">
-            <button
-              onClick={() => setFilter("open")}
-              className={`flex-1 py-2.5 text-xs font-medium transition-colors ${
-                filter === "open"
-                  ? "text-primary border-b-2 border-primary"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Em aberto ({handoffs.filter((h) => h.status !== "resolved").length})
-            </button>
-            <button
-              onClick={() => setFilter("all")}
-              className={`flex-1 py-2.5 text-xs font-medium transition-colors ${
-                filter === "all"
-                  ? "text-primary border-b-2 border-primary"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Todos ({handoffs.length})
-            </button>
+      {/* Main grid — ocupa o espaço restante */}
+      <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-4 flex-1 min-h-0">
+
+        {/* Left panel */}
+        <div className="rounded-xl border border-border/50 bg-card flex flex-col min-h-0 overflow-hidden">
+          <div className="p-2 border-b border-border/50 shrink-0">
+            <Input
+              className="h-8 text-xs bg-secondary border-border/50"
+              placeholder="Buscar contato..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
           </div>
 
-          <ScrollArea className="flex-1">
-            {handoffsQuery.isLoading && (
+          {/* Lista com scroll interno */}
+          <div className="flex-1 overflow-y-auto">
+            {convsQuery.isLoading && (
               <div className="p-6 text-center text-sm text-muted-foreground">Carregando...</div>
             )}
-            {!handoffsQuery.isLoading && filtered.length === 0 && (
+            {!convsQuery.isLoading && filtered.length === 0 && (
               <div className="p-8 text-center">
                 <MessageSquare className="h-8 w-8 text-muted-foreground/40 mx-auto mb-2" />
-                <p className="text-sm text-muted-foreground">Nenhum atendimento</p>
+                <p className="text-sm text-muted-foreground">Nenhuma conversa</p>
               </div>
             )}
-            {filtered.map((h) => (
+            {filtered.map((c) => (
               <button
-                key={h.id}
-                onClick={() => setSelectedPhone(h.phone)}
+                key={c.phone}
+                onClick={() => setSelectedPhone(c.phone)}
                 className={`w-full text-left p-3 border-b border-border/30 hover:bg-accent/50 transition-colors ${
-                  selectedPhone === h.phone ? "bg-accent" : ""
+                  selectedPhone === c.phone ? "bg-accent" : ""
                 }`}
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
-                    <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                      <User className="h-4 w-4 text-primary" />
+                    <div className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 ${
+                      c.bot_status === "paused" ? "bg-amber-500/15" : "bg-primary/10"
+                    }`}>
+                      <User className={`h-4 w-4 ${c.bot_status === "paused" ? "text-amber-500" : "text-primary"}`} />
                     </div>
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-foreground truncate">
-                        {h.contact_name || h.phone}
+                        {c.contact_name || c.phone}
                       </p>
-                      <p className="text-[11px] text-muted-foreground truncate">
-                        {h.phone}
-                      </p>
+                      <p className="text-[10px] text-muted-foreground">{c.phone}</p>
                     </div>
                   </div>
                   <div className="flex flex-col items-end gap-1 shrink-0">
-                    <span className="text-[10px] text-muted-foreground">
-                      {h.last_message_at ? formatTime(h.last_message_at) : formatTime(h.created_at)}
-                    </span>
-                    {statusBadge(h.status)}
+                    <span className="text-[10px] text-muted-foreground">{formatTime(c.last_message_at)}</span>
+                    <BotBadge status={c.bot_status} />
                   </div>
                 </div>
-                {h.last_message && (
+                {c.last_message && (
                   <p className="text-[11px] text-muted-foreground truncate mt-1.5 pl-10">
-                    {h.last_message_role === "assistant" ? "Você: " : ""}
-                    {h.last_message}
+                    {c.last_message_role === "assistant" ? "Bot: " : ""}
+                    {c.last_message}
                   </p>
                 )}
               </button>
             ))}
-          </ScrollArea>
+          </div>
         </div>
 
-        {/* Right panel — conversation */}
+        {/* Right panel */}
         {!selectedPhone ? (
           <div className="rounded-xl border border-border/50 bg-card flex items-center justify-center">
             <div className="text-center">
               <MessageSquare className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
-              <p className="text-muted-foreground text-sm">Selecione uma conversa</p>
+              <p className="text-muted-foreground text-sm">Selecione uma conversa para monitorar</p>
             </div>
           </div>
         ) : (
-          <div className="rounded-xl border border-border/50 bg-card flex flex-col overflow-hidden">
-            {/* Conversation header */}
-            <div className="flex items-center justify-between p-4 border-b border-border/50">
+          <div className="rounded-xl border border-border/50 bg-card flex flex-col min-h-0 overflow-hidden">
+
+            {/* Header da conversa */}
+            <div className="flex items-center justify-between p-3 border-b border-border/50 shrink-0">
               <div className="flex items-center gap-3">
-                <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center">
+                <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
                   <User className="h-5 w-5 text-primary" />
                 </div>
                 <div>
@@ -256,47 +237,67 @@ export default function InboxPage() {
                   </p>
                   <div className="flex items-center gap-2">
                     <p className="text-[11px] text-muted-foreground">{selectedPhone}</p>
-                    {selected && statusBadge(selected.status)}
+                    {selected && <BotBadge status={selected.bot_status} />}
+                    {selected?.message_count != null && (
+                      <span className="text-[10px] text-muted-foreground/60">{selected.message_count} msgs</span>
+                    )}
                   </div>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5 text-xs"
-                  onClick={() => window.open(`https://wa.me/${selectedPhone}`, "_blank")}
-                >
-                  <PhoneCall className="h-3.5 w-3.5" />
-                  WhatsApp
+
+              <div className="flex items-center gap-1.5">
+                <Button variant="outline" size="sm" className="gap-1 text-xs h-7"
+                  onClick={() => window.open(`https://wa.me/${selectedPhone}`, "_blank")}>
+                  <PhoneCall className="h-3 w-3" />
+                  WA
                 </Button>
-                {selected?.status !== "resolved" && (
+
+                {selected?.bot_status === "active" ? (
                   <AlertDialog>
                     <AlertDialogTrigger asChild>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="gap-1.5 text-xs text-green-600 border-green-300 hover:bg-green-50 dark:hover:bg-green-950/20"
-                      >
-                        <CircleCheck className="h-3.5 w-3.5" />
-                        Encerrar
+                      <Button variant="outline" size="sm"
+                        className="gap-1 text-xs h-7 text-amber-600 border-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/20">
+                        <PauseCircle className="h-3.5 w-3.5" />
+                        Pausar bot
                       </Button>
                     </AlertDialogTrigger>
                     <AlertDialogContent>
                       <AlertDialogHeader>
-                        <AlertDialogTitle>Encerrar atendimento?</AlertDialogTitle>
+                        <AlertDialogTitle>Pausar o bot?</AlertDialogTitle>
                         <AlertDialogDescription>
-                          O bot será reativado e voltará a responder automaticamente para{" "}
-                          <strong>{selected?.contact_name || selectedPhone}</strong>.
+                          O bot vai parar de responder para <strong>{selected?.contact_name || selectedPhone}</strong>. Você assume o atendimento manualmente.
                         </AlertDialogDescription>
                       </AlertDialogHeader>
                       <AlertDialogFooter>
                         <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                        <AlertDialogAction
-                          onClick={() => resolveMutation.mutate(selectedPhone)}
-                          className="bg-green-600 hover:bg-green-700"
-                        >
-                          Encerrar e reativar bot
+                        <AlertDialogAction onClick={() => pauseMutation.mutate(selectedPhone!)}
+                          className="bg-amber-500 hover:bg-amber-600">
+                          Pausar e assumir
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                ) : (
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button variant="outline" size="sm"
+                        className="gap-1 text-xs h-7 text-emerald-600 border-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/20">
+                        <CircleCheck className="h-3.5 w-3.5" />
+                        Reativar bot
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Reativar o bot?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          O bot voltará a responder automaticamente para <strong>{selected?.contact_name || selectedPhone}</strong>.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                        <AlertDialogAction onClick={() => resolveMutation.mutate(selectedPhone!)}
+                          className="bg-emerald-600 hover:bg-emerald-700">
+                          Reativar bot
                         </AlertDialogAction>
                       </AlertDialogFooter>
                     </AlertDialogContent>
@@ -305,81 +306,63 @@ export default function InboxPage() {
               </div>
             </div>
 
-            {/* Messages */}
-            <ScrollArea className="flex-1 p-4">
+            {/* Mensagens — scroll interno, ocupa espaço disponível */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0">
               {messagesQuery.isLoading && (
-                <div className="text-center text-sm text-muted-foreground py-8">Carregando conversa...</div>
+                <div className="text-center text-sm text-muted-foreground py-8">Carregando...</div>
               )}
-              {messages.length === 0 && !messagesQuery.isLoading && (
+              {!messagesQuery.isLoading && messages.length === 0 && (
                 <div className="text-center text-sm text-muted-foreground py-8">
                   <Clock className="h-6 w-6 mx-auto mb-2 text-muted-foreground/40" />
-                  Nenhuma mensagem ainda
+                  Nenhuma mensagem
                 </div>
               )}
-              <div className="space-y-3">
-                {messages.map((msg, i) => {
-                  const isBot = msg.role === "assistant";
-                  return (
-                    <div key={i} className={`flex ${isBot ? "justify-end" : "justify-start"}`}>
-                      <div className={`flex items-end gap-1.5 max-w-[75%] ${isBot ? "flex-row-reverse" : "flex-row"}`}>
-                        <div className={`h-6 w-6 rounded-full flex items-center justify-center shrink-0 ${
-                          isBot ? "bg-primary/10" : "bg-secondary"
+              {messages.map((msg, i) => {
+                const isBot = msg.role === "assistant";
+                return (
+                  <div key={i} className={`flex ${isBot ? "justify-end" : "justify-start"}`}>
+                    <div className={`flex items-end gap-1.5 max-w-[76%] ${isBot ? "flex-row-reverse" : "flex-row"}`}>
+                      <div className={`h-6 w-6 rounded-full flex items-center justify-center shrink-0 ${isBot ? "bg-primary/10" : "bg-secondary"}`}>
+                        {isBot ? <Bot className="h-3 w-3 text-primary" /> : <User className="h-3 w-3 text-muted-foreground" />}
+                      </div>
+                      <div>
+                        <div className={`rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap break-words ${
+                          isBot
+                            ? "bg-primary text-primary-foreground rounded-br-sm"
+                            : "bg-secondary text-foreground rounded-bl-sm"
                         }`}>
-                          {isBot
-                            ? <Bot className="h-3 w-3 text-primary" />
-                            : <User className="h-3 w-3 text-muted-foreground" />
-                          }
+                          {msg.content}
                         </div>
-                        <div>
-                          <div className={`rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap ${
-                            isBot
-                              ? "bg-primary text-primary-foreground rounded-br-sm"
-                              : "bg-secondary text-foreground rounded-bl-sm"
-                          }`}>
-                            {msg.content}
-                          </div>
-                          <p className={`text-[10px] text-muted-foreground mt-0.5 ${isBot ? "text-right" : "text-left"}`}>
-                            {isBot ? "Atendente" : (selected?.contact_name || "Cliente")}
-                            {" · "}
-                            {formatMessageTime(msg.created_at)}
-                            {isBot && <CheckCheck className="inline h-3 w-3 ml-1 text-blue-400" />}
-                          </p>
-                        </div>
+                        <p className={`text-[10px] text-muted-foreground mt-0.5 flex items-center gap-0.5 ${isBot ? "justify-end" : "justify-start"}`}>
+                          {isBot ? "Bot" : (selected?.contact_name || "Cliente")}
+                          {" · "}{formatMsgTime(msg.created_at)}
+                          {isBot && <CheckCheck className="h-3 w-3 text-blue-400" />}
+                        </p>
                       </div>
                     </div>
-                  );
-                })}
-                <div ref={bottomRef} />
-              </div>
-            </ScrollArea>
+                  </div>
+                );
+              })}
+              <div ref={bottomRef} />
+            </div>
 
-            <Separator />
-
-            {/* Reply input */}
-            {selected?.status === "resolved" ? (
-              <div className="p-3 text-center text-sm text-muted-foreground bg-secondary/30">
-                Atendimento encerrado — bot reativado
+            {/* Input de resposta */}
+            {selected?.bot_status === "active" ? (
+              <div className="p-3 border-t border-border/30 bg-secondary/20 shrink-0">
+                <p className="text-[11px] text-muted-foreground text-center">
+                  Bot ativo — pause o bot para responder manualmente
+                </p>
               </div>
             ) : (
-              <div className="p-3 flex gap-2">
+              <div className="p-3 border-t border-border/30 flex gap-2 shrink-0">
                 <Input
-                  placeholder="Digite sua resposta..."
+                  placeholder="Sua resposta..."
                   value={reply}
                   onChange={(e) => setReply(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      handleSend();
-                    }
-                  }}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
                   className="text-sm"
                 />
-                <Button
-                  onClick={handleSend}
-                  disabled={!reply.trim() || replyMutation.isPending}
-                  size="icon"
-                  className="shrink-0"
-                >
+                <Button onClick={handleSend} disabled={!reply.trim() || replyMutation.isPending} size="icon" className="shrink-0">
                   <Send className="h-4 w-4" />
                 </Button>
               </div>

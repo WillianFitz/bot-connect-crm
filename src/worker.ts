@@ -2529,7 +2529,30 @@ async function handleCRM(request: Request, env: Env, method: string, url: URL) {
       const res = await env.DB.prepare(
         "SELECT id, name, position, color, wip_limit FROM crm_columns WHERE tenant_id = ? ORDER BY position ASC",
       ).bind(tenantId).all();
-      return json(res.results || []);
+
+      // Auto-inicializa colunas padrão na primeira vez — feito no servidor para evitar
+      // race conditions quando múltiplas abas ou remontagens do componente disparam ao mesmo tempo
+      if (!res.results || res.results.length === 0) {
+        const defaults = [
+          { name: "Leads",       color: "#6366f1", position: 0 },
+          { name: "Em contato",  color: "#3b82f6", position: 1 },
+          { name: "Proposta",    color: "#22c55e", position: 2 },
+          { name: "Fechado",     color: "#f59e0b", position: 3 },
+        ];
+        await env.DB.batch(
+          defaults.map((d) =>
+            env.DB.prepare(
+              "INSERT INTO crm_columns (tenant_id, name, position, color) VALUES (?, ?, ?, ?)",
+            ).bind(tenantId, d.name, d.position, d.color),
+          ),
+        );
+        const fresh = await env.DB.prepare(
+          "SELECT id, name, position, color, wip_limit FROM crm_columns WHERE tenant_id = ? ORDER BY position ASC",
+        ).bind(tenantId).all();
+        return json(fresh.results || []);
+      }
+
+      return json(res.results);
     }
 
     if (method === "POST") {
@@ -3521,22 +3544,47 @@ async function handleInbox(request: Request, env: Env, method: string, url: URL)
   const parts = url.pathname.split("/").filter(Boolean);
   // parts: ["api","inbox"] or ["api","inbox",":phone","messages"] or ["api","inbox",":phone","resolve"] etc.
 
-  // GET /api/inbox — lista handoffs ativos com última mensagem
+  // GET /api/inbox — todas as conversas recentes + status do bot (handoff ou ativo)
   if (method === "GET" && parts.length === 2) {
+    // Busca todos os telefones com conversa nos últimos 30 dias
     const rows = await env.DB.prepare(
-      `SELECT h.id, h.phone, h.contact_name, h.status, h.trigger_reason, h.created_at, h.updated_at,
+      `SELECT
+         ac.phone,
+         COALESCE(l.company, ac.phone)                  AS contact_name,
+         MAX(ac.created_at)                              AS last_message_at,
          (SELECT content FROM agent_conversations
-          WHERE tenant_id = h.tenant_id AND phone = h.phone AND agent_id = 'atendimento'
-          ORDER BY created_at DESC LIMIT 1) AS last_message,
+          WHERE tenant_id = ac.tenant_id AND phone = ac.phone AND agent_id = 'atendimento'
+          ORDER BY created_at DESC LIMIT 1)              AS last_message,
          (SELECT role FROM agent_conversations
-          WHERE tenant_id = h.tenant_id AND phone = h.phone AND agent_id = 'atendimento'
-          ORDER BY created_at DESC LIMIT 1) AS last_message_role,
-         (SELECT created_at FROM agent_conversations
-          WHERE tenant_id = h.tenant_id AND phone = h.phone AND agent_id = 'atendimento'
-          ORDER BY created_at DESC LIMIT 1) AS last_message_at
-       FROM human_handoffs h
-       WHERE h.tenant_id = ?
-       ORDER BY CASE h.status WHEN 'pending' THEN 0 WHEN 'active' THEN 1 ELSE 2 END, h.updated_at DESC`,
+          WHERE tenant_id = ac.tenant_id AND phone = ac.phone AND agent_id = 'atendimento'
+          ORDER BY created_at DESC LIMIT 1)              AS last_message_role,
+         -- status do bot: paused se houver pause definitivo, active caso contrário
+         CASE
+           WHEN EXISTS (
+             SELECT 1 FROM agent_pauses ap
+             WHERE ap.tenant_id = ac.tenant_id AND ap.phone = ac.phone
+               AND (ap.pause_definitive = 1 OR (ap.paused_until IS NOT NULL AND ap.paused_until > datetime('now')))
+           ) THEN 'paused'
+           ELSE 'active'
+         END                                             AS bot_status,
+         -- handoff aberto, se houver
+         (SELECT hh.id FROM human_handoffs hh
+          WHERE hh.tenant_id = ac.tenant_id AND hh.phone = ac.phone
+            AND hh.status IN ('pending','active')
+          LIMIT 1)                                       AS handoff_id,
+         (SELECT hh.status FROM human_handoffs hh
+          WHERE hh.tenant_id = ac.tenant_id AND hh.phone = ac.phone
+            AND hh.status IN ('pending','active')
+          LIMIT 1)                                       AS handoff_status,
+         (SELECT COUNT(*) FROM agent_conversations
+          WHERE tenant_id = ac.tenant_id AND phone = ac.phone AND agent_id = 'atendimento') AS message_count
+       FROM agent_conversations ac
+       LEFT JOIN leads l ON l.tenant_id = ac.tenant_id AND l.phone = ac.phone
+       WHERE ac.tenant_id = ? AND ac.agent_id = 'atendimento'
+         AND ac.created_at > datetime('now', '-30 days')
+       GROUP BY ac.phone
+       ORDER BY last_message_at DESC
+       LIMIT 100`,
     ).bind(tenantId).all<Record<string, unknown>>();
     return json(rows.results || []);
   }
@@ -3590,6 +3638,29 @@ async function handleInbox(request: Request, env: Env, method: string, url: URL)
       `UPDATE human_handoffs SET status = 'active', updated_at = datetime('now')
        WHERE tenant_id = ? AND phone = ? AND status IN ('pending','active')`,
     ).bind(tenantId, phone).run();
+    return json({ ok: true });
+  }
+
+  // PUT /api/inbox/:phone/pause — pausa bot e cria handoff manual
+  if (method === "PUT" && parts[3] === "pause") {
+    // Pausa definitiva
+    await env.DB.prepare(
+      `INSERT INTO agent_pauses (tenant_id, phone, paused_until, pause_definitive)
+       VALUES (?, ?, NULL, 1)
+       ON CONFLICT(tenant_id, phone) DO UPDATE SET paused_until = NULL, pause_definitive = 1`,
+    ).bind(tenantId, phone).run();
+    // Cria handoff se não houver já um aberto
+    const contactName = await env.DB.prepare(
+      "SELECT company FROM leads WHERE tenant_id = ? AND phone = ? LIMIT 1",
+    ).bind(tenantId, phone).first<{ company: string }>();
+    const openHandoff = await env.DB.prepare(
+      "SELECT id FROM human_handoffs WHERE tenant_id = ? AND phone = ? AND status IN ('pending','active') LIMIT 1",
+    ).bind(tenantId, phone).first<{ id: number }>();
+    if (!openHandoff) {
+      await env.DB.prepare(
+        "INSERT INTO human_handoffs (tenant_id, phone, contact_name, status, trigger_reason) VALUES (?, ?, ?, 'active', 'manual')",
+      ).bind(tenantId, phone, contactName?.company || phone).run();
+    }
     return json({ ok: true });
   }
 
@@ -3722,20 +3793,27 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
     "INSERT INTO whatsapp_buffer (tenant_id, phone, message) VALUES (?, ?, ?)",
   ).bind(tenantId, phone, userText).run();
 
-  // Tenta atomicamente reclamar o papel de processador (UPDATE retorna changes=1 apenas uma vez)
-  const debounceKey = `${tenantId}:${phone}`;
+  // Tenta atomicamente reclamar o papel de processador.
+  // A condição NOT EXISTS garante que só UM processador roda por telefone:
+  // se já há uma row com processor_claimed=1 (processador ativo), nenhuma outra
+  // mensagem consegue virar processador — ela fica no buffer e é coletada pelo
+  // processador atual no final da janela de espera.
   const claimed = await env.DB.prepare(
     `UPDATE whatsapp_buffer SET processor_claimed = 1
      WHERE id = (
        SELECT id FROM whatsapp_buffer
        WHERE tenant_id = ? AND phone = ? AND processed = 0 AND processor_claimed = 0
+         AND NOT EXISTS (
+           SELECT 1 FROM whatsapp_buffer
+           WHERE tenant_id = ? AND phone = ? AND processed = 0 AND processor_claimed = 1
+         )
        ORDER BY id ASC LIMIT 1
      )`,
-  ).bind(tenantId, phone).run();
+  ).bind(tenantId, phone, tenantId, phone).run();
 
   if (!claimed.meta?.changes && !(claimed as any).changes) {
-    // Outro processador já está aguardando — mensagem salva no buffer, retorna
-    console.log(`[debounce] aguardando processor existente. phone:${phone}`);
+    // Processador ativo existe — mensagem já salva no buffer, será coletada por ele
+    console.log(`[debounce] buffer: processador ativo para phone:${phone}`);
     return json({ ok: true });
   }
 

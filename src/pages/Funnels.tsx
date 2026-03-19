@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   GripVertical, User, Plus, Search, X, Settings2, Trash2,
@@ -50,9 +50,6 @@ interface CrmLead {
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
-
-const DEFAULT_COLUMNS = ["Leads", "Em contato", "Proposta", "Fechado"];
-const DEFAULT_COLORS  = ["#6366f1", "#3b82f6", "#22c55e", "#f59e0b"];
 
 const COLUMN_COLORS = [
   "#6366f1", "#3b82f6", "#06b6d4", "#22c55e",
@@ -603,7 +600,6 @@ function AddLeadDialog({
 export default function Funnels() {
   const queryClient   = useQueryClient();
   const { toast }     = useToast();
-  const initializedRef = useRef(false);
 
   const [search, setSearch]               = useState("");
   const [draggingId, setDraggingId]       = useState<number | null>(null);
@@ -615,9 +611,15 @@ export default function Funnels() {
   const [newColName, setNewColName]       = useState("");
 
   // ── Queries ──────────────────────────────────────────────────────────────────
-  const columnsQuery  = useQuery({ queryKey: ["crm-columns"], queryFn: api.getCrmColumns });
-  const leadsQuery    = useQuery({ queryKey: ["crm-leads"],   queryFn: api.getCrmLeads });
-  const allLeadsQuery = useQuery({ queryKey: ["leads-for-crm"], queryFn: () => api.getLeads() });
+  const columnsQuery  = useQuery({ queryKey: ["crm-columns"], queryFn: api.getCrmColumns, staleTime: 30_000 });
+  const leadsQuery    = useQuery({ queryKey: ["crm-leads"],   queryFn: api.getCrmLeads,   staleTime: 15_000 });
+  // Só carrega leads disponíveis quando o dialog de adicionar está aberto
+  const allLeadsQuery = useQuery({
+    queryKey: ["leads-for-crm"],
+    queryFn: () => api.getLeads(),
+    enabled: addLeadCol !== null,
+    staleTime: 60_000,
+  });
 
   // ── Mutations ────────────────────────────────────────────────────────────────
   const createColumn = useMutation({
@@ -656,22 +658,6 @@ export default function Funnels() {
     mutationFn: api.deleteCrmLead,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["crm-leads"] }),
   });
-
-  // Init default columns ONCE — only if the server confirmed 0 columns exist
-  useEffect(() => {
-    if (
-      !initializedRef.current &&
-      columnsQuery.isSuccess &&
-      Array.isArray(columnsQuery.data) &&
-      columnsQuery.data.length === 0
-    ) {
-      initializedRef.current = true;
-      DEFAULT_COLUMNS.forEach((name, i) =>
-        createColumn.mutate({ name, position: i, color: DEFAULT_COLORS[i] }),
-      );
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [columnsQuery.isSuccess, columnsQuery.data?.length]);
 
   // ── Derived ──────────────────────────────────────────────────────────────────
   const columns = useMemo(

@@ -555,16 +555,15 @@ export const api = {
   // ── Inbox de Atendimento Humano ───────────────────────────────────────────
   getInboxHandoffs: () =>
     request<Array<{
-      id: number;
       phone: string;
       contact_name: string | null;
-      status: "pending" | "active" | "resolved";
-      trigger_reason: string;
-      created_at: string;
-      updated_at: string;
       last_message: string | null;
       last_message_role: string | null;
       last_message_at: string | null;
+      bot_status: "active" | "paused";
+      handoff_id: number | null;
+      handoff_status: "pending" | "active" | null;
+      message_count: number;
     }>>("/inbox"),
 
   getInboxMessages: (phone: string) =>
@@ -589,6 +588,11 @@ export const api = {
     request<{ ok: boolean; id: number }>("/inbox", {
       method: "POST",
       body: JSON.stringify(payload),
+    }),
+
+  pauseInboxBot: (phone: string) =>
+    request<{ ok: boolean }>(`/inbox/${encodeURIComponent(phone)}/pause`, {
+      method: "PUT",
     }),
 };
 
