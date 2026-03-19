@@ -2530,22 +2530,32 @@ async function handleCRM(request: Request, env: Env, method: string, url: URL) {
         "SELECT id, name, position, color, wip_limit FROM crm_columns WHERE tenant_id = ? ORDER BY position ASC",
       ).bind(tenantId).all();
 
-      // Auto-inicializa colunas padrão na primeira vez — feito no servidor para evitar
-      // race conditions quando múltiplas abas ou remontagens do componente disparam ao mesmo tempo
+      // Auto-inicializa colunas padrão na primeira vez.
+      // Usa INSERT ... SELECT ... WHERE NOT EXISTS para garantir atomicidade:
+      // mesmo que dois workers executem simultaneamente, apenas um INSERT terá efeito.
       if (!res.results || res.results.length === 0) {
-        const defaults = [
-          { name: "Leads",       color: "#6366f1", position: 0 },
-          { name: "Em contato",  color: "#3b82f6", position: 1 },
-          { name: "Proposta",    color: "#22c55e", position: 2 },
-          { name: "Fechado",     color: "#f59e0b", position: 3 },
-        ];
-        await env.DB.batch(
-          defaults.map((d) =>
-            env.DB.prepare(
-              "INSERT INTO crm_columns (tenant_id, name, position, color) VALUES (?, ?, ?, ?)",
-            ).bind(tenantId, d.name, d.position, d.color),
-          ),
-        );
+        await env.DB.batch([
+          env.DB.prepare(
+            `INSERT INTO crm_columns (tenant_id, name, position, color)
+             SELECT ?, 'Leads',      0, '#6366f1'
+             WHERE NOT EXISTS (SELECT 1 FROM crm_columns WHERE tenant_id = ? AND position = 0)`,
+          ).bind(tenantId, tenantId),
+          env.DB.prepare(
+            `INSERT INTO crm_columns (tenant_id, name, position, color)
+             SELECT ?, 'Em contato', 1, '#3b82f6'
+             WHERE NOT EXISTS (SELECT 1 FROM crm_columns WHERE tenant_id = ? AND position = 1)`,
+          ).bind(tenantId, tenantId),
+          env.DB.prepare(
+            `INSERT INTO crm_columns (tenant_id, name, position, color)
+             SELECT ?, 'Proposta',   2, '#22c55e'
+             WHERE NOT EXISTS (SELECT 1 FROM crm_columns WHERE tenant_id = ? AND position = 2)`,
+          ).bind(tenantId, tenantId),
+          env.DB.prepare(
+            `INSERT INTO crm_columns (tenant_id, name, position, color)
+             SELECT ?, 'Fechado',    3, '#f59e0b'
+             WHERE NOT EXISTS (SELECT 1 FROM crm_columns WHERE tenant_id = ? AND position = 3)`,
+          ).bind(tenantId, tenantId),
+        ]);
         const fresh = await env.DB.prepare(
           "SELECT id, name, position, color, wip_limit FROM crm_columns WHERE tenant_id = ? ORDER BY position ASC",
         ).bind(tenantId).all();
