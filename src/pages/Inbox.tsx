@@ -52,20 +52,30 @@ export default function InboxPage() {
   const listQ = useQuery({
     queryKey: ["inbox-list"],
     queryFn: api.getInboxHandoffs,
-    refetchInterval: 6_000,
+    refetchInterval: 3_000,
   });
 
   const msgsQ = useQuery({
     queryKey: ["inbox-msgs", sel],
     queryFn: () => api.getInboxMessages(sel!),
     enabled: !!sel,
-    refetchInterval: 4_000,
+    refetchInterval: 2_000,
   });
 
   const replyM = useMutation({
-    mutationFn: (msg: string) => api.replyInbox(sel!, msg),
-    onSuccess: () => {
+    mutationFn: async (msg: string) => {
+      // Pausa o bot automaticamente se estiver ativo antes de enviar
+      const current = listQ.data?.find((c) => c.phone === sel);
+      if (current?.bot_status === "active") await api.pauseInboxBot(sel!);
+      return api.replyInbox(sel!, msg);
+    },
+    onMutate: (msg: string) => {
+      // Update otimista: adiciona a mensagem imediatamente na tela
       setReply("");
+      const optimistic: Msg = { role: "assistant", content: msg, created_at: new Date().toISOString() };
+      qc.setQueryData(["inbox-msgs", sel], (old: Msg[] | undefined) => [...(old ?? []), optimistic]);
+    },
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["inbox-msgs", sel] });
       qc.invalidateQueries({ queryKey: ["inbox-list"] });
     },
@@ -293,29 +303,20 @@ export default function InboxPage() {
               <div ref={bottomRef} />
             </div>
 
-            {/* Input */}
+            {/* Input — sempre visível; ao enviar, pausa o bot automaticamente */}
             <div className="px-3 py-2.5 border-t border-border/30 shrink-0">
-              {current?.bot_status === "active" ? (
-                <p className="text-[11px] text-muted-foreground text-center py-0.5">
-                  Bot ativo —{" "}
-                  <button className="text-primary underline" onClick={() => pauseM.mutate(sel!)}>
-                    pausar para responder
-                  </button>
-                </p>
-              ) : (
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="Sua resposta... (Enter para enviar)"
-                    value={reply}
-                    onChange={(e) => setReply(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (reply.trim()) replyM.mutate(reply.trim()); } }}
-                    className="text-sm h-8"
-                  />
-                  <Button onClick={() => replyM.mutate(reply.trim())} disabled={!reply.trim() || replyM.isPending} size="icon" className="h-8 w-8 shrink-0">
-                    <Send className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              )}
+              <div className="flex gap-2">
+                <Input
+                  placeholder={current?.bot_status === "active" ? "Responder (pausa o bot automaticamente)..." : "Sua resposta... (Enter para enviar)"}
+                  value={reply}
+                  onChange={(e) => setReply(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (reply.trim()) replyM.mutate(reply.trim()); } }}
+                  className="text-sm h-8"
+                />
+                <Button onClick={() => replyM.mutate(reply.trim())} disabled={!reply.trim() || replyM.isPending} size="icon" className="h-8 w-8 shrink-0">
+                  <Send className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             </div>
           </div>
         )}
