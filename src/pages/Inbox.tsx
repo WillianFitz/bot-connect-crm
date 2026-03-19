@@ -76,7 +76,7 @@ export default function InboxPage() {
       qc.setQueryData(["inbox-msgs", sel], (old: Msg[] | undefined) => [...(old ?? []), optimistic]);
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["inbox-msgs", sel] });
+      // Não invalida inbox-msgs aqui — o polling de 2s sincroniza sem flicker
       qc.invalidateQueries({ queryKey: ["inbox-list"] });
     },
     onError: (e: Error) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
