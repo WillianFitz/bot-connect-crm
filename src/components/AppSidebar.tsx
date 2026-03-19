@@ -12,6 +12,7 @@ import {
   Workflow,
   LogOut,
   Flame,
+  Inbox,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useQuery } from "@tanstack/react-query";
@@ -34,6 +35,7 @@ const mainItems = [
 
 const automationItems = [
   { title: "Agentes de IA", url: "/app/agents", icon: Bot },
+  { title: "Inbox", url: "/app/inbox", icon: Inbox },
   { title: "Funis", url: "/app/funnels", icon: Workflow },
   { title: "Agendamentos", url: "/app/appointments", icon: CalendarCheck },
 ];

@@ -97,3 +97,24 @@ export interface ConversationMessage {
   content: string;
   timestamp: string;
 }
+
+export type HandoffStatus = 'pending' | 'active' | 'resolved';
+
+export interface Handoff {
+  id: number;
+  phone: string;
+  contact_name: string | null;
+  status: HandoffStatus;
+  trigger_reason: string;
+  created_at: string;
+  updated_at: string;
+  last_message: string | null;
+  last_message_role: string | null;
+  last_message_at: string | null;
+}
+
+export interface HandoffMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  created_at: string;
+}

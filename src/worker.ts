@@ -3513,6 +3513,103 @@ async function isDuplicateWebhook(env: Env, tenantId: string, messageId: string)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ── Inbox de Atendimento Humano ───────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function handleInbox(request: Request, env: Env, method: string, url: URL): Promise<Response> {
+  const tenantId = await getTenantId(request, env);
+  const parts = url.pathname.split("/").filter(Boolean);
+  // parts: ["api","inbox"] or ["api","inbox",":phone","messages"] or ["api","inbox",":phone","resolve"] etc.
+
+  // GET /api/inbox — lista handoffs ativos com última mensagem
+  if (method === "GET" && parts.length === 2) {
+    const rows = await env.DB.prepare(
+      `SELECT h.id, h.phone, h.contact_name, h.status, h.trigger_reason, h.created_at, h.updated_at,
+         (SELECT content FROM agent_conversations
+          WHERE tenant_id = h.tenant_id AND phone = h.phone AND agent_id = 'atendimento'
+          ORDER BY created_at DESC LIMIT 1) AS last_message,
+         (SELECT role FROM agent_conversations
+          WHERE tenant_id = h.tenant_id AND phone = h.phone AND agent_id = 'atendimento'
+          ORDER BY created_at DESC LIMIT 1) AS last_message_role,
+         (SELECT created_at FROM agent_conversations
+          WHERE tenant_id = h.tenant_id AND phone = h.phone AND agent_id = 'atendimento'
+          ORDER BY created_at DESC LIMIT 1) AS last_message_at
+       FROM human_handoffs h
+       WHERE h.tenant_id = ?
+       ORDER BY CASE h.status WHEN 'pending' THEN 0 WHEN 'active' THEN 1 ELSE 2 END, h.updated_at DESC`,
+    ).bind(tenantId).all<Record<string, unknown>>();
+    return json(rows.results || []);
+  }
+
+  // POST /api/inbox — cria handoff manual
+  if (method === "POST" && parts.length === 2) {
+    const body = await readBody<{ phone?: string; contact_name?: string }>(request);
+    if (!body.phone) return json({ error: "phone obrigatório" }, { status: 400 });
+    const phone = body.phone.replace(/\D/g, "");
+    // Verifica se já existe handoff aberto
+    const existing = await env.DB.prepare(
+      "SELECT id FROM human_handoffs WHERE tenant_id = ? AND phone = ? AND status IN ('pending','active') LIMIT 1",
+    ).bind(tenantId, phone).first<{ id: number }>();
+    if (existing) return json({ error: "Já existe atendimento aberto para este contato" }, { status: 409 });
+    // Pausa o bot para este número
+    await env.DB.prepare(
+      `INSERT INTO agent_pauses (tenant_id, phone, paused_until, pause_definitive)
+       VALUES (?, ?, NULL, 1)
+       ON CONFLICT(tenant_id, phone) DO UPDATE SET paused_until = NULL, pause_definitive = 1`,
+    ).bind(tenantId, phone).run();
+    const result = await env.DB.prepare(
+      "INSERT INTO human_handoffs (tenant_id, phone, contact_name, status, trigger_reason) VALUES (?, ?, ?, 'pending', 'manual')",
+    ).bind(tenantId, phone, body.contact_name || phone).run();
+    return json({ ok: true, id: result.meta?.last_row_id });
+  }
+
+  const phone = parts[2] ? decodeURIComponent(parts[2]) : "";
+  if (!phone) return notFound();
+
+  // GET /api/inbox/:phone/messages — histórico completo da conversa
+  if (method === "GET" && parts[3] === "messages") {
+    const msgs = await env.DB.prepare(
+      `SELECT role, content, created_at FROM agent_conversations
+       WHERE tenant_id = ? AND phone = ? AND agent_id = 'atendimento'
+       ORDER BY created_at ASC LIMIT 200`,
+    ).bind(tenantId, phone).all<{ role: string; content: string; created_at: string }>();
+    return json(msgs.results || []);
+  }
+
+  // POST /api/inbox/:phone/reply — humano envia mensagem para o cliente
+  if (method === "POST" && parts[3] === "reply") {
+    const body = await readBody<{ message?: string }>(request);
+    if (!body.message?.trim()) return json({ error: "message obrigatório" }, { status: 400 });
+    const text = body.message.trim();
+    // Envia via Evolution API
+    await sendWhatsAppMessage(env, tenantId, phone, text);
+    // Salva no histórico como assistente
+    await appendConversation(env, tenantId, phone, "assistant", text);
+    // Atualiza handoff para 'active' e timestamp
+    await env.DB.prepare(
+      `UPDATE human_handoffs SET status = 'active', updated_at = datetime('now')
+       WHERE tenant_id = ? AND phone = ? AND status IN ('pending','active')`,
+    ).bind(tenantId, phone).run();
+    return json({ ok: true });
+  }
+
+  // PUT /api/inbox/:phone/resolve — encerra atendimento e reativa bot
+  if (method === "PUT" && parts[3] === "resolve") {
+    await env.DB.prepare(
+      `UPDATE human_handoffs SET status = 'resolved', resolved_at = datetime('now'), updated_at = datetime('now')
+       WHERE tenant_id = ? AND phone = ? AND status IN ('pending','active')`,
+    ).bind(tenantId, phone).run();
+    // Reativa o agente removendo a pausa
+    await env.DB.prepare(
+      "DELETE FROM agent_pauses WHERE tenant_id = ? AND phone = ?",
+    ).bind(tenantId, phone).run();
+    return json({ ok: true });
+  }
+
+  return notFound();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 async function handleEvolutionWebhook(request: Request, env: Env): Promise<Response> {
   let data: any;
@@ -3740,7 +3837,20 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
   // Check if agent is paused for this phone
   const pause = await getAgentPause(env, tenantId, phone);
   if (pause.paused) {
-    console.log(`[webhook] agente pausado para phone:${phone}`);
+    // Se há handoff humano ativo, salva a mensagem no histórico para o atendente ver no Inbox
+    const activeHandoff = await env.DB.prepare(
+      "SELECT id FROM human_handoffs WHERE tenant_id = ? AND phone = ? AND status IN ('pending','active') LIMIT 1",
+    ).bind(tenantId, phone).first<{ id: number }>();
+    if (activeHandoff) {
+      await appendConversation(env, tenantId, phone, "user", userText);
+      // Atualiza timestamp do handoff para refletir nova mensagem
+      await env.DB.prepare(
+        "UPDATE human_handoffs SET updated_at = datetime('now') WHERE id = ?",
+      ).bind(activeHandoff.id).run();
+      console.log(`[inbox] mensagem salva para atendimento humano. phone:${phone}`);
+    } else {
+      console.log(`[webhook] agente pausado para phone:${phone}`);
+    }
     return json({ ok: true });
   }
 
@@ -3842,17 +3952,30 @@ Regras gerais:
     return json({ ok: true });
   }
 
-  // Pedido de atendimento humano: pausa o agente e notifica o número humano configurado
+  // Pedido de atendimento humano: pausa o agente, cria handoff e notifica
   if (isHumanRequest(userText)) {
     console.log(`[webhook] pedido de humano detectado — pausando agente para phone:${phone}`);
+    // Pausa o bot definitivamente
     await env.DB.prepare(
       `INSERT INTO agent_pauses (tenant_id, phone, paused_until, pause_definitive)
        VALUES (?, ?, NULL, 1)
        ON CONFLICT(tenant_id, phone) DO UPDATE SET paused_until = NULL, pause_definitive = 1`,
     ).bind(tenantId, phone).run();
+    // Cria entrada no inbox (se não houver já um aberto)
+    const openHandoff = await env.DB.prepare(
+      "SELECT id FROM human_handoffs WHERE tenant_id = ? AND phone = ? AND status IN ('pending','active') LIMIT 1",
+    ).bind(tenantId, phone).first<{ id: number }>();
+    if (!openHandoff) {
+      await env.DB.prepare(
+        "INSERT INTO human_handoffs (tenant_id, phone, contact_name, status, trigger_reason) VALUES (?, ?, ?, 'pending', 'user_request')",
+      ).bind(tenantId, phone, contactName || phone).run();
+    }
+    // Salva mensagem do cliente no histórico antes de retornar
+    await appendConversation(env, tenantId, phone, "user", userText);
+    // Notifica o número humano configurado
     const humanNumber = agent?.human_number?.trim();
     if (humanNumber) {
-      const notifyText = `🔔 O contato ${contactName || phone} (${phone}) pediu atendimento humano e o bot foi pausado.`;
+      const notifyText = `🔔 ${contactName || phone} (${phone}) pediu atendimento humano. Acesse o Inbox do CRM para responder.`;
       await sendWhatsAppMessage(env, tenantId, humanNumber, notifyText);
     }
     await sendWhatsAppMessage(env, tenantId, isLid ? remoteJid : phone,
@@ -4041,6 +4164,8 @@ export default {
         response = await handleAgents(request, env, method, urlForRouting);
       } else if (pathname.startsWith("/api/campaigns")) {
         response = await handleCampaigns(request, env, method, urlForRouting);
+      } else if (pathname.startsWith("/api/inbox")) {
+        response = await handleInbox(request, env, method, urlForRouting);
       } else if (pathname.startsWith("/api/crm")) {
         response = await handleCRM(request, env, method, urlForRouting);
       } else if (pathname.startsWith("/api/funnels")) {

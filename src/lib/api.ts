@@ -551,5 +551,44 @@ export const api = {
     request<{ ok: boolean }>(`/leads/${id}/conversation`, {
       method: "DELETE",
     }),
+
+  // ── Inbox de Atendimento Humano ───────────────────────────────────────────
+  getInboxHandoffs: () =>
+    request<Array<{
+      id: number;
+      phone: string;
+      contact_name: string | null;
+      status: "pending" | "active" | "resolved";
+      trigger_reason: string;
+      created_at: string;
+      updated_at: string;
+      last_message: string | null;
+      last_message_role: string | null;
+      last_message_at: string | null;
+    }>>("/inbox"),
+
+  getInboxMessages: (phone: string) =>
+    request<Array<{
+      role: "user" | "assistant";
+      content: string;
+      created_at: string;
+    }>>(`/inbox/${encodeURIComponent(phone)}/messages`),
+
+  replyInbox: (phone: string, message: string) =>
+    request<{ ok: boolean }>(`/inbox/${encodeURIComponent(phone)}/reply`, {
+      method: "POST",
+      body: JSON.stringify({ message }),
+    }),
+
+  resolveInbox: (phone: string) =>
+    request<{ ok: boolean }>(`/inbox/${encodeURIComponent(phone)}/resolve`, {
+      method: "PUT",
+    }),
+
+  createInboxHandoff: (payload: { phone: string; contact_name?: string }) =>
+    request<{ ok: boolean; id: number }>("/inbox", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
 };
 
