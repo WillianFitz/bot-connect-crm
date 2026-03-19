@@ -82,6 +82,7 @@ export default function SettingsPage() {
   const [notifMode, setNotifMode] = useState<"phone" | "group">("phone");
   const [notifPhone, setNotifPhone] = useState("");
   const [notifGroupJid, setNotifGroupJid] = useState("");
+  const [groupSearch, setGroupSearch] = useState("");
 
   useEffect(() => {
     if (settingsQuery.data) {
@@ -299,30 +300,59 @@ export default function SettingsPage() {
                 ) : (
                   <div>
                     <Label className="text-xs text-muted-foreground">Grupo do WhatsApp</Label>
-                    {groupsQuery.isLoading ? (
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground mt-2">
-                        <Loader2 className="h-4 w-4 animate-spin" /> Carregando grupos...
+                    <div className="flex items-center gap-1 mt-1">
+                      <div className="flex-1 relative">
+                        {groupsQuery.isLoading ? (
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+                            <Loader2 className="h-4 w-4 animate-spin" /> Carregando grupos...
+                          </div>
+                        ) : groupsQuery.isError ? (
+                          <p className="text-xs text-destructive py-2">
+                            Erro: {(groupsQuery.error as Error)?.message || "Falha ao buscar grupos"}
+                          </p>
+                        ) : (groupsQuery.data?.length ?? 0) === 0 ? (
+                          <p className="text-xs text-muted-foreground py-2">
+                            Nenhum grupo encontrado. Clique em atualizar.
+                          </p>
+                        ) : (
+                          <Select value={notifGroupJid} onValueChange={setNotifGroupJid}>
+                            <SelectTrigger className="bg-secondary border-border/50 h-9 text-sm">
+                              <SelectValue placeholder="Selecione um grupo..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <div className="px-2 pb-1 pt-1 sticky top-0 bg-popover z-10">
+                                <Input
+                                  placeholder="Pesquisar grupo..."
+                                  value={groupSearch}
+                                  onChange={(e) => setGroupSearch(e.target.value)}
+                                  className="h-7 text-xs bg-secondary border-border/50"
+                                  onKeyDown={(e) => e.stopPropagation()}
+                                />
+                              </div>
+                              {(groupsQuery.data ?? [])
+                                .filter((g) => g.name.toLowerCase().includes(groupSearch.toLowerCase()))
+                                .map((g) => (
+                                  <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
+                                ))}
+                              {(groupsQuery.data ?? []).filter((g) => g.name.toLowerCase().includes(groupSearch.toLowerCase())).length === 0 && (
+                                <p className="text-xs text-muted-foreground px-2 py-2">Nenhum grupo encontrado.</p>
+                              )}
+                            </SelectContent>
+                          </Select>
+                        )}
                       </div>
-                    ) : groupsQuery.isError ? (
-                      <p className="text-xs text-destructive mt-2">
-                        Erro: {(groupsQuery.error as Error)?.message || "Falha ao buscar grupos"}
-                      </p>
-                    ) : (groupsQuery.data?.length ?? 0) === 0 ? (
-                      <p className="text-xs text-muted-foreground mt-2">
-                        Nenhum grupo encontrado. Verifique se o WhatsApp está conectado e que o número faz parte de algum grupo.
-                      </p>
-                    ) : (
-                      <Select value={notifGroupJid} onValueChange={setNotifGroupJid}>
-                        <SelectTrigger className="mt-1 bg-secondary border-border/50 h-9 text-sm">
-                          <SelectValue placeholder="Selecione um grupo..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {(groupsQuery.data ?? []).map((g) => (
-                            <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    )}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="h-9 w-9 shrink-0 border-border/50"
+                        title="Atualizar lista de grupos"
+                        onClick={() => { setGroupSearch(""); groupsQuery.refetch(); }}
+                        disabled={groupsQuery.isFetching}
+                      >
+                        <Loader2 className={`h-4 w-4 ${groupsQuery.isFetching ? "animate-spin" : ""}`} />
+                      </Button>
+                    </div>
                   </div>
                 )}
 
