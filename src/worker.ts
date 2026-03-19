@@ -3846,20 +3846,17 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
   }
 
   // Sou o processador — aguarda enquanto a pessoa ainda está digitando
-  // Loop inteligente: verifica phone_typing (composing) e tempo da última mensagem
-  const MAX_WAIT_MS     = 25_000; // máximo de 25s esperando
-  const POLL_MS         = 1_500;  // verifica a cada 1,5s
-  const TYPING_GRACE_MS = 6_000;  // janela de silêncio: 6s sem nova msg e sem composing
+  // Dois timers independentes:
+  //   COMPOSING_GRACE_MS: quanto tempo esperar após o último evento "composing" (digitando)
+  //   IDLE_GRACE_MS: quanto tempo esperar desde a última mensagem sem nenhum sinal de digitação
+  const MAX_WAIT_MS      = 28_000; // máximo absoluto de espera
+  const POLL_MS          = 1_200;  // intervalo de polling
+  const COMPOSING_GRACE_MS = 5_000; // pessoa digitando: aguarda 5s após o último composing
+  const IDLE_GRACE_MS    = 12_000; // sem typing events: aguarda 12s desde a última mensagem
   const startWait = Date.now();
 
   while (Date.now() - startWait < MAX_WAIT_MS) {
     await new Promise<void>((r) => setTimeout(r, POLL_MS));
-
-    // Verifica se chegou mensagem nova (outro processor tomou conta) — se sim, aborta
-    const pendingCount = await env.DB.prepare(
-      "SELECT COUNT(*) AS n FROM whatsapp_buffer WHERE tenant_id = ? AND phone = ? AND processed = 0 AND processor_claimed = 0",
-    ).bind(tenantId, phone).first<{ n: number }>();
-    // Não há mensagens sem processador — certo, sou o único processador
 
     // Verifica indicador de digitação: última vez que `composing` foi recebido
     const typingRow = await env.DB.prepare(
@@ -3868,9 +3865,9 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
 
     if (typingRow?.last_typing_at) {
       const lastTypingMs = Date.now() - new Date(typingRow.last_typing_at + "Z").getTime();
-      if (lastTypingMs < TYPING_GRACE_MS) {
+      if (lastTypingMs < COMPOSING_GRACE_MS) {
         // Pessoa ainda digitando (composing recente) — continua esperando
-        console.log(`[debounce] digitando há ${lastTypingMs}ms — aguardando. phone:${phone}`);
+        console.log(`[debounce] composing há ${lastTypingMs}ms — aguardando. phone:${phone}`);
         continue;
       }
     }
@@ -3882,8 +3879,8 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
 
     if (lastMsgRow?.received_at) {
       const lastMsgMs = Date.now() - new Date(lastMsgRow.received_at + "Z").getTime();
-      if (lastMsgMs < TYPING_GRACE_MS) {
-        // Mensagem chegou há poucos segundos — aguarda um pouco mais
+      if (lastMsgMs < IDLE_GRACE_MS) {
+        // Mensagem chegou há menos de 12s — aguarda mais (pessoa pode estar digitando mais)
         console.log(`[debounce] última msg há ${lastMsgMs}ms — aguardando. phone:${phone}`);
         continue;
       }
