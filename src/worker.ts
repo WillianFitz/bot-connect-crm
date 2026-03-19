@@ -4485,6 +4485,27 @@ export default {
         response = await handleDashboardStats(request, env);
       } else if (pathname === "/api/groups" && method === "GET") {
         response = await handleGetGroups(request, env);
+      } else if (pathname === "/api/bot-pauses" && method === "GET") {
+        const tenantId = await getTenantId(request, env);
+        const rows = await env.DB.prepare(
+          "SELECT phone FROM agent_pauses WHERE tenant_id = ? AND (pause_definitive = 1 OR paused_until > datetime('now'))",
+        ).bind(tenantId).all<{ phone: string }>();
+        response = json((rows.results || []).map((r) => r.phone));
+      } else if (pathname === "/api/bot-pauses" && (method === "PUT" || method === "DELETE")) {
+        const tenantId = await getTenantId(request, env);
+        const phone = new URL(request.url).searchParams.get("phone") || "";
+        if (!phone) { response = json({ error: "phone obrigatório" }, { status: 400 }); }
+        else if (method === "PUT") {
+          await env.DB.prepare(
+            `INSERT INTO agent_pauses (tenant_id, phone, paused_until, pause_definitive)
+             VALUES (?, ?, NULL, 1)
+             ON CONFLICT(tenant_id, phone) DO UPDATE SET paused_until = NULL, pause_definitive = 1`,
+          ).bind(tenantId, phone).run();
+          response = json({ ok: true });
+        } else {
+          await env.DB.prepare("DELETE FROM agent_pauses WHERE tenant_id = ? AND phone = ?").bind(tenantId, phone).run();
+          response = json({ ok: true });
+        }
       } else if (pathname === "/api/settings" && (method === "GET" || method === "PUT")) {
         response = await handleSettings(request, env, method);
       } else if (pathname === "/api/settings/account" && (method === "GET" || method === "PUT")) {

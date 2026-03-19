@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Search, Plus, Upload, MoreHorizontal, Trash2, Pencil } from "lucide-react";
+import { Search, Plus, Upload, Trash2, Pencil, PauseCircle, PlayCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -105,11 +105,33 @@ export default function Leads() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["leads"] });
       queryClient.invalidateQueries({ queryKey: ["leads-count"] });
-      toast({
-        title: "Lead excluído",
-        description: "O lead foi removido da sua lista.",
-      });
+      toast({ title: "Lead excluído", description: "O lead foi removido da sua lista." });
     },
+  });
+
+  const botPausesQuery = useQuery({
+    queryKey: ["bot-pauses"],
+    queryFn: api.getBotPauses,
+    staleTime: 30_000,
+  });
+  const pausedPhones = new Set(botPausesQuery.data ?? []);
+
+  const pauseBot = useMutation({
+    mutationFn: (phone: string) => api.pauseLeadBot(phone),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["bot-pauses"] });
+      toast({ title: "Bot pausado", description: "O bot não responderá mais este contato até ser reativado." });
+    },
+    onError: (e: Error) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
+  });
+
+  const resumeBot = useMutation({
+    mutationFn: (phone: string) => api.resumeLeadBot(phone),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["bot-pauses"] });
+      toast({ title: "Bot reativado", description: "O bot voltará a responder este contato." });
+    },
+    onError: (e: Error) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
   const leads = leadsQuery.data || [];
@@ -287,7 +309,32 @@ export default function Leads() {
                     {lead.folder_name || "Sem pasta"}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <div className="flex items-center justify-end gap-2">
+                    <div className="flex items-center justify-end gap-1">
+                      {lead.phone && (
+                        pausedPhones.has(lead.phone) ? (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/10"
+                            title="Bot pausado — clique para reativar"
+                            onClick={() => resumeBot.mutate(lead.phone)}
+                            disabled={resumeBot.isPending}
+                          >
+                            <PlayCircle className="h-3.5 w-3.5" />
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-amber-600 hover:text-amber-700 hover:bg-amber-500/10"
+                            title="Pausar bot para este lead"
+                            onClick={() => pauseBot.mutate(lead.phone)}
+                            disabled={pauseBot.isPending}
+                          >
+                            <PauseCircle className="h-3.5 w-3.5" />
+                          </Button>
+                        )
+                      )}
                       <Button
                         variant="ghost"
                         size="icon"

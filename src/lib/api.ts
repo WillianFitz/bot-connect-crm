@@ -604,5 +604,12 @@ export const api = {
     request<{ ok: boolean }>(`/inbox/${encodeURIComponent(phone)}/pause`, {
       method: "PUT",
     }),
+
+  // Bot pauses por lead (tela de Leads)
+  getBotPauses: () => request<string[]>("/bot-pauses"),
+  pauseLeadBot: (phone: string) =>
+    request<{ ok: boolean }>(`/bot-pauses?phone=${encodeURIComponent(phone)}`, { method: "PUT" }),
+  resumeLeadBot: (phone: string) =>
+    request<{ ok: boolean }>(`/bot-pauses?phone=${encodeURIComponent(phone)}`, { method: "DELETE" }),
 };
 
