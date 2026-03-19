@@ -397,6 +397,11 @@ export default function Campaigns() {
                       </Badge>
                     </td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">
+                      {c.folder_id
+                        ? (folderOptions.find((f) => f.id === c.folder_id)?.name ?? `#${c.folder_id}`)
+                        : <span className="text-muted-foreground/40">Todos</span>}
+                    </td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground">
                       {c.total_leads}
                     </td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">
