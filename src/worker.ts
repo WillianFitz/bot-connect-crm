@@ -3688,7 +3688,7 @@ async function handleInbox(request: Request, env: Env, method: string, url: URL)
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function handleEvolutionWebhook(request: Request, env: Env): Promise<Response> {
+async function handleEvolutionWebhook(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   let data: any;
   try {
     data = await request.json();
@@ -3963,16 +3963,17 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
   }
 
   // Sou o processador — aguarda enquanto a pessoa ainda está digitando
-  // Dois timers independentes:
-  //   COMPOSING_GRACE_MS: quanto tempo esperar após o último evento "composing" (digitando)
-  //   IDLE_GRACE_MS: quanto tempo esperar desde a última mensagem sem nenhum sinal de digitação
-  const MAX_WAIT_MS      = 28_000; // máximo absoluto de espera
-  const POLL_MS          = 1_200;  // intervalo de polling
-  const COMPOSING_GRACE_MS = 5_000; // pessoa digitando: aguarda 5s após o último composing
-  const IDLE_GRACE_MS    = 15_000; // sem typing events: aguarda 15s desde a última mensagem
+  // COMPOSING_GRACE_MS: após o último "composing", aguarda mais esses ms antes de processar
+  // IDLE_GRACE_MS: sem nenhum sinal de digitação, aguarda esse tempo desde a última msg
+  // MAX_SAFETY_MS: limite de segurança absoluto (nunca ultrapassa, independente do composing)
+  const POLL_MS            = 1_200;
+  const COMPOSING_GRACE_MS = 5_000;
+  const IDLE_GRACE_MS      = 15_000;
+  const MAX_SAFETY_MS      = 120_000; // 2 minutos — segurança absoluta
   const startWait = Date.now();
+  let lastComposingDetectedAt = 0; // rastreia quando o composing foi detectado por último
 
-  while (Date.now() - startWait < MAX_WAIT_MS) {
+  while (Date.now() - startWait < MAX_SAFETY_MS) {
     await new Promise<void>((r) => setTimeout(r, POLL_MS));
 
     // Verifica indicador de digitação: última vez que `composing` foi recebido
@@ -3983,13 +3984,23 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
     if (typingRow?.last_typing_at) {
       const lastTypingMs = Date.now() - new Date(typingRow.last_typing_at + "Z").getTime();
       if (lastTypingMs < COMPOSING_GRACE_MS) {
-        // Pessoa ainda digitando (composing recente) — continua esperando
+        // Pessoa ainda digitando — atualiza o rastreador e nunca interrompe por timeout
+        lastComposingDetectedAt = Date.now();
         console.log(`[debounce] composing há ${lastTypingMs}ms — aguardando. phone:${phone}`);
         continue;
       }
     }
 
-    // Sem sinal de digitação recente — verifica se a última mensagem chegou há pouco
+    // Composing parou — mas ainda dentro da janela de graça pós-composing?
+    if (lastComposingDetectedAt > 0) {
+      const silenceMs = Date.now() - lastComposingDetectedAt;
+      if (silenceMs < COMPOSING_GRACE_MS) {
+        console.log(`[debounce] composing parou há ${silenceMs}ms — aguardando janela. phone:${phone}`);
+        continue;
+      }
+    }
+
+    // Sem composing — verifica se a última mensagem chegou há pouco
     const lastMsgRow = await env.DB.prepare(
       "SELECT received_at FROM whatsapp_buffer WHERE tenant_id = ? AND phone = ? AND processed = 0 ORDER BY id DESC LIMIT 1",
     ).bind(tenantId, phone).first<{ received_at: string }>();
@@ -3997,22 +4008,7 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
     if (lastMsgRow?.received_at) {
       const lastMsgMs = Date.now() - new Date(lastMsgRow.received_at + "Z").getTime();
       if (lastMsgMs < IDLE_GRACE_MS) {
-        // Mensagem chegou há menos de 12s — aguarda mais (pessoa pode estar digitando mais)
         console.log(`[debounce] última msg há ${lastMsgMs}ms — aguardando. phone:${phone}`);
-        continue;
-      }
-    }
-
-    // Pessoa parou de digitar e não há mensagens recentes — prossegue
-    // Checagem final: se o usuário acabou de começar a digitar neste exato instante,
-    // aguarda mais um ciclo antes de processar (evita responder no meio de "Mas...")
-    const finalTyping = await env.DB.prepare(
-      "SELECT last_typing_at FROM phone_typing WHERE tenant_id = ? AND phone = ?",
-    ).bind(tenantId, phone).first<{ last_typing_at: string }>();
-    if (finalTyping?.last_typing_at) {
-      const ms = Date.now() - new Date(finalTyping.last_typing_at + "Z").getTime();
-      if (ms < COMPOSING_GRACE_MS) {
-        console.log(`[debounce] composing de última hora (${ms}ms) — aguardando mais. phone:${phone}`);
         continue;
       }
     }
@@ -4328,7 +4324,7 @@ function normalisePathname(pathname: string): string {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const pathname = normalisePathname(url.pathname);
     const urlForRouting = pathname !== url.pathname ? new URL(pathname + url.search, request.url) : url;
@@ -4412,7 +4408,7 @@ export default {
       } else if (pathname === "/api/ai/agendamento" && method === "POST") {
         response = await handleAIAgent(request, env, "agendamento");
       } else if (pathname === "/api/webhook/evolution" && method === "POST") {
-        response = await handleEvolutionWebhook(request, env);
+        response = await handleEvolutionWebhook(request, env, ctx);
       } else {
         response = notFound();
       }
