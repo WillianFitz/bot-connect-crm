@@ -1647,15 +1647,23 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
       if (elapsedSec < requiredSec) continue;
     }
 
-    const folderFilter = camp.folder_id ? ` AND l.folder_id = ${Number(camp.folder_id)}` : "";
+    const fid = camp.folder_id ? Number(camp.folder_id) : null;
 
-    const pendingCountCheck = await env.DB.prepare(
-      `SELECT COUNT(*) as c FROM leads l
-       WHERE l.tenant_id = ? AND l.phone IS NOT NULL AND trim(l.phone) != ''${folderFilter}
-         AND NOT EXISTS (SELECT 1 FROM campaign_sends cs WHERE cs.campaign_id = ? AND cs.lead_id = l.id AND cs.status = 'sent')`,
-    )
-      .bind(tenantId, camp.id)
-      .first<{ c: number }>();
+    // All queries use explicit parameterized binding — never string interpolation
+    const pendingCountCheck = fid != null
+      ? await env.DB.prepare(
+          `SELECT COUNT(*) as c FROM leads l
+           WHERE l.tenant_id = ? AND l.folder_id = ?
+             AND l.phone IS NOT NULL AND trim(l.phone) != ''
+             AND NOT EXISTS (SELECT 1 FROM campaign_sends cs WHERE cs.campaign_id = ? AND cs.lead_id = l.id AND cs.status = 'sent')`,
+        ).bind(tenantId, fid, camp.id).first<{ c: number }>()
+      : await env.DB.prepare(
+          `SELECT COUNT(*) as c FROM leads l
+           WHERE l.tenant_id = ?
+             AND l.phone IS NOT NULL AND trim(l.phone) != ''
+             AND NOT EXISTS (SELECT 1 FROM campaign_sends cs WHERE cs.campaign_id = ? AND cs.lead_id = l.id AND cs.status = 'sent')`,
+        ).bind(tenantId, camp.id).first<{ c: number }>();
+
     if (Number(pendingCountCheck?.c ?? 0) === 0) continue;
 
     if (camp.status === "completed") {
@@ -1666,27 +1674,39 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
         .run();
     }
 
-    const totalLeadsNow = await env.DB.prepare(
-      `SELECT COUNT(*) as c FROM leads l WHERE l.tenant_id = ? AND l.phone IS NOT NULL AND trim(l.phone) != ''${folderFilter}`,
-    )
-      .bind(tenantId)
-      .first<{ c: number }>();
+    const totalLeadsNow = fid != null
+      ? await env.DB.prepare(
+          `SELECT COUNT(*) as c FROM leads l WHERE l.tenant_id = ? AND l.folder_id = ? AND l.phone IS NOT NULL AND trim(l.phone) != ''`,
+        ).bind(tenantId, fid).first<{ c: number }>()
+      : await env.DB.prepare(
+          `SELECT COUNT(*) as c FROM leads l WHERE l.tenant_id = ? AND l.phone IS NOT NULL AND trim(l.phone) != ''`,
+        ).bind(tenantId).first<{ c: number }>();
+
     await env.DB.prepare(
       "UPDATE campaigns SET total_leads = ? WHERE id = ? AND tenant_id = ?",
     )
       .bind(Math.max(0, Number(totalLeadsNow?.c ?? 0)), camp.id, tenantId)
       .run();
 
-    const limitPerRun = 5;
-    const pending = await env.DB.prepare(
-      `SELECT l.id, l.company, l.phone FROM leads l
-       WHERE l.tenant_id = ?
-         AND l.phone IS NOT NULL AND trim(l.phone) != ''${folderFilter}
-         AND NOT EXISTS (SELECT 1 FROM campaign_sends cs WHERE cs.campaign_id = ? AND cs.lead_id = l.id AND cs.status = 'sent')
-       ORDER BY l.id ASC LIMIT ?`,
-    )
-      .bind(tenantId, camp.id, limitPerRun)
-      .all<{ id: number; company: string; phone: string }>();
+    // Manual "processar agora" (ignoreWindow=true): processa tudo de uma vez
+    // Cron automático: máx 5 por tick para respeitar o delay entre envios
+    const limitPerRun = ignoreWindow ? 999 : 5;
+
+    const pending = fid != null
+      ? await env.DB.prepare(
+          `SELECT l.id, l.company, l.phone FROM leads l
+           WHERE l.tenant_id = ? AND l.folder_id = ?
+             AND l.phone IS NOT NULL AND trim(l.phone) != ''
+             AND NOT EXISTS (SELECT 1 FROM campaign_sends cs WHERE cs.campaign_id = ? AND cs.lead_id = l.id AND cs.status = 'sent')
+           ORDER BY l.id ASC LIMIT ?`,
+        ).bind(tenantId, fid, camp.id, limitPerRun).all<{ id: number; company: string; phone: string }>()
+      : await env.DB.prepare(
+          `SELECT l.id, l.company, l.phone FROM leads l
+           WHERE l.tenant_id = ?
+             AND l.phone IS NOT NULL AND trim(l.phone) != ''
+             AND NOT EXISTS (SELECT 1 FROM campaign_sends cs WHERE cs.campaign_id = ? AND cs.lead_id = l.id AND cs.status = 'sent')
+           ORDER BY l.id ASC LIMIT ?`,
+        ).bind(tenantId, camp.id, limitPerRun).all<{ id: number; company: string; phone: string }>();
 
     const rows = (pending.results || []) as Array<{ id: number; company: string; phone: string }>;
     let sent = 0;
@@ -1934,7 +1954,7 @@ async function handleDashboardStats(request: Request, env: Env): Promise<Respons
   });
 }
 
-async function handleCampaigns(request: Request, env: Env, method: string, url: URL) {
+async function handleCampaigns(request: Request, env: Env, method: string, url: URL, ctx: ExecutionContext) {
   const tenantId = await getTenantId(request, env);
   await ensureTenant(env, tenantId);
   const pathname = url.pathname;
@@ -1945,6 +1965,11 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
 
   if (method === "POST" && parts[2] === "run") {
     const ignoreWindow = url.searchParams.get("ignoreWindow") === "1";
+    if (ignoreWindow) {
+      // Retorna imediatamente e processa tudo em segundo plano
+      ctx.waitUntil(handleCampaignRun(env, tenantId, true).catch((e) => console.error("[manual-run] error", e)));
+      return json({ ok: true, processed: 0, campaigns: [], message: "Processamento iniciado em segundo plano" });
+    }
     try {
       return await handleCampaignRun(env, tenantId, ignoreWindow);
     } catch (err: any) {
@@ -4492,7 +4517,7 @@ export default {
       } else if (pathname.startsWith("/api/agents")) {
         response = await handleAgents(request, env, method, urlForRouting);
       } else if (pathname.startsWith("/api/campaigns")) {
-        response = await handleCampaigns(request, env, method, urlForRouting);
+        response = await handleCampaigns(request, env, method, urlForRouting, ctx);
       } else if (pathname.startsWith("/api/inbox")) {
         response = await handleInbox(request, env, method, urlForRouting);
       } else if (pathname.startsWith("/api/crm")) {

@@ -103,6 +103,11 @@ export default function Campaigns() {
   const campaignsQuery = useQuery({
     queryKey: ["campaigns"],
     queryFn: api.getCampaigns,
+    refetchInterval: (query) => {
+      // Atualiza a cada 5s se houver campanha ativa (processando)
+      const data = query.state.data as Campaign[] | undefined;
+      return data?.some((c) => c.status === "active") ? 5000 : false;
+    },
   });
 
   const createCampaign = useMutation({
@@ -170,7 +175,15 @@ export default function Campaigns() {
   const runCampaigns = useMutation({
     mutationFn: (ignoreWindow?: boolean) => api.runCampaigns({ ignoreWindow }),
     onSuccess: (data, ignoreWindow) => {
-      queryClient.invalidateQueries({ queryKey: ["campaigns"] });
+      // Recarrega após 3s para mostrar progresso inicial
+      setTimeout(() => queryClient.invalidateQueries({ queryKey: ["campaigns"] }), 3000);
+      if (ignoreWindow) {
+        toast({
+          title: "Processamento iniciado",
+          description: "Os disparos estão sendo enviados em segundo plano. Os contadores atualizam automaticamente.",
+        });
+        return;
+      }
       const total = data?.campaigns?.reduce((s, c) => s + c.sent + c.errors, 0) ?? 0;
       const hasErrors = (data?.campaigns?.some((c) => c.errors > 0) ?? false) || (data?.errorSummary?.length ?? 0) > 0;
       const errorMsg = data?.errorSummary?.length
@@ -182,9 +195,7 @@ export default function Campaigns() {
           ? hasErrors && errorMsg
             ? `${data.processed} processado(s). Erro: ${errorMsg}`
             : `${data.processed} lead(s) processado(s).`
-          : ignoreWindow
-            ? "Nenhum lead pendente para enviar (ou todos já foram processados)."
-            : "Nenhum lead pendente no horário das campanhas ativas.",
+          : "Nenhum lead pendente no horário das campanhas ativas.",
         variant: hasErrors ? "destructive" : "default",
       });
     },
