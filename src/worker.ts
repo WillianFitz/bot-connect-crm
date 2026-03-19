@@ -453,7 +453,7 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
             url: webhookUrl,
             byEvents: false,
             base64: false,
-            events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "PRESENCE_UPDATE"],
+            events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "PRESENCE_UPDATE", "CONTACTS_UPSERT"],
           },
         }),
       });
@@ -497,7 +497,7 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
             url: webhookUrl,
             byEvents: false,
             base64: false,
-            events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "PRESENCE_UPDATE"],
+            events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "PRESENCE_UPDATE", "CONTACTS_UPSERT"],
           },
         }),
       });
@@ -1510,15 +1510,32 @@ async function sendWhatsAppMessage(
       remoteJid = data?.key?.remoteJid || undefined;
     } catch { /* ignore */ }
     // Subscreve à presença do contato para receber eventos composing (PRESENCE_UPDATE)
-    // chat/subscribePresence registra o JID no Baileys; sem isso nenhum presence.update chega
+    // Aguarda a resposta para capturar o LID resolvido e armazenar o mapeamento LID→phone
     try {
       const jid = remoteJid || `${number}@s.whatsapp.net`;
-      fetch(`${baseUrl}/chat/subscribePresence/${tenantId}`, {
+      const presRes = await fetch(`${baseUrl}/chat/subscribePresence/${tenantId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", apikey: env.EVOLUTION_API_KEY },
         body: JSON.stringify({ number: jid.replace(/@.*$/, "") }),
-      }).catch(() => {/* ignora falhas */});
-    } catch { /* ignora */ }
+      });
+      if (presRes.ok) {
+        try {
+          const presData = await presRes.json() as any;
+          // Tenta extrair o LID retornado para montar o mapeamento LID→phone
+          const returnedJid: string = presData?.jid || presData?.id || presData?.remoteJid || "";
+          if (returnedJid.endsWith("@lid")) {
+            const lid = returnedJid.split("@")[0];
+            const phone = normalizePhoneFromJid(jid);
+            if (lid && phone) {
+              await env.DB.prepare(
+                "INSERT OR REPLACE INTO contact_jid_map (tenant_id, lid, phone) VALUES (?, ?, ?)",
+              ).bind(tenantId, lid, phone).run();
+              console.log(`[jid-map] LID mapeado: ${lid} → ${phone}`);
+            }
+          }
+        } catch { /* ignora erros de parse */ }
+      }
+    } catch { /* ignora falhas de rede */ }
 
     return { ok: true, remoteJid };
   } catch (err: any) {
@@ -3719,7 +3736,7 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
               url: fullWebhookUrl,
               webhookByEvents: false,
               webhookBase64: false,
-              events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "PRESENCE_UPDATE"],
+              events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "PRESENCE_UPDATE", "CONTACTS_UPSERT"],
             }),
           });
 
@@ -3738,20 +3755,89 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
     return json({ ok: true });
   }
 
+  // Constrói mapeamento LID→phone a partir de eventos de contato
+  // O Evolution envia contacts.upsert com { id: "phone@s.whatsapp.net", lid: "LID@lid" }
+  if (event === "contacts.upsert") {
+    const contacts: any[] = Array.isArray(data?.data) ? data.data : [];
+    const inserts: D1PreparedStatement[] = [];
+    for (const c of contacts) {
+      const phoneJid: string = c?.id || "";
+      const lidJid: string = c?.lid || "";
+      if (phoneJid.endsWith("@s.whatsapp.net") && lidJid.endsWith("@lid")) {
+        const phone = normalizePhoneFromJid(phoneJid);
+        const lid = normalizePhoneFromJid(lidJid);
+        if (phone && lid) {
+          inserts.push(
+            env.DB.prepare(
+              "INSERT OR REPLACE INTO contact_jid_map (tenant_id, lid, phone) VALUES (?, ?, ?)",
+            ).bind(tenantId, lid, phone),
+          );
+        }
+      }
+    }
+    if (inserts.length > 0) {
+      await env.DB.batch(inserts);
+      console.log(`[jid-map] contacts.upsert: ${inserts.length} mapeamentos LID→phone atualizados.`);
+    }
+    return json({ ok: true });
+  }
+
   // Registra indicador de digitação para debounce inteligente
   if (event === "presence.update") {
     const presences: Record<string, any> = data?.data?.presences || {};
     for (const [jid, pres] of Object.entries(presences)) {
       if ((pres as any)?.lastKnownPresence === "composing") {
-        const presPhone = normalizePhoneFromJid(jid);
-        if (presPhone) {
-          await env.DB.prepare(
-            `INSERT INTO phone_typing (tenant_id, phone, last_typing_at)
-             VALUES (?, ?, datetime('now'))
-             ON CONFLICT(tenant_id, phone) DO UPDATE SET last_typing_at = datetime('now')`,
-          ).bind(tenantId, presPhone).run();
-          console.log(`[typing] composing detectado. phone:${presPhone}`);
+        const rawId = normalizePhoneFromJid(jid);
+        if (!rawId) continue;
+
+        // Se o JID é um LID (@lid), resolve para o phone real via contact_jid_map
+        let resolvedPhone = rawId;
+        if (jid.endsWith("@lid")) {
+          const mapped = await env.DB.prepare(
+            "SELECT phone FROM contact_jid_map WHERE tenant_id = ? AND lid = ?",
+          ).bind(tenantId, rawId).first<{ phone: string }>();
+          if (mapped?.phone) {
+            resolvedPhone = mapped.phone;
+            console.log(`[typing] composing via LID ${rawId} → phone:${resolvedPhone}`);
+          } else {
+            // LID ainda não mapeado — tenta via Evolution API
+            try {
+              const baseUrl = getEvolutionBaseUrl(env);
+              if (baseUrl && env.EVOLUTION_API_KEY) {
+                const r = await fetch(
+                  `${baseUrl}/chat/fetchProfile/${tenantId}`,
+                  {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", apikey: env.EVOLUTION_API_KEY },
+                    body: JSON.stringify({ number: jid }),
+                  },
+                );
+                if (r.ok) {
+                  const profileData = await r.json() as any;
+                  const phoneFromProfile: string = profileData?.wid || profileData?.id || profileData?.jid || "";
+                  const phoneClean = normalizePhoneFromJid(phoneFromProfile.endsWith("@lid") ? "" : phoneFromProfile);
+                  if (phoneClean && phoneClean !== rawId) {
+                    resolvedPhone = phoneClean;
+                    await env.DB.prepare(
+                      "INSERT OR REPLACE INTO contact_jid_map (tenant_id, lid, phone) VALUES (?, ?, ?)",
+                    ).bind(tenantId, rawId, phoneClean).run();
+                    console.log(`[jid-map] LID resolvido via profile: ${rawId} → ${phoneClean}`);
+                  }
+                }
+              }
+            } catch { /* ignora */ }
+            // Usa o LID como fallback (debounce pelo menos grava algo)
+            console.log(`[typing] composing detectado (LID não resolvido). lid:${rawId}`);
+          }
+        } else {
+          console.log(`[typing] composing detectado. phone:${resolvedPhone}`);
         }
+
+        await env.DB.prepare(
+          `INSERT INTO phone_typing (tenant_id, phone, last_typing_at)
+           VALUES (?, ?, datetime('now'))
+           ON CONFLICT(tenant_id, phone) DO UPDATE SET last_typing_at = datetime('now')`,
+        ).bind(tenantId, resolvedPhone).run();
       }
     }
     return json({ ok: true });
