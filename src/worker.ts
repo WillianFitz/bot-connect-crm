@@ -1860,24 +1860,41 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
       errorDetails: campaignErrors,
     });
 
-    const pendingCount = await env.DB.prepare(
-      `SELECT COUNT(*) as c FROM leads l
-       WHERE l.tenant_id = ? AND l.phone IS NOT NULL AND trim(l.phone) != ''
-         AND NOT EXISTS (SELECT 1 FROM campaign_sends cs WHERE cs.campaign_id = ? AND cs.lead_id = l.id AND cs.status = 'sent')`,
-    )
-      .bind(tenantId, camp.id)
-      .first<{ c: number }>();
+    // Recomputa sent/total baseado apenas nos leads da pasta (sem acumular lixo de runs anteriores)
+    const sentCountRow = fid != null
+      ? await env.DB.prepare(
+          `SELECT COUNT(*) as c FROM campaign_sends cs
+           JOIN leads l ON l.id = cs.lead_id
+           WHERE cs.campaign_id = ? AND cs.status = 'sent' AND l.folder_id = ?`,
+        ).bind(camp.id, fid).first<{ c: number }>()
+      : await env.DB.prepare(
+          `SELECT COUNT(*) as c FROM campaign_sends WHERE campaign_id = ? AND status = 'sent'`,
+        ).bind(camp.id).first<{ c: number }>();
+    await env.DB.prepare(
+      "UPDATE campaigns SET sent = ? WHERE id = ? AND tenant_id = ?",
+    ).bind(Number(sentCountRow?.c ?? 0), camp.id, tenantId).run();
+
+    // Verifica conclusão usando o mesmo filtro de pasta
+    const pendingCount = fid != null
+      ? await env.DB.prepare(
+          `SELECT COUNT(*) as c FROM leads l
+           WHERE l.tenant_id = ? AND l.folder_id = ?
+             AND l.phone IS NOT NULL AND trim(l.phone) != ''
+             AND NOT EXISTS (SELECT 1 FROM campaign_sends cs WHERE cs.campaign_id = ? AND cs.lead_id = l.id AND cs.status = 'sent')`,
+        ).bind(tenantId, fid, camp.id).first<{ c: number }>()
+      : await env.DB.prepare(
+          `SELECT COUNT(*) as c FROM leads l
+           WHERE l.tenant_id = ?
+             AND l.phone IS NOT NULL AND trim(l.phone) != ''
+             AND NOT EXISTS (SELECT 1 FROM campaign_sends cs WHERE cs.campaign_id = ? AND cs.lead_id = l.id AND cs.status = 'sent')`,
+        ).bind(tenantId, camp.id).first<{ c: number }>();
+
     if (Number(pendingCount?.c ?? 0) === 0) {
       await env.DB.prepare(
         "UPDATE campaigns SET status = 'completed' WHERE id = ? AND tenant_id = ?",
-      )
-        .bind(camp.id, tenantId)
-        .run();
-      const totalSentRow = await env.DB.prepare(
-        "SELECT COUNT(*) as c FROM campaign_sends WHERE campaign_id = ? AND status = 'sent'",
-      ).bind(camp.id).first<{ c: number }>();
-      const sentCount = Number(totalSentRow?.c ?? 0);
-      await sendNotificationMessage(env, tenantId, `✅ Campanha "${camp.name}" finalizada. ${sentCount} mensagens enviadas.`);
+      ).bind(camp.id, tenantId).run();
+      const finalSent = Number(sentCountRow?.c ?? 0);
+      await sendNotificationMessage(env, tenantId, `✅ Campanha "${camp.name}" finalizada. ${finalSent} mensagens enviadas.`);
     }
 
   }
@@ -2112,14 +2129,21 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
       updates.push("status = ?");
       params.push(String(newStatus));
       if (newStatus === "active") {
-        const countRow = await env.DB.prepare(
-          "SELECT COUNT(*) as total FROM leads WHERE tenant_id = ? AND phone IS NOT NULL AND trim(phone) != ''",
-        )
-          .bind(tenantId)
-          .first<{ total: number }>();
-        const total = Number(countRow?.total ?? 0);
+        // Busca folder_id atual da campanha (pode estar sendo alterado na mesma requisição)
+        const folderIdForCount = "folder_id" in body
+          ? (body.folder_id ? Number(body.folder_id) : null)
+          : (await env.DB.prepare("SELECT folder_id FROM campaigns WHERE id = ? AND tenant_id = ?")
+              .bind(campaignId, tenantId).first<{ folder_id: number | null }>())?.folder_id ?? null;
+
+        const countRow = folderIdForCount != null
+          ? await env.DB.prepare(
+              "SELECT COUNT(*) as total FROM leads WHERE tenant_id = ? AND folder_id = ? AND phone IS NOT NULL AND trim(phone) != ''",
+            ).bind(tenantId, folderIdForCount).first<{ total: number }>()
+          : await env.DB.prepare(
+              "SELECT COUNT(*) as total FROM leads WHERE tenant_id = ? AND phone IS NOT NULL AND trim(phone) != ''",
+            ).bind(tenantId).first<{ total: number }>();
         updates.push("total_leads = ?");
-        params.push(total);
+        params.push(Number(countRow?.total ?? 0));
       }
     }
     if (newFunnelId !== undefined) {
@@ -2129,6 +2153,8 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
     if ("folder_id" in body) {
       updates.push("folder_id = ?");
       params.push(body.folder_id ? Number(body.folder_id) : null);
+      // Reseta contadores para a nova pasta
+      updates.push("sent = 0", "total_leads = 0");
     }
     if ("scheduled_at" in body) {
       updates.push("scheduled_at = ?");
