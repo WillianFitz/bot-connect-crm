@@ -3717,6 +3717,24 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
          status = excluded.status,
          updated_at = datetime('now')`,
     ).bind(tenantId, mappedStatus).run();
+
+    // Quando conexão é estabelecida, ativa o envio de eventos de presença (composing)
+    // Isso alimenta o phone_typing para o debounce inteligente funcionar corretamente
+    if (mappedStatus === "connected") {
+      const baseUrl = getEvolutionBaseUrl(env);
+      if (baseUrl && env.EVOLUTION_API_KEY) {
+        try {
+          await fetch(`${baseUrl}/chat/updatePresence/${tenantId}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", apikey: env.EVOLUTION_API_KEY },
+            body: JSON.stringify({ presence: "available" }),
+          });
+        } catch {
+          // não bloqueia o fluxo se falhar
+        }
+      }
+    }
+
     return json({ ok: true });
   }
 
@@ -3829,9 +3847,9 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
 
   // Sou o processador — aguarda enquanto a pessoa ainda está digitando
   // Loop inteligente: verifica phone_typing (composing) e tempo da última mensagem
-  const MAX_WAIT_MS = 20_000;   // máximo de 20s esperando
-  const POLL_MS     = 1_200;    // verifica a cada 1,2s
-  const TYPING_GRACE_MS = 3_500; // se parou de digitar, aguarda mais 3,5s sem nova msg
+  const MAX_WAIT_MS     = 25_000; // máximo de 25s esperando
+  const POLL_MS         = 1_500;  // verifica a cada 1,5s
+  const TYPING_GRACE_MS = 6_000;  // janela de silêncio: 6s sem nova msg e sem composing
   const startWait = Date.now();
 
   while (Date.now() - startWait < MAX_WAIT_MS) {
