@@ -3852,7 +3852,7 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
   const MAX_WAIT_MS      = 28_000; // máximo absoluto de espera
   const POLL_MS          = 1_200;  // intervalo de polling
   const COMPOSING_GRACE_MS = 5_000; // pessoa digitando: aguarda 5s após o último composing
-  const IDLE_GRACE_MS    = 12_000; // sem typing events: aguarda 12s desde a última mensagem
+  const IDLE_GRACE_MS    = 15_000; // sem typing events: aguarda 15s desde a última mensagem
   const startWait = Date.now();
 
   while (Date.now() - startWait < MAX_WAIT_MS) {
@@ -3887,6 +3887,19 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
     }
 
     // Pessoa parou de digitar e não há mensagens recentes — prossegue
+    // Checagem final: se o usuário acabou de começar a digitar neste exato instante,
+    // aguarda mais um ciclo antes de processar (evita responder no meio de "Mas...")
+    const finalTyping = await env.DB.prepare(
+      "SELECT last_typing_at FROM phone_typing WHERE tenant_id = ? AND phone = ?",
+    ).bind(tenantId, phone).first<{ last_typing_at: string }>();
+    if (finalTyping?.last_typing_at) {
+      const ms = Date.now() - new Date(finalTyping.last_typing_at + "Z").getTime();
+      if (ms < COMPOSING_GRACE_MS) {
+        console.log(`[debounce] composing de última hora (${ms}ms) — aguardando mais. phone:${phone}`);
+        continue;
+      }
+    }
+
     console.log(`[debounce] pronto para processar após ${Date.now() - startWait}ms. phone:${phone}`);
     break;
   }
