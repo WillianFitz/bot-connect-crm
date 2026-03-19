@@ -3673,13 +3673,25 @@ async function handleInbox(request: Request, env: Env, method: string, url: URL)
     return json({ ok: true });
   }
 
-  // DELETE /api/inbox/:phone — descarta conversa da fila
+  // DELETE /api/inbox/:phone — descarta conversa da fila e reativa o bot
   // Reaparece automaticamente quando chegar mensagem mais nova
   if (method === "DELETE" && parts.length === 3) {
-    await env.DB.prepare(
-      `INSERT INTO inbox_dismissed (tenant_id, phone, dismissed_at) VALUES (?, ?, datetime('now'))
-       ON CONFLICT(tenant_id, phone) DO UPDATE SET dismissed_at = datetime('now')`,
-    ).bind(tenantId, phone).run();
+    await env.DB.batch([
+      // Marca como descartado
+      env.DB.prepare(
+        `INSERT INTO inbox_dismissed (tenant_id, phone, dismissed_at) VALUES (?, ?, datetime('now'))
+         ON CONFLICT(tenant_id, phone) DO UPDATE SET dismissed_at = datetime('now')`,
+      ).bind(tenantId, phone),
+      // Reativa o bot (remove pausa)
+      env.DB.prepare(
+        "DELETE FROM agent_pauses WHERE tenant_id = ? AND phone = ?",
+      ).bind(tenantId, phone),
+      // Resolve handoffs abertos
+      env.DB.prepare(
+        `UPDATE human_handoffs SET status = 'resolved', resolved_at = datetime('now'), updated_at = datetime('now')
+         WHERE tenant_id = ? AND phone = ? AND status IN ('pending','active')`,
+      ).bind(tenantId, phone),
+    ]);
     return json({ ok: true });
   }
 
