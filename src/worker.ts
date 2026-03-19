@@ -3554,47 +3554,31 @@ async function handleInbox(request: Request, env: Env, method: string, url: URL)
   const parts = url.pathname.split("/").filter(Boolean);
   // parts: ["api","inbox"] or ["api","inbox",":phone","messages"] or ["api","inbox",":phone","resolve"] etc.
 
-  // GET /api/inbox — todas as conversas recentes + status do bot (handoff ou ativo)
+  // GET /api/inbox — apenas handoffs abertos (pending ou active)
+  // Some da lista ao resolver ou descartar — é uma fila de atenção, não histórico
   if (method === "GET" && parts.length === 2) {
-    // Busca todos os telefones com conversa nos últimos 30 dias
     const rows = await env.DB.prepare(
       `SELECT
-         ac.phone,
-         COALESCE(l.company, ac.phone)                  AS contact_name,
-         MAX(ac.created_at)                              AS last_message_at,
+         h.phone,
+         COALESCE(h.contact_name, h.phone)  AS contact_name,
+         h.status                            AS handoff_status,
+         h.trigger_reason,
+         h.created_at,
+         h.updated_at,
          (SELECT content FROM agent_conversations
-          WHERE tenant_id = ac.tenant_id AND phone = ac.phone AND agent_id = 'atendimento'
-          ORDER BY created_at DESC LIMIT 1)              AS last_message,
+          WHERE tenant_id = h.tenant_id AND phone = h.phone AND agent_id = 'atendimento'
+          ORDER BY created_at DESC LIMIT 1)  AS last_message,
          (SELECT role FROM agent_conversations
-          WHERE tenant_id = ac.tenant_id AND phone = ac.phone AND agent_id = 'atendimento'
-          ORDER BY created_at DESC LIMIT 1)              AS last_message_role,
-         -- status do bot: paused se houver pause definitivo, active caso contrário
-         CASE
-           WHEN EXISTS (
-             SELECT 1 FROM agent_pauses ap
-             WHERE ap.tenant_id = ac.tenant_id AND ap.phone = ac.phone
-               AND (ap.pause_definitive = 1 OR (ap.paused_until IS NOT NULL AND ap.paused_until > datetime('now')))
-           ) THEN 'paused'
-           ELSE 'active'
-         END                                             AS bot_status,
-         -- handoff aberto, se houver
-         (SELECT hh.id FROM human_handoffs hh
-          WHERE hh.tenant_id = ac.tenant_id AND hh.phone = ac.phone
-            AND hh.status IN ('pending','active')
-          LIMIT 1)                                       AS handoff_id,
-         (SELECT hh.status FROM human_handoffs hh
-          WHERE hh.tenant_id = ac.tenant_id AND hh.phone = ac.phone
-            AND hh.status IN ('pending','active')
-          LIMIT 1)                                       AS handoff_status,
+          WHERE tenant_id = h.tenant_id AND phone = h.phone AND agent_id = 'atendimento'
+          ORDER BY created_at DESC LIMIT 1)  AS last_message_role,
+         (SELECT created_at FROM agent_conversations
+          WHERE tenant_id = h.tenant_id AND phone = h.phone AND agent_id = 'atendimento'
+          ORDER BY created_at DESC LIMIT 1)  AS last_message_at,
          (SELECT COUNT(*) FROM agent_conversations
-          WHERE tenant_id = ac.tenant_id AND phone = ac.phone AND agent_id = 'atendimento') AS message_count
-       FROM agent_conversations ac
-       LEFT JOIN leads l ON l.tenant_id = ac.tenant_id AND l.phone = ac.phone
-       WHERE ac.tenant_id = ? AND ac.agent_id = 'atendimento'
-         AND ac.created_at > datetime('now', '-30 days')
-       GROUP BY ac.phone
-       ORDER BY last_message_at DESC
-       LIMIT 100`,
+          WHERE tenant_id = h.tenant_id AND phone = h.phone AND agent_id = 'atendimento') AS message_count
+       FROM human_handoffs h
+       WHERE h.tenant_id = ? AND h.status IN ('pending','active')
+       ORDER BY CASE h.status WHEN 'pending' THEN 0 ELSE 1 END, h.updated_at DESC`,
     ).bind(tenantId).all<Record<string, unknown>>();
     return json(rows.results || []);
   }
@@ -3683,6 +3667,16 @@ async function handleInbox(request: Request, env: Env, method: string, url: URL)
     // Reativa o agente removendo a pausa
     await env.DB.prepare(
       "DELETE FROM agent_pauses WHERE tenant_id = ? AND phone = ?",
+    ).bind(tenantId, phone).run();
+    return json({ ok: true });
+  }
+
+  // DELETE /api/inbox/:phone — descarta da fila sem reativar bot
+  // (bot continua pausado; apenas remove da fila de atenção)
+  if (method === "DELETE" && parts.length === 3) {
+    await env.DB.prepare(
+      `UPDATE human_handoffs SET status = 'resolved', resolved_at = datetime('now'), updated_at = datetime('now')
+       WHERE tenant_id = ? AND phone = ? AND status IN ('pending','active')`,
     ).bind(tenantId, phone).run();
     return json({ ok: true });
   }
