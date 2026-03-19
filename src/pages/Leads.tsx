@@ -72,9 +72,8 @@ export default function Leads() {
       setIsCreateOpen(false);
       toast({
         title: "Lead cadastrado",
-        description: "O lead foi salvo. Se houver campanha ativa, ele entrará na fila de disparo.",
+        description: "O lead foi salvo.",
       });
-      api.runCampaigns({ ignoreWindow: true }).catch(() => {});
     },
   });
 
