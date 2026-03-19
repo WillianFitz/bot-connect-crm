@@ -8,7 +8,9 @@
       "WebFetch(domain:doc.evolution-api.com)",
       "WebFetch(domain:evolution-api.com)",
       "Bash(npm run:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(wrangler d1:*)",
+      "Bash(wrangler deploy:*)"
     ]
   }
 }

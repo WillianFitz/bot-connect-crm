@@ -3542,6 +3542,25 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
     return json({ ok: true });
   }
 
+  // Registra indicador de digitação para debounce inteligente
+  if (event === "presence.update") {
+    const presences: Record<string, any> = data?.data?.presences || {};
+    for (const [jid, pres] of Object.entries(presences)) {
+      if ((pres as any)?.lastKnownPresence === "composing") {
+        const presPhone = normalizePhoneFromJid(jid);
+        if (presPhone) {
+          await env.DB.prepare(
+            `INSERT INTO phone_typing (tenant_id, phone, last_typing_at)
+             VALUES (?, ?, datetime('now'))
+             ON CONFLICT(tenant_id, phone) DO UPDATE SET last_typing_at = datetime('now')`,
+          ).bind(tenantId, presPhone).run();
+          console.log(`[typing] composing detectado. phone:${presPhone}`);
+        }
+      }
+    }
+    return json({ ok: true });
+  }
+
   // Só processa mensagens recebidas
   if (event !== "messages.upsert") return json({ ok: true });
 
@@ -3623,9 +3642,54 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
     return json({ ok: true });
   }
 
-  // Sou o processador — aguarda a janela de debounce
-  const DEBOUNCE_MS = 4000;
-  await new Promise<void>((resolve) => setTimeout(resolve, DEBOUNCE_MS));
+  // Sou o processador — aguarda enquanto a pessoa ainda está digitando
+  // Loop inteligente: verifica phone_typing (composing) e tempo da última mensagem
+  const MAX_WAIT_MS = 20_000;   // máximo de 20s esperando
+  const POLL_MS     = 1_200;    // verifica a cada 1,2s
+  const TYPING_GRACE_MS = 3_500; // se parou de digitar, aguarda mais 3,5s sem nova msg
+  const startWait = Date.now();
+
+  while (Date.now() - startWait < MAX_WAIT_MS) {
+    await new Promise<void>((r) => setTimeout(r, POLL_MS));
+
+    // Verifica se chegou mensagem nova (outro processor tomou conta) — se sim, aborta
+    const pendingCount = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM whatsapp_buffer WHERE tenant_id = ? AND phone = ? AND processed = 0 AND processor_claimed = 0",
+    ).bind(tenantId, phone).first<{ n: number }>();
+    // Não há mensagens sem processador — certo, sou o único processador
+
+    // Verifica indicador de digitação: última vez que `composing` foi recebido
+    const typingRow = await env.DB.prepare(
+      "SELECT last_typing_at FROM phone_typing WHERE tenant_id = ? AND phone = ?",
+    ).bind(tenantId, phone).first<{ last_typing_at: string }>();
+
+    if (typingRow?.last_typing_at) {
+      const lastTypingMs = Date.now() - new Date(typingRow.last_typing_at + "Z").getTime();
+      if (lastTypingMs < TYPING_GRACE_MS) {
+        // Pessoa ainda digitando (composing recente) — continua esperando
+        console.log(`[debounce] digitando há ${lastTypingMs}ms — aguardando. phone:${phone}`);
+        continue;
+      }
+    }
+
+    // Sem sinal de digitação recente — verifica se a última mensagem chegou há pouco
+    const lastMsgRow = await env.DB.prepare(
+      "SELECT received_at FROM whatsapp_buffer WHERE tenant_id = ? AND phone = ? AND processed = 0 ORDER BY id DESC LIMIT 1",
+    ).bind(tenantId, phone).first<{ received_at: string }>();
+
+    if (lastMsgRow?.received_at) {
+      const lastMsgMs = Date.now() - new Date(lastMsgRow.received_at + "Z").getTime();
+      if (lastMsgMs < TYPING_GRACE_MS) {
+        // Mensagem chegou há poucos segundos — aguarda um pouco mais
+        console.log(`[debounce] última msg há ${lastMsgMs}ms — aguardando. phone:${phone}`);
+        continue;
+      }
+    }
+
+    // Pessoa parou de digitar e não há mensagens recentes — prossegue
+    console.log(`[debounce] pronto para processar após ${Date.now() - startWait}ms. phone:${phone}`);
+    break;
+  }
 
   // Coleta TODAS as mensagens não processadas para este telefone
   const buffered = await env.DB.prepare(
