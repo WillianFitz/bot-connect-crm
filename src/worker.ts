@@ -3579,7 +3579,7 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
     return json({ ok: true });
   }
   // Trunca mensagens excessivamente longas (proteção contra custo e context overflow)
-  const userText = rawUserText.length > 1000 ? rawUserText.slice(0, 1000) + "…" : rawUserText;
+  let userText = rawUserText.length > 1000 ? rawUserText.slice(0, 1000) + "…" : rawUserText;
 
   // @lid: formato de privacidade do WhatsApp — tenta resolver para número real via lid_mappings
   const isLid = remoteJid.endsWith("@lid");
@@ -3596,6 +3596,63 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
   }
 
   console.log(`[webhook] mensagem recebida — tenant:${tenantId} phone:${phone} jid:${remoteJid} texto:"${userText}"`);
+
+  // ── Message debounce buffer ────────────────────────────────────────────────
+  // Agrupa mensagens rápidas consecutivas ("oi", "tudo", "bem", "?") em uma
+  // única chamada à IA, evitando respostas fragmentadas.
+  // O primeiro a chegar "reclama" o papel de processador e dorme 4s; os
+  // subsequentes apenas salvam no buffer e retornam 200 OK imediatamente.
+  await env.DB.prepare(
+    "INSERT INTO whatsapp_buffer (tenant_id, phone, message) VALUES (?, ?, ?)",
+  ).bind(tenantId, phone, userText).run();
+
+  // Tenta atomicamente reclamar o papel de processador (UPDATE retorna changes=1 apenas uma vez)
+  const debounceKey = `${tenantId}:${phone}`;
+  const claimed = await env.DB.prepare(
+    `UPDATE whatsapp_buffer SET processor_claimed = 1
+     WHERE id = (
+       SELECT id FROM whatsapp_buffer
+       WHERE tenant_id = ? AND phone = ? AND processed = 0 AND processor_claimed = 0
+       ORDER BY id ASC LIMIT 1
+     )`,
+  ).bind(tenantId, phone).run();
+
+  if (!claimed.meta?.changes && !(claimed as any).changes) {
+    // Outro processador já está aguardando — mensagem salva no buffer, retorna
+    console.log(`[debounce] aguardando processor existente. phone:${phone}`);
+    return json({ ok: true });
+  }
+
+  // Sou o processador — aguarda a janela de debounce
+  const DEBOUNCE_MS = 4000;
+  await new Promise<void>((resolve) => setTimeout(resolve, DEBOUNCE_MS));
+
+  // Coleta TODAS as mensagens não processadas para este telefone
+  const buffered = await env.DB.prepare(
+    "SELECT id, message FROM whatsapp_buffer WHERE tenant_id = ? AND phone = ? AND processed = 0 ORDER BY id ASC",
+  ).bind(tenantId, phone).all();
+
+  const bufferIds = (buffered.results ?? []).map((r: any) => Number(r.id));
+  const combinedText = (buffered.results ?? []).map((r: any) => String(r.message)).join("\n").trim();
+
+  if (!combinedText) {
+    console.log(`[debounce] buffer vazio após espera. phone:${phone}`);
+    return json({ ok: true });
+  }
+
+  // Marca como processadas antes de chamar a IA (evita reprocessamento em retry)
+  if (bufferIds.length > 0) {
+    await env.DB.prepare(
+      `UPDATE whatsapp_buffer SET processed = 1 WHERE id IN (${bufferIds.map(() => "?").join(",")})`,
+    ).bind(...bufferIds).run();
+  }
+
+  // Substitui o texto individual pelo texto combinado de todas as mensagens
+  userText = combinedText;
+  if (bufferIds.length > 1) {
+    console.log(`[debounce] ${bufferIds.length} mensagens combinadas → "${userText}". phone:${phone}`);
+  }
+  // ── Fim do debounce buffer ─────────────────────────────────────────────────
 
   // Load connection settings
   const conn = await env.DB.prepare(
@@ -3985,6 +4042,7 @@ export default {
       await env.DB.batch([
         env.DB.prepare("DELETE FROM agent_conversations WHERE created_at < datetime('now', '-90 days')"),
         env.DB.prepare("DELETE FROM webhook_dedup WHERE created_at < datetime('now', '-1 day')"),
+        env.DB.prepare("DELETE FROM whatsapp_buffer WHERE received_at < datetime('now', '-1 hour')"),
       ]);
     } catch (err) {
       console.error("[cron] cleanup error:", err);
