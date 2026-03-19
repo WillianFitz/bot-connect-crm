@@ -1597,10 +1597,10 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
   }
 
   const campaigns = await env.DB.prepare(
-    "SELECT id, name, time_from, time_to, days_blocked, delay_min, delay_max, status, funnel_id FROM campaigns WHERE tenant_id = ? AND (status = 'active' OR status = 'completed')",
+    "SELECT id, name, time_from, time_to, days_blocked, delay_min, delay_max, status, funnel_id, folder_id FROM campaigns WHERE tenant_id = ? AND (status = 'active' OR status = 'completed')",
   )
     .bind(tenantId)
-    .all<{ id: number; name: string; time_from: string; time_to: string; days_blocked: string; delay_min: number; delay_max: number; status: string; funnel_id: number | null }>();
+    .all<{ id: number; name: string; time_from: string; time_to: string; days_blocked: string; delay_min: number; delay_max: number; status: string; funnel_id: number | null; folder_id: number | null }>();
 
   const list = (campaigns.results || []) as Array<{
     id: number;
@@ -1612,6 +1612,7 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
     delay_max: number;
     status: string;
     funnel_id: number | null;
+    folder_id: number | null;
   }>;
 
   let processed = 0;
@@ -1646,9 +1647,11 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
       if (elapsedSec < requiredSec) continue;
     }
 
+    const folderFilter = camp.folder_id ? ` AND l.folder_id = ${Number(camp.folder_id)}` : "";
+
     const pendingCountCheck = await env.DB.prepare(
       `SELECT COUNT(*) as c FROM leads l
-       WHERE l.tenant_id = ? AND l.phone IS NOT NULL AND trim(l.phone) != ''
+       WHERE l.tenant_id = ? AND l.phone IS NOT NULL AND trim(l.phone) != ''${folderFilter}
          AND NOT EXISTS (SELECT 1 FROM campaign_sends cs WHERE cs.campaign_id = ? AND cs.lead_id = l.id AND cs.status = 'sent')`,
     )
       .bind(tenantId, camp.id)
@@ -1664,7 +1667,7 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
     }
 
     const totalLeadsNow = await env.DB.prepare(
-      "SELECT COUNT(*) as c FROM leads WHERE tenant_id = ? AND phone IS NOT NULL AND trim(phone) != ''",
+      `SELECT COUNT(*) as c FROM leads l WHERE l.tenant_id = ? AND l.phone IS NOT NULL AND trim(l.phone) != ''${folderFilter}`,
     )
       .bind(tenantId)
       .first<{ c: number }>();
@@ -1678,7 +1681,7 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
     const pending = await env.DB.prepare(
       `SELECT l.id, l.company, l.phone FROM leads l
        WHERE l.tenant_id = ?
-         AND l.phone IS NOT NULL AND trim(l.phone) != ''
+         AND l.phone IS NOT NULL AND trim(l.phone) != ''${folderFilter}
          AND NOT EXISTS (SELECT 1 FROM campaign_sends cs WHERE cs.campaign_id = ? AND cs.lead_id = l.id AND cs.status = 'sent')
        ORDER BY l.id ASC LIMIT ?`,
     )
@@ -1956,7 +1959,7 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
   if (method === "GET") {
     if (isSingle && campaignId) {
       const row = await env.DB.prepare(
-        "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, status, total_leads, sent, errors, no_whatsapp, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE id = ? AND tenant_id = ?",
+        "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id, status, total_leads, sent, errors, no_whatsapp, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE id = ? AND tenant_id = ?",
       )
         .bind(campaignId, tenantId)
         .first();
@@ -1964,7 +1967,7 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
       return json(row);
     }
     const res = await env.DB.prepare(
-      "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, status, total_leads, sent, errors, no_whatsapp, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE tenant_id = ? ORDER BY created_at DESC",
+      "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id, status, total_leads, sent, errors, no_whatsapp, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE tenant_id = ? ORDER BY created_at DESC",
     ).bind(tenantId).all();
     return json(res.results || []);
   }
@@ -1980,6 +1983,7 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
       days_blocked = [],
       funnel_id = null,
       crm_column_id = null,
+      folder_id = null,
     } = body;
 
     if (!name || typeof name !== "string" || name.trim().length === 0) {
@@ -2004,8 +2008,8 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
 
     const res = await env.DB.prepare(
       `INSERT INTO campaigns
-       (tenant_id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (tenant_id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
       .bind(
         tenantId,
@@ -2017,13 +2021,14 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
         JSON.stringify(Array.isArray(days_blocked) ? days_blocked : []),
         funnel_id ?? null,
         crm_column_id ?? null,
+        folder_id ? Number(folder_id) : null,
       )
       .run();
 
     const raw = res as { meta?: { last_row_id?: number }; lastRowId?: number };
     const lastId = raw.meta?.last_row_id ?? raw.lastRowId ?? 0;
     const created = await env.DB.prepare(
-      "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, status, total_leads, sent, errors, no_whatsapp, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE id = ? AND tenant_id = ?",
+      "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id, status, total_leads, sent, errors, no_whatsapp, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE id = ? AND tenant_id = ?",
     )
       .bind(lastId, tenantId)
       .first();
@@ -2096,6 +2101,10 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
       updates.push("funnel_id = ?");
       params.push(newFunnelId === null || newFunnelId === "" ? null : Number(newFunnelId));
     }
+    if ("folder_id" in body) {
+      updates.push("folder_id = ?");
+      params.push(body.folder_id ? Number(body.folder_id) : null);
+    }
     if ("scheduled_at" in body) {
       updates.push("scheduled_at = ?");
       params.push(body.scheduled_at ?? null);
@@ -2113,7 +2122,7 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
       .run();
 
     const updated = await env.DB.prepare(
-      "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, status, total_leads, sent, errors, no_whatsapp, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE id = ? AND tenant_id = ?",
+      "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id, status, total_leads, sent, errors, no_whatsapp, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE id = ? AND tenant_id = ?",
     )
       .bind(campaignId, tenantId)
       .first();

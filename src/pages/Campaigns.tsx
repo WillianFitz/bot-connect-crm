@@ -44,6 +44,7 @@ interface Campaign {
   errors: number;
   no_whatsapp: number;
   funnel_id: number | null;
+  folder_id: number | null;
 }
 
 const weekDays = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
@@ -63,12 +64,19 @@ export default function Campaigns() {
   const [timeTo, setTimeTo] = useState("18:00");
   const [blockedDays, setBlockedDays] = useState<string[]>([]);
   const [selectedFunnelId, setSelectedFunnelId] = useState<number | null>(null);
+  const [selectedFolderId, setSelectedFolderId] = useState<number | null>(null);
 
   const funnelsQuery = useQuery({
     queryKey: ["funnels"],
     queryFn: api.getFunnels,
   });
   const funnelOptions = (funnelsQuery.data ?? []) as FunnelOption[];
+
+  const foldersQuery = useQuery({
+    queryKey: ["lead-folders"],
+    queryFn: api.getLeadFolders,
+  });
+  const folderOptions = foldersQuery.data ?? [];
 
   const settingsQuery = useQuery({
     queryKey: ["settings"],
@@ -108,6 +116,7 @@ export default function Campaigns() {
       setTimeTo("18:00");
       setBlockedDays([]);
       setSelectedFunnelId(null);
+      setSelectedFolderId(null);
       setShowCreateDialog(false);
       toast({ title: "Campanha criada." });
     },
@@ -200,6 +209,7 @@ export default function Campaigns() {
       time_to: timeTo,
       days_blocked: blockedDays,
       funnel_id: selectedFunnelId,
+      folder_id: selectedFolderId,
     });
   };
 
@@ -215,6 +225,7 @@ export default function Campaigns() {
     setTimeTo(c.time_to ?? "18:00");
     setBlockedDays(Array.isArray(days) ? days : []);
     setSelectedFunnelId(c.funnel_id ?? null);
+    setSelectedFolderId(c.folder_id ?? null);
   };
 
   const handleSaveEdit = () => {
@@ -230,6 +241,7 @@ export default function Campaigns() {
         time_to: timeTo,
         days_blocked: blockedDays,
         funnel_id: selectedFunnelId,
+        folder_id: selectedFolderId,
       },
     });
   };
@@ -295,6 +307,7 @@ export default function Campaigns() {
               setTimeTo("18:00");
               setBlockedDays([]);
               setSelectedFunnelId(null);
+              setSelectedFolderId(null);
               setShowCreateDialog(true);
             }}
           >
@@ -337,6 +350,7 @@ export default function Campaigns() {
                 {[
                   "Nome",
                   "Status",
+                  "Pasta",
                   "Total",
                   "Enviados",
                   "Erros",
@@ -356,7 +370,7 @@ export default function Campaigns() {
               {campaigns.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={7}
+                    colSpan={8}
                     className="px-3 py-6 text-center text-xs text-muted-foreground"
                   >
                     Nenhuma campanha
@@ -540,6 +554,24 @@ export default function Campaigns() {
                 </p>
               )}
             </div>
+            <div>
+              <Label className="text-xs text-muted-foreground">Pasta de leads (opcional)</Label>
+              <select
+                className="mt-1 w-full rounded-md border border-border/50 bg-secondary text-xs px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary"
+                value={selectedFolderId ?? ""}
+                onChange={(e) => setSelectedFolderId(e.target.value ? Number(e.target.value) : null)}
+              >
+                <option value="">— Todos os leads —</option>
+                {folderOptions.map((f) => (
+                  <option key={f.id} value={f.id}>{f.name}</option>
+                ))}
+              </select>
+              {selectedFolderId && (
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  Apenas leads desta pasta serão incluídos no disparo.
+                </p>
+              )}
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
@@ -645,6 +677,24 @@ export default function Campaigns() {
               {selectedFunnelId && (
                 <p className="text-[10px] text-amber-600 mt-1">
                   Se um funil for selecionado, o bot enviará as mensagens do funil em sequência ao invés da IA.
+                </p>
+              )}
+            </div>
+            <div>
+              <Label className="text-xs text-muted-foreground">Pasta de leads (opcional)</Label>
+              <select
+                className="mt-1 w-full rounded-md border border-border/50 bg-secondary text-xs px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary"
+                value={selectedFolderId ?? ""}
+                onChange={(e) => setSelectedFolderId(e.target.value ? Number(e.target.value) : null)}
+              >
+                <option value="">— Todos os leads —</option>
+                {folderOptions.map((f) => (
+                  <option key={f.id} value={f.id}>{f.name}</option>
+                ))}
+              </select>
+              {selectedFolderId && (
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  Apenas leads desta pasta serão incluídos no disparo.
                 </p>
               )}
             </div>

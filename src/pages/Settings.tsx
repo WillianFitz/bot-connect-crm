@@ -77,6 +77,8 @@ export default function SettingsPage() {
     queryKey: ["whatsapp-groups"],
     queryFn: api.getGroups,
     retry: false,
+    enabled: false,
+    staleTime: Infinity,
   });
 
   const [notifMode, setNotifMode] = useState<"phone" | "group">("phone");
@@ -274,7 +276,7 @@ export default function SettingsPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setNotifMode("group")}
+                    onClick={() => { setNotifMode("group"); if (!groupsQuery.data) groupsQuery.refetch(); }}
                     className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium border transition-colors flex-1 justify-center
                       ${notifMode === "group"
                         ? "border-transparent text-white"
