@@ -657,15 +657,21 @@ export default function Funnels() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["crm-leads"] }),
   });
 
-  // Init default columns once
+  // Init default columns ONCE — only if the server confirmed 0 columns exist
   useEffect(() => {
-    if (columnsQuery.isSuccess && (columnsQuery.data ?? []).length === 0 && !initializedRef.current) {
+    if (
+      !initializedRef.current &&
+      columnsQuery.isSuccess &&
+      Array.isArray(columnsQuery.data) &&
+      columnsQuery.data.length === 0
+    ) {
       initializedRef.current = true;
       DEFAULT_COLUMNS.forEach((name, i) =>
         createColumn.mutate({ name, position: i, color: DEFAULT_COLORS[i] }),
       );
     }
-  }, [columnsQuery.isSuccess, columnsQuery.data]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [columnsQuery.isSuccess, columnsQuery.data?.length]);
 
   // ── Derived ──────────────────────────────────────────────────────────────────
   const columns = useMemo(
