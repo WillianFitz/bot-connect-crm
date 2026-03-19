@@ -2464,29 +2464,117 @@ async function handleCRM(request: Request, env: Env, method: string, url: URL) {
   const tenantId = await getTenantId(request, env);
   await ensureTenant(env, tenantId);
 
+  // /api/crm/pipeline-stats
+  if (parts.length === 3 && parts[2] === "pipeline-stats") {
+    if (method === "GET") {
+      const colStats = await env.DB.prepare(`
+        SELECT col.id, col.name, col.color, col.position,
+               COUNT(cl.id) as lead_count,
+               COALESCE(SUM(cl.deal_value), 0) as total_value
+        FROM crm_columns col
+        LEFT JOIN crm_leads cl ON cl.column_id = col.id AND cl.tenant_id = col.tenant_id
+        WHERE col.tenant_id = ?
+        GROUP BY col.id
+        ORDER BY col.position ASC
+      `).bind(tenantId).all();
+      const totals = await env.DB.prepare(
+        "SELECT COUNT(*) as cnt, COALESCE(SUM(deal_value), 0) as total FROM crm_leads WHERE tenant_id = ?",
+      ).bind(tenantId).first<{ cnt: number; total: number }>();
+      return json({ columns: colStats.results || [], totalDeals: totals?.cnt ?? 0, totalValue: totals?.total ?? 0 });
+    }
+    return new Response("Method not allowed", { status: 405 });
+  }
+
+  // /api/crm/columns/:id
+  if (parts.length === 4 && parts[2] === "columns") {
+    const colId = Number(parts[3]);
+    if (isNaN(colId)) return json({ error: "ID inválido" }, { status: 400 });
+
+    if (method === "PUT") {
+      const body = await readBody<{ name?: string; color?: string; wip_limit?: number | null; position?: number }>(request);
+      const sets: string[] = [];
+      const vals: (string | number | null)[] = [];
+      if (body.name !== undefined) { sets.push("name = ?"); vals.push(body.name); }
+      if (body.color !== undefined) { sets.push("color = ?"); vals.push(body.color); }
+      if (body.wip_limit !== undefined) { sets.push("wip_limit = ?"); vals.push(body.wip_limit); }
+      if (body.position !== undefined) { sets.push("position = ?"); vals.push(body.position); }
+      if (sets.length === 0) return json({ error: "Nenhum campo para atualizar" }, { status: 400 });
+      vals.push(colId, tenantId);
+      await env.DB.prepare(
+        `UPDATE crm_columns SET ${sets.join(", ")} WHERE id = ? AND tenant_id = ?`,
+      ).bind(...vals).run();
+      const updated = await env.DB.prepare(
+        "SELECT id, name, position, color, wip_limit FROM crm_columns WHERE id = ? AND tenant_id = ?",
+      ).bind(colId, tenantId).first();
+      return json(updated);
+    }
+
+    if (method === "DELETE") {
+      const count = await env.DB.prepare(
+        "SELECT COUNT(*) as cnt FROM crm_leads WHERE column_id = ? AND tenant_id = ?",
+      ).bind(colId, tenantId).first<{ cnt: number }>();
+      if (count && count.cnt > 0) {
+        return json({ error: "Mova os leads antes de deletar a coluna" }, { status: 400 });
+      }
+      await env.DB.prepare("DELETE FROM crm_columns WHERE id = ? AND tenant_id = ?").bind(colId, tenantId).run();
+      return json({ ok: true });
+    }
+
+    return new Response("Method not allowed", { status: 405 });
+  }
+
   // /api/crm/columns
   if (parts.length === 3 && parts[2] === "columns") {
     if (method === "GET") {
       const res = await env.DB.prepare(
-        "SELECT id, name, position FROM crm_columns WHERE tenant_id = ? ORDER BY position ASC",
+        "SELECT id, name, position, color, wip_limit FROM crm_columns WHERE tenant_id = ? ORDER BY position ASC",
       ).bind(tenantId).all();
       return json(res.results || []);
     }
 
     if (method === "POST") {
-      const body = await readBody<{ name?: string; position?: number }>(request);
+      const body = await readBody<{ name?: string; position?: number; color?: string }>(request);
       if (!body.name) return json({ error: "Nome obrigatório" }, { status: 400 });
+      const maxPos = await env.DB.prepare(
+        "SELECT COALESCE(MAX(position), -1) as maxPos FROM crm_columns WHERE tenant_id = ?",
+      ).bind(tenantId).first<{ maxPos: number }>();
+      const pos = body.position ?? (maxPos ? maxPos.maxPos + 1 : 0);
       const res = await env.DB.prepare(
-        "INSERT INTO crm_columns (tenant_id, name, position) VALUES (?, ?, ?)",
-      )
-        .bind(tenantId, body.name, body.position ?? 0)
-        .run();
+        "INSERT INTO crm_columns (tenant_id, name, position, color) VALUES (?, ?, ?, ?)",
+      ).bind(tenantId, body.name, pos, body.color ?? "#6366f1").run();
       const created = await env.DB.prepare(
-        "SELECT id, name, position FROM crm_columns WHERE id = ? AND tenant_id = ?",
-      )
-        .bind(res.lastRowId, tenantId)
-        .first();
+        "SELECT id, name, position, color, wip_limit FROM crm_columns WHERE id = ? AND tenant_id = ?",
+      ).bind(res.lastRowId, tenantId).first();
       return json(created, { status: 201 });
+    }
+
+    return new Response("Method not allowed", { status: 405 });
+  }
+
+  // /api/crm/leads/:id — update metadata (PATCH)
+  if (parts.length === 4 && parts[2] === "leads") {
+    const leadEntryId = Number(parts[3]);
+    if (isNaN(leadEntryId)) return json({ error: "ID inválido" }, { status: 400 });
+
+    if (method === "PATCH") {
+      const body = await readBody<{
+        tags?: string[];
+        deal_value?: number | null;
+        notes?: string | null;
+        assignee?: string | null;
+      }>(request);
+      const sets: string[] = [];
+      const vals: (string | number | null)[] = [];
+      if (body.tags !== undefined) { sets.push("tags = ?"); vals.push(JSON.stringify(body.tags)); }
+      if (body.deal_value !== undefined) { sets.push("deal_value = ?"); vals.push(body.deal_value); }
+      if (body.notes !== undefined) { sets.push("notes = ?"); vals.push(body.notes); }
+      if (body.assignee !== undefined) { sets.push("assignee = ?"); vals.push(body.assignee); }
+      if (sets.length === 0) return json({ error: "Nenhum campo" }, { status: 400 });
+      vals.push(leadEntryId, tenantId);
+      await env.DB.prepare(
+        `UPDATE crm_leads SET ${sets.join(", ")} WHERE id = ? AND tenant_id = ?`,
+      ).bind(...vals).run();
+      return json({ ok: true });
     }
 
     return new Response("Method not allowed", { status: 405 });
@@ -2497,8 +2585,10 @@ async function handleCRM(request: Request, env: Env, method: string, url: URL) {
     if (method === "GET") {
       const res = await env.DB.prepare(
         `SELECT c.id, c.lead_id, c.column_id, c.position,
+                c.tags, c.deal_value, c.notes, c.assignee, c.moved_at,
                 l.company, l.phone,
-                col.name as column_name
+                col.name as column_name,
+                l.heat_score, l.heat_label
          FROM crm_leads c
          JOIN leads l ON l.id = c.lead_id
          JOIN crm_columns col ON col.id = c.column_id
@@ -2513,25 +2603,18 @@ async function handleCRM(request: Request, env: Env, method: string, url: URL) {
       if (!body.lead_id || !body.column_id) {
         return json({ error: "lead_id e column_id são obrigatórios" }, { status: 400 });
       }
-
-      // Verify both resources belong to the current tenant (prevent IDOR)
       const leadOwned = await env.DB.prepare(
         "SELECT id FROM leads WHERE id = ? AND tenant_id = ? LIMIT 1",
       ).bind(body.lead_id, tenantId).first();
       if (!leadOwned) return json({ error: "Lead não encontrado" }, { status: 404 });
-
       const colOwned = await env.DB.prepare(
         "SELECT id FROM crm_columns WHERE id = ? AND tenant_id = ? LIMIT 1",
       ).bind(body.column_id, tenantId).first();
       if (!colOwned) return json({ error: "Coluna não encontrada" }, { status: 404 });
-
       const res = await env.DB.prepare(
-        `INSERT INTO crm_leads (tenant_id, lead_id, column_id, position)
-         VALUES (?, ?, ?, COALESCE((SELECT MAX(position) + 1 FROM crm_leads WHERE tenant_id = ? AND column_id = ?), 0))`,
-      )
-        .bind(tenantId, body.lead_id, body.column_id, tenantId, body.column_id)
-        .run();
-
+        `INSERT INTO crm_leads (tenant_id, lead_id, column_id, position, moved_at)
+         VALUES (?, ?, ?, COALESCE((SELECT MAX(position) + 1 FROM crm_leads WHERE tenant_id = ? AND column_id = ?), 0), datetime('now'))`,
+      ).bind(tenantId, body.lead_id, body.column_id, tenantId, body.column_id).run();
       return json({ ok: true, id: res.lastRowId }, { status: 201 });
     }
 
@@ -2539,21 +2622,15 @@ async function handleCRM(request: Request, env: Env, method: string, url: URL) {
       const body = await readBody<{ id: number; column_id: number; position: number }>(request);
       if (!body.id) return json({ error: "ID obrigatório" }, { status: 400 });
       await env.DB.prepare(
-        "UPDATE crm_leads SET column_id = ?, position = ? WHERE id = ? AND tenant_id = ?",
-      )
-        .bind(body.column_id, body.position, body.id, tenantId)
-        .run();
+        "UPDATE crm_leads SET column_id = ?, position = ?, moved_at = datetime('now') WHERE id = ? AND tenant_id = ?",
+      ).bind(body.column_id, body.position, body.id, tenantId).run();
       return json({ ok: true });
     }
 
     if (method === "DELETE") {
       const id = url.searchParams.get("id");
       if (!id) return json({ error: "ID obrigatório" }, { status: 400 });
-      await env.DB.prepare(
-        "DELETE FROM crm_leads WHERE id = ? AND tenant_id = ?",
-      )
-        .bind(id, tenantId)
-        .run();
+      await env.DB.prepare("DELETE FROM crm_leads WHERE id = ? AND tenant_id = ?").bind(id, tenantId).run();
       return json({ ok: true });
     }
 

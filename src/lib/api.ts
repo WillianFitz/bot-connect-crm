@@ -198,14 +198,21 @@ export const api = {
     }),
 
   getCrmColumns: () =>
-    request<Array<{ id: number; name: string; position: number }>>(
+    request<Array<{ id: number; name: string; position: number; color: string | null; wip_limit: number | null }>>(
       "/crm/columns",
     ),
-  createCrmColumn: (payload: { name: string; position?: number }) =>
-    request<{ id: number; name: string; position: number }>("/crm/columns", {
+  createCrmColumn: (payload: { name: string; position?: number; color?: string }) =>
+    request<{ id: number; name: string; position: number; color: string | null; wip_limit: number | null }>("/crm/columns", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  updateCrmColumn: (id: number, payload: { name?: string; color?: string; wip_limit?: number | null; position?: number }) =>
+    request<{ id: number; name: string; position: number; color: string | null; wip_limit: number | null }>(`/crm/columns/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+  deleteCrmColumn: (id: number) =>
+    request<{ ok: true }>(`/crm/columns/${id}`, { method: "DELETE" }),
 
   getCrmLeads: () =>
     request<
@@ -217,6 +224,13 @@ export const api = {
         company: string;
         phone: string;
         column_name: string;
+        tags: string | null;
+        deal_value: number | null;
+        notes: string | null;
+        assignee: string | null;
+        moved_at: string | null;
+        heat_score: number | null;
+        heat_label: "cold" | "warm" | "hot" | "fire" | null;
       }>
     >("/crm/leads"),
 
@@ -236,6 +250,22 @@ export const api = {
     request<{ ok: true }>(`/crm/leads?id=${id}`, {
       method: "DELETE",
     }),
+
+  updateCrmLeadMeta: (
+    id: number,
+    payload: { tags?: string[]; deal_value?: number | null; notes?: string | null; assignee?: string | null },
+  ) =>
+    request<{ ok: true }>(`/crm/leads/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
+  getCrmPipelineStats: () =>
+    request<{
+      columns: Array<{ id: number; name: string; color: string | null; position: number; lead_count: number; total_value: number }>;
+      totalDeals: number;
+      totalValue: number;
+    }>("/crm/pipeline-stats"),
 
   getDashboardStats: () =>
     request<{
