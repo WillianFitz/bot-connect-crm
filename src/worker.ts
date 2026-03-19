@@ -2139,20 +2139,27 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
 async function handleGetGroups(request: Request, env: Env): Promise<Response> {
   const tenantId = await getTenantId(request, env);
   const baseUrl = getEvolutionBaseUrl(env);
-  if (!baseUrl || !env.EVOLUTION_API_KEY) return json([]);
+  if (!baseUrl || !env.EVOLUTION_API_KEY) return json({ error: "Evolution API não configurada" }, { status: 500 });
   try {
-    const res = await fetch(`${baseUrl}/group/fetchAllGroups/${tenantId}?getParticipants=false`, {
+    const url = `${baseUrl}/group/fetchAllGroups/${tenantId}?getParticipants=false`;
+    const res = await fetch(url, {
       headers: { apikey: env.EVOLUTION_API_KEY },
     });
-    if (!res.ok) return json([]);
-    const data = await res.json() as any[];
+    const rawText = await res.text();
+    if (!res.ok) {
+      console.error("[groups] fetchAllGroups error", res.status, rawText);
+      return json({ error: `Evolution API retornou ${res.status}: ${rawText}` }, { status: 502 });
+    }
+    let data: any;
+    try { data = JSON.parse(rawText); } catch { return json({ error: "Resposta inválida da Evolution API" }, { status: 502 }); }
     const groups = (Array.isArray(data) ? data : []).map((g: any) => ({
       id: g.id || g.jid || "",
       name: g.subject || g.name || g.id || "",
     })).filter((g: any) => g.id);
     return json(groups);
-  } catch {
-    return json([]);
+  } catch (e: any) {
+    console.error("[groups] fetchAllGroups exception", e);
+    return json({ error: e?.message || "Erro ao buscar grupos" }, { status: 500 });
   }
 }
 

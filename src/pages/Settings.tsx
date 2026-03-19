@@ -76,6 +76,7 @@ export default function SettingsPage() {
   const groupsQuery = useQuery({
     queryKey: ["whatsapp-groups"],
     queryFn: api.getGroups,
+    retry: false,
   });
 
   const [notifMode, setNotifMode] = useState<"phone" | "group">("phone");
@@ -302,9 +303,13 @@ export default function SettingsPage() {
                       <div className="flex items-center gap-2 text-xs text-muted-foreground mt-2">
                         <Loader2 className="h-4 w-4 animate-spin" /> Carregando grupos...
                       </div>
+                    ) : groupsQuery.isError ? (
+                      <p className="text-xs text-destructive mt-2">
+                        Erro: {(groupsQuery.error as Error)?.message || "Falha ao buscar grupos"}
+                      </p>
                     ) : (groupsQuery.data?.length ?? 0) === 0 ? (
                       <p className="text-xs text-muted-foreground mt-2">
-                        Nenhum grupo encontrado. Verifique se o WhatsApp está conectado.
+                        Nenhum grupo encontrado. Verifique se o WhatsApp está conectado e que o número faz parte de algum grupo.
                       </p>
                     ) : (
                       <Select value={notifGroupJid} onValueChange={setNotifGroupJid}>
