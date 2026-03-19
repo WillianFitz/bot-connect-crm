@@ -2,8 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   GripVertical, User, Plus, Search, X, Settings2, Trash2,
-  Flame, AlertTriangle, Zap, Thermometer, Snowflake, Clock,
-  Check, DollarSign,
+  AlertTriangle, Clock, Check, DollarSign,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -48,8 +47,6 @@ interface CrmLead {
   notes: string | null;
   assignee: string | null;
   moved_at: string | null;
-  heat_score: number | null;
-  heat_label: "cold" | "warm" | "hot" | "fire" | null;
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -62,13 +59,6 @@ const COLUMN_COLORS = [
   "#f59e0b", "#f97316", "#ef4444", "#ec4899",
   "#a855f7", "#6b7280",
 ];
-
-const HEAT_CONFIG = {
-  fire: { label: "Em Chamas", Icon: Zap,        cls: "bg-red-500/20 text-red-400 border-red-500/30" },
-  hot:  { label: "Quente",   Icon: Flame,       cls: "bg-orange-500/20 text-orange-400 border-orange-500/30" },
-  warm: { label: "Morno",    Icon: Thermometer, cls: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30" },
-  cold: { label: "Frio",     Icon: Snowflake,   cls: "bg-blue-500/20 text-blue-400 border-blue-500/30" },
-} as const;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -106,13 +96,13 @@ function LeadCard({
 }) {
   const tags   = parseTags(lead.tags);
   const days   = daysInColumn(lead.moved_at);
-  const heat   = lead.heat_label ? HEAT_CONFIG[lead.heat_label] : null;
   const accent = colColor ?? "#6366f1";
-  const staleCls = days > 7 ? "text-red-400" : days > 3 ? "text-amber-400" : "text-muted-foreground/40";
+  const staleCls =
+    days > 7 ? "text-red-400" : days > 3 ? "text-amber-400" : "text-muted-foreground/40";
 
   return (
     <div
-      className="group rounded-lg border border-border/30 bg-card/70 hover:bg-card transition-all cursor-pointer hover:shadow-sm select-none"
+      className="group rounded-lg border border-border/30 bg-secondary/50 hover:border-primary/30 hover:bg-secondary/80 transition-all cursor-pointer select-none"
       style={{ borderLeftColor: accent, borderLeftWidth: 3 }}
       draggable
       onDragStart={onDragStart}
@@ -120,7 +110,7 @@ function LeadCard({
       onClick={onClick}
     >
       <div className="p-3 space-y-2">
-        {/* Header row */}
+        {/* Header */}
         <div className="flex items-start gap-2">
           <div
             className="flex h-7 w-7 items-center justify-center rounded-full shrink-0 mt-0.5"
@@ -143,15 +133,7 @@ function LeadCard({
           </div>
         </div>
 
-        {/* Heat badge */}
-        {heat && lead.heat_score != null && (
-          <Badge variant="outline" className={`text-[10px] px-1.5 py-0 h-4 w-fit ${heat.cls}`}>
-            <heat.Icon className="h-2.5 w-2.5 mr-0.5" />
-            {lead.heat_score}/10 · {heat.label}
-          </Badge>
-        )}
-
-        {/* Tags (max 2 visible) */}
+        {/* Tags */}
         {tags.length > 0 && (
           <div className="flex flex-wrap gap-1">
             {tags.slice(0, 2).map((tag, i) => (
@@ -170,7 +152,7 @@ function LeadCard({
           </div>
         )}
 
-        {/* Deal value + assignee + days */}
+        {/* Value + assignee + days */}
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
             {lead.deal_value != null && lead.deal_value > 0 && (
@@ -184,10 +166,10 @@ function LeadCard({
             )}
           </div>
           {days > 3 && (
-            <div className={`flex items-center gap-0.5 text-[10px] shrink-0 ${staleCls}`}>
+            <span className={`flex items-center gap-0.5 text-[10px] shrink-0 ${staleCls}`}>
               <Clock className="h-2.5 w-2.5" />
               {days}d
-            </div>
+            </span>
           )}
         </div>
       </div>
@@ -231,8 +213,12 @@ function LeadDetailDialog({
   }, [lead?.id]);
 
   const updateMutation = useMutation({
-    mutationFn: (payload: Parameters<typeof api.updateCrmLeadMeta>[1]) =>
-      api.updateCrmLeadMeta(lead!.id, payload),
+    mutationFn: (payload: {
+      tags?: string[];
+      deal_value?: number | null;
+      notes?: string | null;
+      assignee?: string | null;
+    }) => api.updateCrmLeadMeta(lead!.id, payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["crm-leads"] });
       toast({ title: "Lead atualizado" });
@@ -243,7 +229,6 @@ function LeadDetailDialog({
 
   if (!lead) return null;
 
-  const heat = lead.heat_label ? HEAT_CONFIG[lead.heat_label] : null;
   const days = daysInColumn(lead.moved_at);
 
   const handleSave = () => {
@@ -268,18 +253,12 @@ function LeadDetailDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="bg-card border-border/50 max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
             <User className="h-4 w-4 text-primary" />
             {lead.company}
-            {heat && (
-              <Badge variant="outline" className={`text-[10px] ml-1 ${heat.cls}`}>
-                <heat.Icon className="h-2.5 w-2.5 mr-0.5" />
-                {lead.heat_score}/10
-              </Badge>
-            )}
           </DialogTitle>
           <p className="text-xs text-muted-foreground">{lead.phone}</p>
         </DialogHeader>
@@ -309,7 +288,7 @@ function LeadDetailDialog({
               </Select>
             </div>
             <div>
-              <Label className="text-xs text-muted-foreground mb-1 block">Valor do negócio</Label>
+              <Label className="text-xs text-muted-foreground mb-1 block">Valor do negócio (R$)</Label>
               <Input
                 className="h-8 text-xs bg-secondary border-border/50"
                 placeholder="Ex: 1500"
@@ -357,7 +336,9 @@ function LeadDetailDialog({
                 placeholder="Nova tag... (Enter para adicionar)"
                 value={tagInput}
                 onChange={(e) => setTagInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addTag())}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") { e.preventDefault(); addTag(); }
+                }}
               />
               <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={addTag}>
                 <Plus className="h-3 w-3" />
@@ -376,14 +357,12 @@ function LeadDetailDialog({
             />
           </div>
 
-          {/* Time in column warning */}
-          {days > 0 && (
+          {/* Dias na etapa */}
+          {days > 3 && (
             <div className={`flex items-center gap-1.5 text-[11px] rounded-md px-2.5 py-1.5 ${
               days > 7
                 ? "bg-red-500/10 text-red-400 border border-red-500/20"
-                : days > 3
-                  ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-                  : "bg-muted/30 text-muted-foreground/60"
+                : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
             }`}>
               <Clock className="h-3 w-3 shrink-0" />
               {days === 1 ? "1 dia" : `${days} dias`} nesta etapa
@@ -395,7 +374,12 @@ function LeadDetailDialog({
             <Button variant="ghost" size="sm" onClick={onClose} className="h-8 text-xs">
               Cancelar
             </Button>
-            <Button size="sm" className="h-8 text-xs gap-1.5" onClick={handleSave} disabled={updateMutation.isPending}>
+            <Button
+              size="sm"
+              className="h-8 text-xs gap-1.5"
+              onClick={handleSave}
+              disabled={updateMutation.isPending}
+            >
               <Check className="h-3 w-3" />
               {updateMutation.isPending ? "Salvando..." : "Salvar alterações"}
             </Button>
@@ -438,7 +422,7 @@ function ColumnSettingsDialog({
   if (!column) return null;
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="bg-card border-border/50 max-w-xs">
         <DialogHeader>
           <DialogTitle className="text-sm">Configurar coluna</DialogTitle>
@@ -473,8 +457,7 @@ function ColumnSettingsDialog({
 
           <div>
             <Label className="text-xs text-muted-foreground mb-1 block">
-              Limite WIP{" "}
-              <span className="text-muted-foreground/50">(máx. leads simultâneos)</span>
+              Limite WIP <span className="text-muted-foreground/50">(máx. leads — vazio = ilimitado)</span>
             </Label>
             <Input
               className="h-8 text-xs bg-secondary border-border/50"
@@ -557,7 +540,7 @@ function AddLeadDialog({
   );
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="bg-card border-border/50 max-w-sm">
         <DialogHeader>
           <DialogTitle className="text-sm flex items-center gap-1.5">
@@ -604,7 +587,7 @@ function AddLeadDialog({
               size="sm"
               className="h-7 text-xs"
               disabled={selected == null || isPending}
-              onClick={() => selected != null && onAdd(selected)}
+              onClick={() => { if (selected != null) onAdd(selected); }}
             >
               {isPending ? "Adicionando..." : "Adicionar lead"}
             </Button>
@@ -618,11 +601,10 @@ function AddLeadDialog({
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function Funnels() {
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
+  const queryClient   = useQueryClient();
+  const { toast }     = useToast();
   const initializedRef = useRef(false);
 
-  // UI state
   const [search, setSearch]               = useState("");
   const [draggingId, setDraggingId]       = useState<number | null>(null);
   const [dragOverCol, setDragOverCol]     = useState<number | null>(null);
@@ -632,12 +614,12 @@ export default function Funnels() {
   const [addColOpen, setAddColOpen]       = useState(false);
   const [newColName, setNewColName]       = useState("");
 
-  // Queries
+  // ── Queries ──────────────────────────────────────────────────────────────────
   const columnsQuery  = useQuery({ queryKey: ["crm-columns"], queryFn: api.getCrmColumns });
   const leadsQuery    = useQuery({ queryKey: ["crm-leads"],   queryFn: api.getCrmLeads });
-  const allLeadsQuery = useQuery({ queryKey: ["leads-all"],   queryFn: () => api.getLeads() });
+  const allLeadsQuery = useQuery({ queryKey: ["leads-for-crm"], queryFn: () => api.getLeads() });
 
-  // Mutations
+  // ── Mutations ────────────────────────────────────────────────────────────────
   const createColumn = useMutation({
     mutationFn: api.createCrmColumn,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["crm-columns"] }),
@@ -667,6 +649,7 @@ export default function Funnels() {
       queryClient.invalidateQueries({ queryKey: ["crm-leads"] });
       setAddLeadCol(null);
     },
+    onError: () => toast({ title: "Erro ao adicionar lead", variant: "destructive" }),
   });
 
   const deleteCrmLead = useMutation({
@@ -674,9 +657,9 @@ export default function Funnels() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["crm-leads"] }),
   });
 
-  // Init default columns
+  // Init default columns once
   useEffect(() => {
-    if (columnsQuery.isSuccess && columnsQuery.data.length === 0 && !initializedRef.current) {
+    if (columnsQuery.isSuccess && (columnsQuery.data ?? []).length === 0 && !initializedRef.current) {
       initializedRef.current = true;
       DEFAULT_COLUMNS.forEach((name, i) =>
         createColumn.mutate({ name, position: i, color: DEFAULT_COLORS[i] }),
@@ -684,7 +667,7 @@ export default function Funnels() {
     }
   }, [columnsQuery.isSuccess, columnsQuery.data]);
 
-  // Derived data
+  // ── Derived ──────────────────────────────────────────────────────────────────
   const columns = useMemo(
     () => [...((columnsQuery.data ?? []) as CrmColumn[])].sort((a, b) => a.position - b.position),
     [columnsQuery.data],
@@ -711,13 +694,13 @@ export default function Funnels() {
     return map;
   }, [columns, filteredLeads]);
 
-  const openLead     = crmLeads.find((l) => l.id === openLeadId) ?? null;
-  const inCrmIds     = new Set(crmLeads.map((l) => l.lead_id));
-  const avail        = (allLeadsQuery.data ?? []).filter((l) => !inCrmIds.has(l.id));
-  const totalLeads   = crmLeads.length;
-  const totalValue   = crmLeads.reduce((s, l) => s + (l.deal_value ?? 0), 0);
+  const openLead   = crmLeads.find((l) => l.id === openLeadId) ?? null;
+  const inCrmIds   = new Set(crmLeads.map((l) => l.lead_id));
+  const avail      = (allLeadsQuery.data ?? []).filter((l) => !inCrmIds.has(l.id));
+  const totalLeads = crmLeads.length;
+  const totalValue = crmLeads.reduce((s, l) => s + (l.deal_value ?? 0), 0);
 
-  // Handlers
+  // ── Handlers ─────────────────────────────────────────────────────────────────
   const handleDrop = (columnId: number) => {
     if (draggingId == null) return;
     const arr    = leadsByColumn[columnId] ?? [];
@@ -742,23 +725,23 @@ export default function Funnels() {
 
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
-    <div className="flex flex-col h-full overflow-hidden p-6 gap-5">
+    <div className="space-y-6 animate-slide-in">
 
       {/* Header */}
-      <div className="flex items-start justify-between gap-4 shrink-0">
+      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">CRM Kanban</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
+          <h1 className="text-2xl lg:text-3xl font-bold text-foreground">CRM Kanban</h1>
+          <p className="text-sm text-muted-foreground">
             {totalLeads > 0
               ? `${totalLeads} negócio${totalLeads !== 1 ? "s" : ""} no pipeline${totalValue > 0 ? ` · ${formatCurrency(totalValue)} em valor total` : ""}`
               : "Pipeline de vendas — arraste os cards entre as etapas"}
           </p>
         </div>
-        <div className="relative shrink-0">
-          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+        <div className="w-full md:max-w-xs relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            className="pl-8 h-8 text-xs bg-secondary border-border/50 w-48"
-            placeholder="Buscar lead..."
+            className="pl-9 bg-secondary border-border/50 h-9 text-xs"
+            placeholder="Buscar lead por nome ou telefone..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -767,7 +750,7 @@ export default function Funnels() {
 
       {/* Pipeline stats bar */}
       {columns.length > 0 && totalLeads > 0 && (
-        <div className="flex gap-2 shrink-0 overflow-x-auto pb-1">
+        <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(columns.length + 1, 6)}, minmax(0, 1fr))` }}>
           {columns.map((col) => {
             const count = (leadsByColumn[col.id] ?? []).length;
             const value = (leadsByColumn[col.id] ?? []).reduce((s, l) => s + (l.deal_value ?? 0), 0);
@@ -775,17 +758,17 @@ export default function Funnels() {
             return (
               <div
                 key={col.id}
-                className="flex-1 min-w-[110px] rounded-lg border border-border/30 bg-card/50 px-3 py-2"
+                className="rounded-lg border border-border/30 bg-card px-3 py-2.5"
                 style={{ borderTopColor: col.color ?? "#6366f1", borderTopWidth: 3 }}
               >
                 <p className="text-[10px] font-medium text-muted-foreground truncate">{col.name}</p>
                 <p className="text-xl font-bold text-foreground leading-tight">{count}</p>
                 {value > 0 && (
-                  <p className="text-[10px] text-emerald-400 font-medium truncate">{formatCurrency(value)}</p>
+                  <p className="text-[10px] text-emerald-400 font-medium">{formatCurrency(value)}</p>
                 )}
                 <div className="mt-1.5 h-1 rounded-full bg-muted/40">
                   <div
-                    className="h-1 rounded-full transition-all duration-500"
+                    className="h-1 rounded-full"
                     style={{ width: `${pct}%`, backgroundColor: col.color ?? "#6366f1" }}
                   />
                 </div>
@@ -794,10 +777,10 @@ export default function Funnels() {
           })}
           {totalValue > 0 && (
             <div
-              className="flex-1 min-w-[110px] rounded-lg border border-border/30 bg-card/50 px-3 py-2"
+              className="rounded-lg border border-border/30 bg-card px-3 py-2.5"
               style={{ borderTopColor: "#22c55e", borderTopWidth: 3 }}
             >
-              <p className="text-[10px] font-medium text-muted-foreground">Total pipeline</p>
+              <p className="text-[10px] font-medium text-muted-foreground">Total</p>
               <p className="text-xl font-bold text-emerald-400 leading-tight">{formatCurrency(totalValue)}</p>
               <p className="text-[10px] text-muted-foreground/60">{totalLeads} negócios</p>
               <div className="mt-1.5 h-1 rounded-full bg-emerald-500/20" />
@@ -806,8 +789,8 @@ export default function Funnels() {
         </div>
       )}
 
-      {/* Kanban board */}
-      <div className="flex gap-4 overflow-x-auto pb-4 flex-1 items-start">
+      {/* Kanban */}
+      <div className="flex gap-4 overflow-x-auto pb-4 min-h-[380px]">
 
         {columns.map((column) => {
           const colLeads = leadsByColumn[column.id] ?? [];
@@ -818,10 +801,10 @@ export default function Funnels() {
           return (
             <div
               key={column.id}
-              className={`min-w-[260px] w-[272px] xl:w-[288px] shrink-0 flex flex-col rounded-xl border transition-all overflow-hidden ${
-                isOver ? "border-primary/60 shadow-lg" : "border-border/50 bg-card"
+              className={`min-w-[280px] w-full flex-1 flex-shrink-0 xl:min-w-[300px] rounded-xl border overflow-hidden flex flex-col transition-all ${
+                isOver ? "ring-2 ring-primary/50" : "border-border/50 bg-card"
               }`}
-              style={isOver ? { borderColor: accent + "aa", boxShadow: `0 0 0 2px ${accent}33` } : {}}
+              style={isOver ? { ringColor: accent } : {}}
               onDragOver={(e) => { e.preventDefault(); setDragOverCol(column.id); }}
               onDragLeave={(e) => {
                 if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverCol(null);
@@ -830,51 +813,45 @@ export default function Funnels() {
             >
               {/* Column header */}
               <div
-                className="flex items-center justify-between px-3 py-2.5 border-b border-border/30 bg-card"
+                className="flex items-center justify-between px-4 py-3 border-b border-border/30"
                 style={{ borderTopColor: accent, borderTopWidth: 3 }}
               >
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="font-semibold text-sm text-foreground truncate">{column.name}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-foreground">{column.name}</span>
                   <Badge
                     variant="secondary"
-                    className={`text-[10px] px-1.5 py-0 shrink-0 ${
-                      overWip ? "bg-red-500/20 text-red-400 border border-red-500/30" : ""
-                    }`}
+                    className={`text-[10px] ${overWip ? "bg-red-500/20 text-red-400" : "bg-secondary"}`}
                   >
                     {colLeads.length}
                     {column.wip_limit != null && `/${column.wip_limit}`}
                   </Badge>
                 </div>
-                <div className="flex items-center gap-0.5 shrink-0">
+                <div className="flex items-center gap-0.5">
                   <button
-                    className="h-6 w-6 rounded flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-secondary transition-colors"
+                    className="h-6 w-6 rounded flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
                     onClick={() => setAddLeadCol(column)}
-                    title="Adicionar lead"
                   >
                     <Plus className="h-3.5 w-3.5" />
                   </button>
                   <button
-                    className="h-6 w-6 rounded flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-secondary transition-colors"
+                    className="h-6 w-6 rounded flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
                     onClick={() => setEditingColumn(column)}
-                    title="Configurar coluna"
                   >
                     <Settings2 className="h-3.5 w-3.5" />
                   </button>
                 </div>
               </div>
 
-              {/* WIP warning banner */}
+              {/* WIP warning */}
               {overWip && (
                 <div className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500/10 border-b border-red-500/20">
                   <AlertTriangle className="h-3 w-3 text-red-400 shrink-0" />
-                  <span className="text-[10px] text-red-400">
-                    Limite de {column.wip_limit} leads atingido
-                  </span>
+                  <span className="text-[10px] text-red-400">Limite de {column.wip_limit} leads atingido</span>
                 </div>
               )}
 
-              {/* Cards area */}
-              <div className="flex-1 p-2 space-y-2 overflow-y-auto max-h-[calc(100vh-420px)]">
+              {/* Cards */}
+              <div className="flex-1 p-2 space-y-2 overflow-y-auto min-h-[240px]">
                 {colLeads.map((lead) => (
                   <LeadCard
                     key={lead.id}
@@ -887,20 +864,16 @@ export default function Funnels() {
                   />
                 ))}
                 {colLeads.length === 0 && (
-                  <div className="flex flex-col items-center justify-center py-10 text-center gap-2">
-                    <div
-                      className="h-8 w-8 rounded-full opacity-15"
-                      style={{ backgroundColor: accent }}
-                    />
-                    <p className="text-xs text-muted-foreground/40">Nenhum lead nesta etapa</p>
-                  </div>
+                  <p className="text-[11px] text-muted-foreground/50 text-center py-8">
+                    Nenhum lead nesta etapa.
+                  </p>
                 )}
               </div>
 
-              {/* Quick-add footer */}
-              <div className="px-2 pb-2 border-t border-border/20 pt-1.5">
+              {/* Footer quick-add */}
+              <div className="p-2 border-t border-border/20">
                 <button
-                  className="w-full flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] text-muted-foreground/40 hover:text-muted-foreground hover:bg-secondary transition-colors"
+                  className="w-full flex items-center gap-1.5 px-2 py-1 rounded text-[11px] text-muted-foreground/50 hover:text-muted-foreground hover:bg-secondary transition-colors"
                   onClick={() => setAddLeadCol(column)}
                 >
                   <Plus className="h-3 w-3" />
@@ -911,10 +884,10 @@ export default function Funnels() {
           );
         })}
 
-        {/* Add column */}
-        <div className="shrink-0">
+        {/* Add column button */}
+        <div className="shrink-0 flex items-start">
           {addColOpen ? (
-            <div className="w-52 rounded-xl border border-dashed border-border/60 bg-card/50 p-3 space-y-2">
+            <div className="min-w-[200px] rounded-xl border border-dashed border-border/60 bg-card p-3 space-y-2">
               <Input
                 autoFocus
                 className="h-7 text-xs bg-secondary border-border/50"
@@ -942,7 +915,7 @@ export default function Funnels() {
             </div>
           ) : (
             <button
-              className="h-10 px-4 rounded-xl border border-dashed border-border/40 text-xs text-muted-foreground hover:border-primary/50 hover:text-primary transition-colors flex items-center gap-1.5 whitespace-nowrap"
+              className="h-10 px-4 rounded-xl border border-dashed border-border/40 text-xs text-muted-foreground hover:border-primary/50 hover:text-primary transition-colors flex items-center gap-1.5 whitespace-nowrap mt-0"
               onClick={() => setAddColOpen(true)}
             >
               <Plus className="h-3.5 w-3.5" />

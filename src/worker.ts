@@ -2587,8 +2587,7 @@ async function handleCRM(request: Request, env: Env, method: string, url: URL) {
         `SELECT c.id, c.lead_id, c.column_id, c.position,
                 c.tags, c.deal_value, c.notes, c.assignee, c.moved_at,
                 l.company, l.phone,
-                col.name as column_name,
-                l.heat_score, l.heat_label
+                col.name as column_name
          FROM crm_leads c
          JOIN leads l ON l.id = c.lead_id
          JOIN crm_columns col ON col.id = c.column_id
