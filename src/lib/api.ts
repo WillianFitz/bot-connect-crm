@@ -557,20 +557,18 @@ export const api = {
     request<Array<{
       phone: string;
       contact_name: string | null;
-      handoff_status: "pending" | "active";
-      trigger_reason: string;
-      created_at: string;
-      updated_at: string;
       last_message: string | null;
       last_message_role: string | null;
       last_message_at: string | null;
+      bot_status: "active" | "paused";
       message_count: number;
     }>>("/inbox"),
 
   dismissInbox: (phone: string) =>
-    request<{ ok: boolean }>(`/inbox/${encodeURIComponent(phone)}`, {
-      method: "DELETE",
-    }),
+    request<{ ok: boolean }>(`/inbox/${encodeURIComponent(phone)}`, { method: "DELETE" }),
+
+  resumeInboxBot: (phone: string) =>
+    request<{ ok: boolean }>(`/inbox/${encodeURIComponent(phone)}/resume`, { method: "PUT" }),
 
   getInboxMessages: (phone: string) =>
     request<Array<{

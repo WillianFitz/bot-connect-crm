@@ -10,7 +10,12 @@
       "Bash(npm run:*)",
       "Bash(ls:*)",
       "Bash(wrangler d1:*)",
-      "Bash(wrangler deploy:*)"
+      "Bash(wrangler deploy:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(gh api:*)",
+      "WebFetch(domain:docs.evolution-api.com)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ]
   }
 }

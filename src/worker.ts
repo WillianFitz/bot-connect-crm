@@ -453,7 +453,7 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
             url: webhookUrl,
             byEvents: false,
             base64: false,
-            events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE"],
+            events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "PRESENCE_UPDATE"],
           },
         }),
       });
@@ -497,7 +497,7 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
             url: webhookUrl,
             byEvents: false,
             base64: false,
-            events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE"],
+            events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "PRESENCE_UPDATE"],
           },
         }),
       });
@@ -1509,6 +1509,17 @@ async function sendWhatsAppMessage(
       const data = await res.json() as any;
       remoteJid = data?.key?.remoteJid || undefined;
     } catch { /* ignore */ }
+    // Subscreve à presença do contato para receber eventos composing (PRESENCE_UPDATE)
+    // chat/subscribePresence registra o JID no Baileys; sem isso nenhum presence.update chega
+    try {
+      const jid = remoteJid || `${number}@s.whatsapp.net`;
+      fetch(`${baseUrl}/chat/subscribePresence/${tenantId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: env.EVOLUTION_API_KEY },
+        body: JSON.stringify({ number: jid.replace(/@.*$/, "") }),
+      }).catch(() => {/* ignora falhas */});
+    } catch { /* ignora */ }
+
     return { ok: true, remoteJid };
   } catch (err: any) {
     return { ok: false, error: err?.message || "Erro de rede" };
@@ -1713,6 +1724,10 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
       if (result.ok) {
         // Salva mensagem da campanha no histórico do agente para que ele saiba o contexto ao receber resposta
         await appendConversation(env, tenantId, phone, "assistant", text, "atendimento");
+        // Garante que a conversa aparece no inbox (remove dismissed se houver)
+        await env.DB.prepare(
+          "DELETE FROM inbox_dismissed WHERE tenant_id = ? AND phone = ?",
+        ).bind(tenantId, phone).run();
 
         // Auto-add to CRM on first disparo
         const existingCrmEntry = await env.DB.prepare(
@@ -3554,55 +3569,37 @@ async function handleInbox(request: Request, env: Env, method: string, url: URL)
   const parts = url.pathname.split("/").filter(Boolean);
   // parts: ["api","inbox"] or ["api","inbox",":phone","messages"] or ["api","inbox",":phone","resolve"] etc.
 
-  // GET /api/inbox — apenas handoffs abertos (pending ou active)
-  // Some da lista ao resolver ou descartar — é uma fila de atenção, não histórico
+  // GET /api/inbox — todas conversas ativas, excluindo as descartadas (a menos que tenham atividade nova)
   if (method === "GET" && parts.length === 2) {
     const rows = await env.DB.prepare(
       `SELECT
-         h.phone,
-         COALESCE(h.contact_name, h.phone)  AS contact_name,
-         h.status                            AS handoff_status,
-         h.trigger_reason,
-         h.created_at,
-         h.updated_at,
+         ac.phone,
+         COALESCE(l.company, ac.phone)  AS contact_name,
+         MAX(ac.created_at)             AS last_message_at,
          (SELECT content FROM agent_conversations
-          WHERE tenant_id = h.tenant_id AND phone = h.phone AND agent_id = 'atendimento'
-          ORDER BY created_at DESC LIMIT 1)  AS last_message,
+          WHERE tenant_id = ac.tenant_id AND phone = ac.phone AND agent_id = 'atendimento'
+          ORDER BY created_at DESC LIMIT 1) AS last_message,
          (SELECT role FROM agent_conversations
-          WHERE tenant_id = h.tenant_id AND phone = h.phone AND agent_id = 'atendimento'
-          ORDER BY created_at DESC LIMIT 1)  AS last_message_role,
-         (SELECT created_at FROM agent_conversations
-          WHERE tenant_id = h.tenant_id AND phone = h.phone AND agent_id = 'atendimento'
-          ORDER BY created_at DESC LIMIT 1)  AS last_message_at,
+          WHERE tenant_id = ac.tenant_id AND phone = ac.phone AND agent_id = 'atendimento'
+          ORDER BY created_at DESC LIMIT 1) AS last_message_role,
+         CASE WHEN EXISTS (
+           SELECT 1 FROM agent_pauses ap
+           WHERE ap.tenant_id = ac.tenant_id AND ap.phone = ac.phone
+             AND (ap.pause_definitive = 1 OR (ap.paused_until IS NOT NULL AND ap.paused_until > datetime('now')))
+         ) THEN 'paused' ELSE 'active' END  AS bot_status,
          (SELECT COUNT(*) FROM agent_conversations
-          WHERE tenant_id = h.tenant_id AND phone = h.phone AND agent_id = 'atendimento') AS message_count
-       FROM human_handoffs h
-       WHERE h.tenant_id = ? AND h.status IN ('pending','active')
-       ORDER BY CASE h.status WHEN 'pending' THEN 0 ELSE 1 END, h.updated_at DESC`,
+          WHERE tenant_id = ac.tenant_id AND phone = ac.phone AND agent_id = 'atendimento') AS message_count
+       FROM agent_conversations ac
+       LEFT JOIN leads l ON l.tenant_id = ac.tenant_id AND l.phone = ac.phone
+       LEFT JOIN inbox_dismissed id ON id.tenant_id = ac.tenant_id AND id.phone = ac.phone
+       WHERE ac.tenant_id = ? AND ac.agent_id = 'atendimento'
+         AND ac.created_at > datetime('now', '-7 days')
+       GROUP BY ac.phone
+       HAVING id.dismissed_at IS NULL OR MAX(ac.created_at) > id.dismissed_at
+       ORDER BY last_message_at DESC
+       LIMIT 60`,
     ).bind(tenantId).all<Record<string, unknown>>();
     return json(rows.results || []);
-  }
-
-  // POST /api/inbox — cria handoff manual
-  if (method === "POST" && parts.length === 2) {
-    const body = await readBody<{ phone?: string; contact_name?: string }>(request);
-    if (!body.phone) return json({ error: "phone obrigatório" }, { status: 400 });
-    const phone = body.phone.replace(/\D/g, "");
-    // Verifica se já existe handoff aberto
-    const existing = await env.DB.prepare(
-      "SELECT id FROM human_handoffs WHERE tenant_id = ? AND phone = ? AND status IN ('pending','active') LIMIT 1",
-    ).bind(tenantId, phone).first<{ id: number }>();
-    if (existing) return json({ error: "Já existe atendimento aberto para este contato" }, { status: 409 });
-    // Pausa o bot para este número
-    await env.DB.prepare(
-      `INSERT INTO agent_pauses (tenant_id, phone, paused_until, pause_definitive)
-       VALUES (?, ?, NULL, 1)
-       ON CONFLICT(tenant_id, phone) DO UPDATE SET paused_until = NULL, pause_definitive = 1`,
-    ).bind(tenantId, phone).run();
-    const result = await env.DB.prepare(
-      "INSERT INTO human_handoffs (tenant_id, phone, contact_name, status, trigger_reason) VALUES (?, ?, ?, 'pending', 'manual')",
-    ).bind(tenantId, phone, body.contact_name || phone).run();
-    return json({ ok: true, id: result.meta?.last_row_id });
   }
 
   const phone = parts[2] ? decodeURIComponent(parts[2]) : "";
@@ -3623,60 +3620,48 @@ async function handleInbox(request: Request, env: Env, method: string, url: URL)
     const body = await readBody<{ message?: string }>(request);
     if (!body.message?.trim()) return json({ error: "message obrigatório" }, { status: 400 });
     const text = body.message.trim();
-    // Envia via Evolution API
     await sendWhatsAppMessage(env, tenantId, phone, text);
-    // Salva no histórico como assistente
     await appendConversation(env, tenantId, phone, "assistant", text);
-    // Atualiza handoff para 'active' e timestamp
+    // Garante que a conversa não está descartada (já que respondemos)
     await env.DB.prepare(
-      `UPDATE human_handoffs SET status = 'active', updated_at = datetime('now')
-       WHERE tenant_id = ? AND phone = ? AND status IN ('pending','active')`,
+      `DELETE FROM inbox_dismissed WHERE tenant_id = ? AND phone = ?`,
     ).bind(tenantId, phone).run();
     return json({ ok: true });
   }
 
-  // PUT /api/inbox/:phone/pause — pausa bot e cria handoff manual
+  // PUT /api/inbox/:phone/pause — pausa o bot para este contato
   if (method === "PUT" && parts[3] === "pause") {
-    // Pausa definitiva
     await env.DB.prepare(
       `INSERT INTO agent_pauses (tenant_id, phone, paused_until, pause_definitive)
        VALUES (?, ?, NULL, 1)
        ON CONFLICT(tenant_id, phone) DO UPDATE SET paused_until = NULL, pause_definitive = 1`,
     ).bind(tenantId, phone).run();
-    // Cria handoff se não houver já um aberto
-    const contactName = await env.DB.prepare(
-      "SELECT company FROM leads WHERE tenant_id = ? AND phone = ? LIMIT 1",
-    ).bind(tenantId, phone).first<{ company: string }>();
-    const openHandoff = await env.DB.prepare(
-      "SELECT id FROM human_handoffs WHERE tenant_id = ? AND phone = ? AND status IN ('pending','active') LIMIT 1",
-    ).bind(tenantId, phone).first<{ id: number }>();
-    if (!openHandoff) {
-      await env.DB.prepare(
-        "INSERT INTO human_handoffs (tenant_id, phone, contact_name, status, trigger_reason) VALUES (?, ?, ?, 'active', 'manual')",
-      ).bind(tenantId, phone, contactName?.company || phone).run();
-    }
+    // Remove do dismissed (queremos ver esta conversa agora)
+    await env.DB.prepare(
+      `DELETE FROM inbox_dismissed WHERE tenant_id = ? AND phone = ?`,
+    ).bind(tenantId, phone).run();
     return json({ ok: true });
   }
 
-  // PUT /api/inbox/:phone/resolve — encerra atendimento e reativa bot
-  if (method === "PUT" && parts[3] === "resolve") {
-    await env.DB.prepare(
-      `UPDATE human_handoffs SET status = 'resolved', resolved_at = datetime('now'), updated_at = datetime('now')
-       WHERE tenant_id = ? AND phone = ? AND status IN ('pending','active')`,
-    ).bind(tenantId, phone).run();
-    // Reativa o agente removendo a pausa
+  // PUT /api/inbox/:phone/resume — reativa o bot
+  if (method === "PUT" && parts[3] === "resume") {
     await env.DB.prepare(
       "DELETE FROM agent_pauses WHERE tenant_id = ? AND phone = ?",
     ).bind(tenantId, phone).run();
-    return json({ ok: true });
-  }
-
-  // DELETE /api/inbox/:phone — descarta da fila sem reativar bot
-  // (bot continua pausado; apenas remove da fila de atenção)
-  if (method === "DELETE" && parts.length === 3) {
+    // Resolve handoffs abertos
     await env.DB.prepare(
       `UPDATE human_handoffs SET status = 'resolved', resolved_at = datetime('now'), updated_at = datetime('now')
        WHERE tenant_id = ? AND phone = ? AND status IN ('pending','active')`,
+    ).bind(tenantId, phone).run();
+    return json({ ok: true });
+  }
+
+  // DELETE /api/inbox/:phone — descarta conversa da fila
+  // Reaparece automaticamente quando chegar mensagem mais nova
+  if (method === "DELETE" && parts.length === 3) {
+    await env.DB.prepare(
+      `INSERT INTO inbox_dismissed (tenant_id, phone, dismissed_at) VALUES (?, ?, datetime('now'))
+       ON CONFLICT(tenant_id, phone) DO UPDATE SET dismissed_at = datetime('now')`,
     ).bind(tenantId, phone).run();
     return json({ ok: true });
   }
@@ -3712,13 +3697,34 @@ async function handleEvolutionWebhook(request: Request, env: Env): Promise<Respo
          updated_at = datetime('now')`,
     ).bind(tenantId, mappedStatus).run();
 
-    // Quando conexão é estabelecida, ativa o envio de eventos de presença (composing)
-    // Isso alimenta o phone_typing para o debounce inteligente funcionar corretamente
+    // Quando conexão é estabelecida: atualiza o webhook para garantir que PRESENCE_UPDATE
+    // está na lista de eventos (instâncias antigas podem não ter o evento configurado)
     if (mappedStatus === "connected") {
       const baseUrl = getEvolutionBaseUrl(env);
       if (baseUrl && env.EVOLUTION_API_KEY) {
         try {
-          await fetch(`${baseUrl}/chat/updatePresence/${tenantId}`, {
+          const webhookUrl = getFrontendUrl(env).includes("localhost")
+            ? ""
+            : `${getFrontendUrl(env).replace(/\/$/, "").replace(/^https:\/\/[^/]+/, "")}/api/webhook/evolution`;
+          const fullWebhookUrl = webhookUrl.startsWith("http")
+            ? webhookUrl
+            : `https://bot-connect-crm-api.willian-fitzbr.workers.dev/api/webhook/evolution`;
+
+          // Atualiza webhook da instância para incluir PRESENCE_UPDATE
+          await fetch(`${baseUrl}/webhook/set/${tenantId}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", apikey: env.EVOLUTION_API_KEY },
+            body: JSON.stringify({
+              enabled: true,
+              url: fullWebhookUrl,
+              webhookByEvents: false,
+              webhookBase64: false,
+              events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "PRESENCE_UPDATE"],
+            }),
+          });
+
+          // Define presença da instância como disponível (necessário para receber eventos de composing)
+          await fetch(`${baseUrl}/instance/setPresence/${tenantId}`, {
             method: "POST",
             headers: { "Content-Type": "application/json", apikey: env.EVOLUTION_API_KEY },
             body: JSON.stringify({ presence: "available" }),
