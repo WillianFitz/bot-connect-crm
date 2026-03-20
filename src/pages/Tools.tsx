@@ -45,10 +45,21 @@ const EXTENSION_FILES = [
   "popup.js",
 ];
 
+const GMAPS_EXTENSION_FILES = [
+  "manifest.json",
+  "background.js",
+  "content-script.js",
+  "dashboard.html",
+  "dashboard.js",
+  "popup.html",
+  "popup.js",
+];
+
 export default function Tools() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [downloadExtensionPending, setDownloadExtensionPending] = useState(false);
+  const [downloadGmapsPending, setDownloadGmapsPending] = useState(false);
   const tenantId =
     (typeof window !== "undefined" &&
       window.localStorage.getItem("tenant_id")) ||
@@ -62,6 +73,11 @@ export default function Tools() {
   const igConfigQuery = useQuery({
     queryKey: ["instagramConfig"],
     queryFn: () => api.getInstagramConfig(),
+  });
+
+  const gmapsConfigQuery = useQuery({
+    queryKey: ["gmapsConfig"],
+    queryFn: () => api.getGmapsConfig(),
   });
 
   async function handleDownloadExtension() {
@@ -122,6 +138,60 @@ export default function Tools() {
     }
   }
 
+  async function handleDownloadGmapsExtension() {
+    const tid = tenantId;
+    const token = gmapsConfigQuery.data?.extensionToken;
+    if (!tid || !token) {
+      toast({
+        title: "Não foi possível gerar a extensão",
+        description: "Faça login e garanta que o Token está disponível. Recarregue a página.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const apiBase =
+      (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ||
+      window.location.origin.replace(/\/$/, "");
+    const baseWithoutApi = apiBase.replace(/\/api\/?$/, "") || apiBase;
+    const webhookUrl = `${baseWithoutApi}/api/tools/gmaps/push-leads`;
+    const frontBase = window.location.origin.replace(/\/$/, "");
+    setDownloadGmapsPending(true);
+    try {
+      const zip = new JSZip();
+      zip.file(
+        "config.json",
+        JSON.stringify({ tenantId: String(tid), extensionToken: String(token), webhookUrl }),
+      );
+      for (const name of GMAPS_EXTENSION_FILES) {
+        const res = await fetch(`${frontBase}/extensions/gmaps/${name}`);
+        if (res.ok) {
+          const blob = await res.blob();
+          zip.file(name, blob);
+        }
+      }
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "gmaps-extractor.zip";
+      a.click();
+      URL.revokeObjectURL(url);
+      toast({
+        title: "Extensão baixada",
+        description:
+          "Descompacte o ZIP, abra o Chrome em Extensões > Modo desenvolvedor > Carregar sem compactação e selecione a pasta.",
+      });
+    } catch (e) {
+      toast({
+        title: "Erro ao gerar extensão",
+        description: (e as Error)?.message || "Tente novamente.",
+        variant: "destructive",
+      });
+    } finally {
+      setDownloadGmapsPending(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -137,9 +207,9 @@ export default function Tools() {
             <Instagram className="h-4 w-4" />
             Extrator Instagram
           </TabsTrigger>
-          <TabsTrigger value="maps" className="flex items-center gap-2" disabled>
+          <TabsTrigger value="maps" className="flex items-center gap-2">
             <MapPin className="h-4 w-4" />
-            Extrator Maps (em breve)
+            Extrator Google Maps
           </TabsTrigger>
           <TabsTrigger value="cnpj" className="flex items-center gap-2" disabled>
             <FileText className="h-4 w-4" />
@@ -345,6 +415,137 @@ export default function Tools() {
                     ))}
                   </div>
                 )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="maps">
+          <div className="grid gap-6 md:grid-cols-2 w-full">
+            <Card>
+              <CardHeader>
+                <CardTitle>Extrator Google Maps</CardTitle>
+                <CardDescription>
+                  Busque empresas no Google Maps (ex.: "advogados em BH"), extraia nome, telefone,
+                  site e categoria automaticamente e envie para sua base de leads.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Button
+                    type="button"
+                    onClick={handleDownloadGmapsExtension}
+                    disabled={downloadGmapsPending || !tenantId || !gmapsConfigQuery.data?.extensionToken}
+                    className="w-full"
+                  >
+                    {downloadGmapsPending ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Download className="mr-2 h-4 w-4" />
+                    )}
+                    Baixar extensão (já configurada para sua conta)
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    Descompacte o ZIP e carregue em Extensões (modo desenvolvedor) no Chrome.
+                    A extensão já vem com seu ID e Token configurados.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-medium">ID da Conta</label>
+                  <div className="flex gap-2">
+                    <Input readOnly value={tenantId || ""} className="text-xs" />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={() => {
+                        if (tenantId) {
+                          navigator.clipboard.writeText(tenantId);
+                          toast({ title: "ID da Conta copiado" });
+                        }
+                      }}
+                    >
+                      <span className="text-xs">Copiar</span>
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-medium">Token da extensão</label>
+                  <div className="flex gap-2">
+                    <Input
+                      readOnly
+                      value={gmapsConfigQuery.data?.extensionToken || ""}
+                      className="text-xs"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={() => {
+                        if (gmapsConfigQuery.data?.extensionToken) {
+                          navigator.clipboard.writeText(gmapsConfigQuery.data.extensionToken);
+                          toast({ title: "Token copiado" });
+                        }
+                      }}
+                    >
+                      <span className="text-xs">Copiar</span>
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-medium">URL do Webhook</label>
+                  <div className="flex gap-2">
+                    <Input
+                      readOnly
+                      value={`${window.location.origin.replace(/\/$/, "")}/api/tools/gmaps/push-leads`}
+                      className="text-xs"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={() => {
+                        const url = `${window.location.origin.replace(/\/$/, "")}/api/tools/gmaps/push-leads`;
+                        navigator.clipboard.writeText(url);
+                        toast({ title: "Webhook copiado" });
+                      }}
+                    >
+                      <span className="text-xs">Copiar</span>
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Como usar</CardTitle>
+                <CardDescription>Passo a passo para extrair leads do Google Maps</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm text-muted-foreground">
+                <div className="space-y-1">
+                  <p className="font-medium text-foreground">1. Baixe e instale a extensão</p>
+                  <p className="text-xs">Clique em "Baixar extensão", descompacte e carregue no Chrome (Extensões → Modo desenvolvedor → Carregar sem compactação).</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="font-medium text-foreground">2. Abra o Dashboard da extensão</p>
+                  <p className="text-xs">Clique no ícone da extensão no Chrome e em "Abrir Dashboard".</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="font-medium text-foreground">3. Digite o termo de busca</p>
+                  <p className="text-xs">Exemplo: <em>"advogados em Belo Horizonte"</em> ou <em>"clínicas de estética São Paulo"</em>. Defina a quantidade de leads e uma pasta opcional.</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="font-medium text-foreground">4. Clique em Iniciar extração</p>
+                  <p className="text-xs">A extensão abrirá o Google Maps, fará o scroll automático e entrará em cada empresa para extrair telefone, site e categoria.</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="font-medium text-foreground">5. Envie para o LeadFlowAI</p>
+                  <p className="text-xs">Clique em "Enviar leads com telefone" para importar os resultados para sua base de leads.</p>
+                </div>
               </CardContent>
             </Card>
           </div>

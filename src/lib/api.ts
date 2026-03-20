@@ -538,6 +538,9 @@ export const api = {
       extensionToken?: string;
     }>("/tools/instagram/config"),
 
+  getGmapsConfig: () =>
+    request<{ extensionToken: string }>("/tools/gmaps/config"),
+
   // Lead Heat Map
   getLeadsHeat: () =>
     request<any[]>("/leads/heat"),

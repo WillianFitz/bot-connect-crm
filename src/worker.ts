@@ -3678,6 +3678,172 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
     return json({ ok: true, inserted });
   }
 
+  // /api/tools/gmaps/push-leads  (chamado pela extensão Google Maps)
+  if (parts.length === 4 && parts[2] === "gmaps" && parts[3] === "push-leads") {
+    if (method !== "POST") return new Response("Method not allowed", { status: 405 });
+
+    // Valida token da extensão por tenant (reutiliza tools_extractors type='gmaps')
+    const extToken = request.headers.get("x-extension-token") || "";
+    const cfgRow = await env.DB.prepare(
+      "SELECT config_json FROM tools_extractors WHERE tenant_id = ? AND type = 'gmaps' LIMIT 1",
+    )
+      .bind(tenantId)
+      .first<{ config_json?: string }>();
+
+    if (!cfgRow?.config_json) {
+      return json(
+        { error: "Token da extensão não configurado para este tenant." },
+        { status: 401 },
+      );
+    }
+
+    let expectedToken: string | null = null;
+    try {
+      const parsed = JSON.parse(cfgRow.config_json) as { extensionToken?: string };
+      expectedToken = parsed.extensionToken || null;
+    } catch {
+      return json(
+        { error: "Configuração da ferramenta Google Maps inválida para este tenant." },
+        { status: 401 },
+      );
+    }
+
+    if (!extToken || !expectedToken || extToken !== expectedToken) {
+      return json({ error: "Token da extensão inválido." }, { status: 401 });
+    }
+
+    const body = await readBody<{
+      leads?: Array<{
+        company?: string;
+        phone?: string;
+        website?: string;
+        category?: string;
+        address?: string;
+        folder_name?: string;
+      }>;
+      query?: string;
+      source?: string;
+    }>(request);
+
+    if (!Array.isArray(body.leads)) {
+      return json({ error: "Leads são obrigatórios" }, { status: 400 });
+    }
+
+    await ensureTenant(env, tenantId);
+
+    const leads = body.leads;
+    let inserted = 0;
+
+    for (const lead of leads) {
+      const company = lead?.company != null ? String(lead.company).trim() : "";
+      const phone = lead?.phone != null ? String(lead.phone).trim() : "";
+      if (!company && !phone) continue;
+
+      // Resolve folder_id pelo nome (se informado)
+      let folderId: number | null = null;
+      const folderName = lead?.folder_name != null ? String(lead.folder_name).trim() : "";
+      if (folderName) {
+        const folderRow = await env.DB.prepare(
+          "SELECT id FROM lead_folders WHERE tenant_id = ? AND name = ? LIMIT 1",
+        )
+          .bind(tenantId, folderName)
+          .first<{ id: number }>();
+        if (folderRow) {
+          folderId = folderRow.id;
+        } else {
+          const res = await env.DB.prepare(
+            "INSERT INTO lead_folders (tenant_id, name) VALUES (?, ?)",
+          )
+            .bind(tenantId, folderName)
+            .run();
+          const raw = res as { meta?: { last_row_id?: number }; lastRowId?: number };
+          folderId = raw.meta?.last_row_id ?? raw.lastRowId ?? null;
+        }
+      }
+
+      const website = lead?.website != null ? String(lead.website).trim() : null;
+      const category = lead?.category != null ? String(lead.category).trim() : null;
+      const address = lead?.address != null ? String(lead.address).trim() : null;
+
+      // Evita duplicata por tenant + phone (se tiver phone)
+      if (phone) {
+        const exists = await env.DB.prepare(
+          "SELECT id FROM leads WHERE tenant_id = ? AND phone = ? LIMIT 1",
+        )
+          .bind(tenantId, phone)
+          .first<{ id: number }>();
+        if (exists) continue;
+      }
+
+      await env.DB.prepare(
+        `INSERT INTO leads (tenant_id, company, phone, folder_id, website, notes)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+        .bind(
+          tenantId,
+          company || null,
+          phone || null,
+          folderId,
+          website,
+          category && address
+            ? `Categoria: ${category} | Endereço: ${address}`
+            : category || address || null,
+        )
+        .run();
+      inserted += 1;
+    }
+
+    return json({ ok: true, inserted });
+  }
+
+  // /api/tools/gmaps/config  (GET/PUT para salvar token da extensão gmaps)
+  if (parts.length === 4 && parts[2] === "gmaps" && parts[3] === "config") {
+    if (method === "GET") {
+      const row = await env.DB.prepare(
+        "SELECT config_json FROM tools_extractors WHERE tenant_id = ? AND type = 'gmaps' LIMIT 1",
+      )
+        .bind(tenantId)
+        .first<{ config_json?: string }>();
+
+      let extensionToken: string | null = null;
+      if (row?.config_json) {
+        try {
+          const parsed = JSON.parse(row.config_json) as { extensionToken?: string };
+          extensionToken = parsed.extensionToken || null;
+        } catch { /* ignore */ }
+      }
+
+      if (!extensionToken) {
+        extensionToken = crypto.randomUUID().replace(/-/g, "");
+        const cfg = JSON.stringify({ extensionToken });
+        await env.DB.prepare(
+          "DELETE FROM tools_extractors WHERE tenant_id = ? AND type = 'gmaps'",
+        ).bind(tenantId).run();
+        await env.DB.prepare(
+          "INSERT INTO tools_extractors (tenant_id, type, name, config_json) VALUES (?, 'gmaps', 'default', ?)",
+        ).bind(tenantId, cfg).run();
+      }
+
+      return json({ extensionToken });
+    }
+    if (method === "PUT") {
+      const body = await readBody<{ extensionToken?: string }>(request);
+      const cfg = JSON.stringify({ extensionToken: body.extensionToken || "" });
+      await env.DB.prepare(
+        "DELETE FROM tools_extractors WHERE tenant_id = ? AND type = 'gmaps'",
+      )
+        .bind(tenantId)
+        .run();
+      await env.DB.prepare(
+        "INSERT INTO tools_extractors (tenant_id, type, name, config_json) VALUES (?, 'gmaps', 'default', ?)",
+      )
+        .bind(tenantId, cfg)
+        .run();
+      return json({ ok: true });
+    }
+    return new Response("Method not allowed", { status: 405 });
+  }
+
   return new Response("Not found", { status: 404 });
 }
 
@@ -4950,7 +5116,7 @@ export default {
         response = await handleCRM(request, env, method, urlForRouting);
       } else if (pathname.startsWith("/api/funnels")) {
         response = await handleProspectFunnels(request, env, method, urlForRouting);
-      } else if (pathname.startsWith("/api/tools/instagram")) {
+      } else if (pathname.startsWith("/api/tools/instagram") || pathname.startsWith("/api/tools/gmaps")) {
         response = await handleInstagramTools(request, env, method, urlForRouting);
       } else if (pathname === "/api/ai/disparo" && method === "POST") {
         response = await handleAIDisparo(request, env);
