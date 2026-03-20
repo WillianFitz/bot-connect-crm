@@ -3814,7 +3814,9 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
       }
 
       if (!extensionToken) {
-        extensionToken = crypto.randomUUID().replace(/-/g, "");
+        const bytes = new Uint8Array(20);
+        crypto.getRandomValues(bytes);
+        extensionToken = Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
         const cfg = JSON.stringify({ extensionToken });
         await env.DB.prepare(
           "DELETE FROM tools_extractors WHERE tenant_id = ? AND type = 'gmaps'",
