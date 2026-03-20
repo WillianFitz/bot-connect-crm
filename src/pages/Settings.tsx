@@ -458,6 +458,18 @@ function WhatsappOfficialTab() {
     onError: (e: Error) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
+  const importFromMetaMut = useMutation({
+    mutationFn: api.importWhatsappTemplatesFromMeta,
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["wa-official-templates"] });
+      toast({
+        title: "Templates sincronizados",
+        description: `${data.imported} novos importados, ${data.updated} atualizados de ${data.total} encontrados na Meta.`,
+      });
+    },
+    onError: (e: Error) => toast({ title: "Erro ao importar", description: e.message, variant: "destructive" }),
+  });
+
   const templates = templatesQuery.data ?? [];
 
   const statusColor = (s: string) => {
@@ -507,13 +519,26 @@ function WhatsappOfficialTab() {
 
       {/* Templates */}
       <div className="rounded-xl border border-border/50 bg-card p-5 space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-2">
           <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
             <MessageSquare className="h-4 w-4 text-primary" /> Templates de Mensagem
           </h3>
-          <Button size="sm" className="gap-1.5" onClick={() => setShowTemplateForm((v) => !v)}>
-            <Plus className="h-3.5 w-3.5" /> Novo template
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              disabled={importFromMetaMut.isPending}
+              onClick={() => importFromMetaMut.mutate()}
+              title="Importa todos os templates já criados na sua conta do Meta Business Manager"
+            >
+              {importFromMetaMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+              Importar da Meta
+            </Button>
+            <Button size="sm" className="gap-1.5" onClick={() => setShowTemplateForm((v) => !v)}>
+              <Plus className="h-3.5 w-3.5" /> Novo template
+            </Button>
+          </div>
         </div>
 
         {showTemplateForm && (

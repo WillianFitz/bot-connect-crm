@@ -2527,6 +2527,71 @@ async function handleWhatsappTemplates(request: Request, env: Env, method: strin
     return json(updated);
   }
 
+  // POST /api/whatsapp-templates/import-from-meta — importa todos os templates da conta Meta
+  if (method === "POST" && !templateId && parts[2] === "import-from-meta") {
+    const creds = await getWaOfficialCreds(env, tenantId);
+    if (!creds.wabaId || !creds.accessToken) {
+      return json({ error: "Credenciais da API Oficial não configuradas" }, { status: 400 });
+    }
+
+    // Busca todos os templates da conta na Meta
+    const fields = "id,name,status,language,category,components,rejected_reason";
+    let allTemplates: any[] = [];
+    let nextUrl: string | null = `https://graph.facebook.com/v19.0/${creds.wabaId}/message_templates?fields=${fields}&limit=100`;
+
+    while (nextUrl) {
+      const res = await fetch(nextUrl, { headers: { Authorization: `Bearer ${creds.accessToken}` } });
+      if (!res.ok) {
+        const txt = await res.text();
+        return json({ error: `Meta API ${res.status}: ${txt.slice(0, 200)}` }, { status: 502 });
+      }
+      const data = await res.json() as { data?: any[]; paging?: { next?: string } };
+      allTemplates = allTemplates.concat(data.data ?? []);
+      nextUrl = data.paging?.next ?? null;
+    }
+
+    let imported = 0;
+    let updated = 0;
+
+    for (const t of allTemplates) {
+      if (!t.id || !t.name) continue;
+      // Extrai o texto do componente BODY
+      const bodyComp = (t.components ?? []).find((c: any) => c.type === "BODY");
+      const bodyText = bodyComp?.text ?? "";
+
+      // Verifica se já existe pelo meta_template_id
+      const existing = await env.DB.prepare(
+        "SELECT id FROM whatsapp_templates WHERE tenant_id = ? AND meta_template_id = ?",
+      ).bind(tenantId, String(t.id)).first<{ id: number }>();
+
+      if (existing) {
+        // Atualiza status e rejection_reason
+        await env.DB.prepare(
+          "UPDATE whatsapp_templates SET status = ?, rejection_reason = ?, updated_at = datetime('now') WHERE id = ? AND tenant_id = ?",
+        ).bind(t.status ?? "PENDING", t.rejected_reason ?? null, existing.id, tenantId).run();
+        updated++;
+      } else {
+        // Insere novo template importado
+        await env.DB.prepare(
+          `INSERT INTO whatsapp_templates (tenant_id, meta_template_id, name, language, category, body_text, status, rejection_reason)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(
+          tenantId,
+          String(t.id),
+          t.name,
+          t.language ?? "pt_BR",
+          t.category ?? "MARKETING",
+          bodyText,
+          t.status ?? "PENDING",
+          t.rejected_reason ?? null,
+        ).run();
+        imported++;
+      }
+    }
+
+    return json({ ok: true, imported, updated, total: allTemplates.length });
+  }
+
   if (method === "DELETE" && templateId) {
     await env.DB.prepare("DELETE FROM whatsapp_templates WHERE id = ? AND tenant_id = ?")
       .bind(templateId, tenantId).run();

@@ -645,5 +645,10 @@ export const api = {
 
   deleteWhatsappTemplate: (id: number) =>
     request<{ ok: boolean }>(`/whatsapp-templates/${id}`, { method: "DELETE" }),
+
+  importWhatsappTemplatesFromMeta: () =>
+    request<{ ok: boolean; imported: number; updated: number; total: number }>("/whatsapp-templates/import-from-meta", {
+      method: "POST",
+    }),
 };
 
