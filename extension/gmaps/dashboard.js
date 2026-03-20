@@ -420,14 +420,14 @@ document.addEventListener("DOMContentLoaded", () => {
         const searches = data.searches || {};
         const key = getSearchKey(tenantId, query);
 
-        // Abre uma janela nova minimizada para não atrapalhar o usuário
+        // Abre uma janela nova e logo minimiza (state: "minimized" não é válido no create)
         chrome.windows.create({
           url: "about:blank",
-          state: "minimized",
           focused: false,
           width: 1200,
           height: 800,
         }, (win) => {
+          if (win?.id) chrome.windows.update(win.id, { state: "minimized" });
           const tab = win?.tabs?.[0];
           if (!tab?.id) {
             setStatus("captureStatus", "Não foi possível abrir a janela do Google Maps.", "err");
