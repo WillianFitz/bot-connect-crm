@@ -213,6 +213,16 @@ function getEvolutionBaseUrl(env: Env): string {
   return `https://${raw}`;
 }
 
+// scheduled_at é armazenado no horário de Brasília sem timezone (ex: "2026-03-20T09:30:00")
+// Formata diretamente sem converter fuso — evita subtrair 3h desnecessariamente
+function fmtScheduledAt(s: string): string {
+  const clean = (s || "").replace(" ", "T");
+  const [datePart = "", timePart = ""] = clean.split("T");
+  const [y = "", m = "", d = ""] = datePart.split("-");
+  const time = timePart.substring(0, 5);
+  return `${d}/${m}/${y}, ${time}`;
+}
+
 function normalizeBrazilNumber(input: string): string {
   // Remove qualquer coisa que não seja dígito
   let digits = input.replace(/\D/g, "");
@@ -2421,8 +2431,7 @@ async function handlePublicBooking(request: Request, env: Env, method: string, u
     // Send WhatsApp confirmation
     if (phone) {
       try {
-        const d = new Date(scheduled_at);
-        const timeStr = d.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+        const timeStr = fmtScheduledAt(scheduled_at);
         const msg = `✅ *Agendamento confirmado!*\n\nOlá, ${body.name}! 😊\n\nSeu agendamento foi confirmado para:\n📅 *${timeStr}*\n\nEm caso de dúvidas, entre em contato. Até lá! 🚀`;
         await sendWhatsAppMessage(env, tenantId, phone, msg);
       } catch (e) {
@@ -2432,8 +2441,7 @@ async function handlePublicBooking(request: Request, env: Env, method: string, u
 
     // Notify tenant about new booking
     try {
-      const d = new Date(scheduled_at);
-      const dateStr = d.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+      const dateStr = fmtScheduledAt(scheduled_at);
       await sendNotificationMessage(env, tenantId, `📅 Novo agendamento: ${body.name} para ${dateStr}.`);
     } catch (e) {
       console.error("[booking] notification error", e);
@@ -2518,7 +2526,7 @@ async function handleAppointments(request: Request, env: Env, method: string, ur
       body.reminder_minutes ?? 30,
     ).first<{ id: number }>();
     try {
-      const dateStr = new Date(body.scheduled_at).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+      const dateStr = fmtScheduledAt(body.scheduled_at);
       const clientName = body.title;
       await sendNotificationMessage(env, tenantId, `📅 Novo agendamento: ${clientName} para ${dateStr}.`);
     } catch { /* ignore notification errors */ }
@@ -2574,16 +2582,15 @@ async function processAppointmentReminders(env: Env, tenantId: string) {
       AND a.reminder_sent = 0
       AND a.status IN ('pending', 'confirmed')
       AND a.lead_id IS NOT NULL
-      AND datetime(a.scheduled_at, '-' || a.reminder_minutes || ' minutes') <= datetime('now')
-      AND datetime(a.scheduled_at) > datetime('now')
+      AND datetime(a.scheduled_at, '+3 hours', '-' || a.reminder_minutes || ' minutes') <= datetime('now')
+      AND datetime(a.scheduled_at, '+3 hours') > datetime('now')
   `).bind(tenantId).all<{ id: number; title: string; scheduled_at: string; reminder_minutes: number; lead_phone: string; lead_name: string }>();
 
   for (const apt of (due.results || [])) {
     // Mark sent first to avoid double-sends
     await env.DB.prepare("UPDATE appointments SET reminder_sent = 1 WHERE id = ?").bind(apt.id).run();
 
-    const date = new Date(apt.scheduled_at.replace(" ", "T") + (apt.scheduled_at.includes("Z") ? "" : "Z"));
-    const timeStr = date.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" });
+    const timeStr = fmtScheduledAt(apt.scheduled_at);
 
     if (apt.lead_phone) {
       try {
