@@ -611,5 +611,39 @@ export const api = {
     request<{ ok: boolean }>(`/bot-pauses?phone=${encodeURIComponent(phone)}`, { method: "PUT" }),
   resumeLeadBot: (phone: string) =>
     request<{ ok: boolean }>(`/bot-pauses?phone=${encodeURIComponent(phone)}`, { method: "DELETE" }),
+
+  // WhatsApp Oficial (Meta)
+  getWhatsappOfficialSettings: () =>
+    request<{ waba_id: string; phone_number_id: string; access_token: string }>("/settings/whatsapp-official"),
+  updateWhatsappOfficialSettings: (payload: { waba_id?: string; phone_number_id?: string; access_token?: string }) =>
+    request<{ ok: boolean }>("/settings/whatsapp-official", { method: "PUT", body: JSON.stringify(payload) }),
+
+  getWhatsappTemplates: () =>
+    request<Array<{
+      id: number;
+      meta_template_id: string | null;
+      name: string;
+      language: string;
+      category: string;
+      body_text: string;
+      status: string;
+      rejection_reason: string | null;
+      created_at: string;
+      updated_at: string;
+    }>>("/whatsapp-templates"),
+
+  createWhatsappTemplate: (payload: { name: string; language?: string; category?: string; body_text: string }) =>
+    request<{ id: number; meta_template_id: string | null; name: string; status: string }>("/whatsapp-templates", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  syncWhatsappTemplate: (id: number) =>
+    request<{ id: number; status: string; rejection_reason: string | null }>(`/whatsapp-templates/${id}/sync`, {
+      method: "POST",
+    }),
+
+  deleteWhatsappTemplate: (id: number) =>
+    request<{ ok: boolean }>(`/whatsapp-templates/${id}`, { method: "DELETE" }),
 };
 

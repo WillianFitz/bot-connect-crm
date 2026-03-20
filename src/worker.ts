@@ -1607,10 +1607,10 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
   }
 
   const campaigns = await env.DB.prepare(
-    "SELECT id, name, time_from, time_to, days_blocked, delay_min, delay_max, status, funnel_id, folder_id FROM campaigns WHERE tenant_id = ? AND (status = 'active' OR status = 'completed')",
+    "SELECT id, name, time_from, time_to, days_blocked, delay_min, delay_max, status, funnel_id, folder_id, api_source, template_id, template_variables FROM campaigns WHERE tenant_id = ? AND (status = 'active' OR status = 'completed')",
   )
     .bind(tenantId)
-    .all<{ id: number; name: string; time_from: string; time_to: string; days_blocked: string; delay_min: number; delay_max: number; status: string; funnel_id: number | null; folder_id: number | null }>();
+    .all<{ id: number; name: string; time_from: string; time_to: string; days_blocked: string; delay_min: number; delay_max: number; status: string; funnel_id: number | null; folder_id: number | null; api_source: string | null; template_id: number | null; template_variables: string | null }>();
 
   const list = (campaigns.results || []) as Array<{
     id: number;
@@ -1623,6 +1623,9 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
     status: string;
     funnel_id: number | null;
     folder_id: number | null;
+    api_source: string | null;
+    template_id: number | null;
+    template_variables: string | null;
   }>;
 
   let processed = 0;
@@ -1767,6 +1770,87 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
           await env.DB.prepare(
             "UPDATE campaigns SET errors = errors + 1 WHERE id = ? AND tenant_id = ?",
           ).bind(camp.id, tenantId).run();
+          errs++;
+        }
+        processed++;
+        continue;
+      }
+
+      // ── WhatsApp Official API branch ──
+      if (camp.api_source === "whatsapp_official") {
+        const creds = await getWaOfficialCreds(env, tenantId);
+        if (!creds.phoneNumberId || !creds.accessToken) {
+          const errMsg = "API Oficial: credenciais não configuradas";
+          campaignErrors.push(errMsg);
+          globalErrors.push(errMsg);
+          await env.DB.prepare("INSERT OR IGNORE INTO campaign_sends (campaign_id, lead_id, status, error_message) VALUES (?, ?, 'error', ?)").bind(camp.id, lead.id, errMsg).run();
+          await env.DB.prepare("UPDATE campaigns SET errors = errors + 1 WHERE id = ? AND tenant_id = ?").bind(camp.id, tenantId).run();
+          errs++;
+          processed++;
+          continue;
+        }
+        if (!camp.template_id) {
+          const errMsg = "API Oficial: nenhum template selecionado";
+          campaignErrors.push(errMsg);
+          globalErrors.push(errMsg);
+          await env.DB.prepare("INSERT OR IGNORE INTO campaign_sends (campaign_id, lead_id, status, error_message) VALUES (?, ?, 'error', ?)").bind(camp.id, lead.id, errMsg).run();
+          await env.DB.prepare("UPDATE campaigns SET errors = errors + 1 WHERE id = ? AND tenant_id = ?").bind(camp.id, tenantId).run();
+          errs++;
+          processed++;
+          continue;
+        }
+        const tmpl = await env.DB.prepare(
+          "SELECT name, language, body_text FROM whatsapp_templates WHERE id = ? AND tenant_id = ?",
+        ).bind(camp.template_id, tenantId).first<{ name: string; language: string; body_text: string }>();
+        if (!tmpl) {
+          const errMsg = "API Oficial: template não encontrado";
+          campaignErrors.push(errMsg);
+          globalErrors.push(errMsg);
+          await env.DB.prepare("INSERT OR IGNORE INTO campaign_sends (campaign_id, lead_id, status, error_message) VALUES (?, ?, 'error', ?)").bind(camp.id, lead.id, errMsg).run();
+          await env.DB.prepare("UPDATE campaigns SET errors = errors + 1 WHERE id = ? AND tenant_id = ?").bind(camp.id, tenantId).run();
+          errs++;
+          processed++;
+          continue;
+        }
+
+        // Build template variable components
+        let templateVarDefs: string[] = [];
+        try { templateVarDefs = JSON.parse(camp.template_variables || "[]"); } catch { templateVarDefs = []; }
+        const bookingLink = `${getFrontendUrl(env)}/agendar/${tenantId}?phone=${encodeURIComponent(phone)}`;
+        const components: Array<{ type: string; parameters: Array<{ type: string; text: string }> }> = [];
+        if (templateVarDefs.length > 0) {
+          const params = templateVarDefs.map((v) => {
+            let val = v;
+            if (v === "{{company}}") val = lead.company || lead.phone;
+            else if (v === "{{phone}}") val = lead.phone;
+            else if (v === "{{link_agendamento}}") val = bookingLink;
+            return { type: "text", text: val };
+          });
+          components.push({ type: "body", parameters: params });
+        }
+
+        const e164Phone = phone.replace(/\D/g, "");
+        const officialResult = await sendWhatsAppOfficialTemplate(
+          creds.phoneNumberId,
+          creds.accessToken,
+          e164Phone,
+          tmpl.name.toLowerCase().replace(/[^a-z0-9_]/g, "_"),
+          tmpl.language,
+          components.length > 0 ? components : undefined,
+        );
+        if (officialResult.ok) {
+          await env.DB.prepare(
+            `INSERT INTO campaign_sends (campaign_id, lead_id, status) VALUES (?, ?, 'sent')
+             ON CONFLICT(campaign_id, lead_id) DO UPDATE SET status = 'sent', sent_at = datetime('now'), error_message = NULL`,
+          ).bind(camp.id, lead.id).run();
+          await env.DB.prepare("UPDATE campaigns SET sent = sent + 1 WHERE id = ? AND tenant_id = ?").bind(camp.id, tenantId).run();
+          sent++;
+        } else {
+          const errMsg = officialResult.error || "Erro ao enviar via API Oficial";
+          campaignErrors.push(errMsg);
+          globalErrors.push(errMsg);
+          await env.DB.prepare("INSERT OR IGNORE INTO campaign_sends (campaign_id, lead_id, status, error_message) VALUES (?, ?, 'error', ?)").bind(camp.id, lead.id, errMsg).run();
+          await env.DB.prepare("UPDATE campaigns SET errors = errors + 1 WHERE id = ? AND tenant_id = ?").bind(camp.id, tenantId).run();
           errs++;
         }
         processed++;
@@ -2011,7 +2095,7 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
   if (method === "GET") {
     if (isSingle && campaignId) {
       const row = await env.DB.prepare(
-        "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id, status, total_leads, sent, errors, no_whatsapp, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE id = ? AND tenant_id = ?",
+        "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id, status, total_leads, sent, errors, no_whatsapp, api_source, template_id, template_variables, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE id = ? AND tenant_id = ?",
       )
         .bind(campaignId, tenantId)
         .first();
@@ -2019,7 +2103,7 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
       return json(row);
     }
     const res = await env.DB.prepare(
-      "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id, status, total_leads, sent, errors, no_whatsapp, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE tenant_id = ? ORDER BY created_at DESC",
+      "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id, status, total_leads, sent, errors, no_whatsapp, api_source, template_id, template_variables, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE tenant_id = ? ORDER BY created_at DESC",
     ).bind(tenantId).all();
     return json(res.results || []);
   }
@@ -2036,6 +2120,9 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
       funnel_id = null,
       crm_column_id = null,
       folder_id = null,
+      api_source = "evolution",
+      template_id = null,
+      template_variables = null,
     } = body;
 
     if (!name || typeof name !== "string" || name.trim().length === 0) {
@@ -2060,8 +2147,8 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
 
     const res = await env.DB.prepare(
       `INSERT INTO campaigns
-       (tenant_id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (tenant_id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id, api_source, template_id, template_variables)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
       .bind(
         tenantId,
@@ -2074,13 +2161,16 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
         funnel_id ?? null,
         crm_column_id ?? null,
         folder_id ? Number(folder_id) : null,
+        api_source === "whatsapp_official" ? "whatsapp_official" : "evolution",
+        template_id ? Number(template_id) : null,
+        template_variables ? JSON.stringify(template_variables) : null,
       )
       .run();
 
     const raw = res as { meta?: { last_row_id?: number }; lastRowId?: number };
     const lastId = raw.meta?.last_row_id ?? raw.lastRowId ?? 0;
     const created = await env.DB.prepare(
-      "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id, status, total_leads, sent, errors, no_whatsapp, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE id = ? AND tenant_id = ?",
+      "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id, status, total_leads, sent, errors, no_whatsapp, api_source, template_id, template_variables, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE id = ? AND tenant_id = ?",
     )
       .bind(lastId, tenantId)
       .first();
@@ -2174,6 +2264,18 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
       updates.push("scheduled_dispatched = ?");
       params.push(body.scheduled_dispatched ? 1 : 0);
     }
+    if ("api_source" in body) {
+      updates.push("api_source = ?");
+      params.push(body.api_source === "whatsapp_official" ? "whatsapp_official" : "evolution");
+    }
+    if ("template_id" in body) {
+      updates.push("template_id = ?");
+      params.push(body.template_id ? Number(body.template_id) : null);
+    }
+    if ("template_variables" in body) {
+      updates.push("template_variables = ?");
+      params.push(body.template_variables ? JSON.stringify(body.template_variables) : null);
+    }
     if (updates.length === 0) return json({ error: "Nenhum campo para atualizar" }, { status: 400 });
     params.push(campaignId, tenantId);
     await env.DB.prepare(
@@ -2183,7 +2285,7 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
       .run();
 
     const updated = await env.DB.prepare(
-      "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id, status, total_leads, sent, errors, no_whatsapp, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE id = ? AND tenant_id = ?",
+      "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id, status, total_leads, sent, errors, no_whatsapp, api_source, template_id, template_variables, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE id = ? AND tenant_id = ?",
     )
       .bind(campaignId, tenantId)
       .first();
@@ -2231,6 +2333,207 @@ async function handleGetGroups(request: Request, env: Env): Promise<Response> {
     console.error("[groups] fetchAllGroups exception", e);
     return json({ error: e?.message || "Erro ao buscar grupos" }, { status: 500 });
   }
+}
+
+// ── WhatsApp Official API helpers ─────────────────────────────────────────────
+
+async function getWaOfficialCreds(env: Env, tenantId: string): Promise<{ wabaId: string; phoneNumberId: string; accessToken: string }> {
+  const rows = await env.DB.prepare(
+    `SELECT key, value FROM tenant_settings WHERE tenant_id = ? AND key IN ('wa_official_waba_id','wa_official_phone_number_id','wa_official_access_token')`,
+  ).bind(tenantId).all<{ key: string; value: string }>();
+  const map: Record<string, string> = {};
+  for (const r of rows.results ?? []) map[r.key] = r.value;
+  return {
+    wabaId: map["wa_official_waba_id"] ?? "",
+    phoneNumberId: map["wa_official_phone_number_id"] ?? "",
+    accessToken: map["wa_official_access_token"] ?? "",
+  };
+}
+
+async function sendWhatsAppOfficialTemplate(
+  phoneNumberId: string,
+  accessToken: string,
+  toPhone: string,
+  templateName: string,
+  language: string,
+  components?: Array<{ type: string; parameters: Array<{ type: string; text: string }> }>,
+): Promise<{ ok: boolean; error?: string }> {
+  const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`;
+  const tmplBody: Record<string, unknown> = {
+    name: templateName,
+    language: { code: language },
+  };
+  if (components && components.length > 0) tmplBody.components = components;
+  const body = { messaging_product: "whatsapp", to: toPhone, type: "template", template: tmplBody };
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      return { ok: false, error: `Meta API ${res.status}: ${text.slice(0, 200)}` };
+    }
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || "Erro ao enviar template" };
+  }
+}
+
+async function submitTemplateToMeta(
+  wabaId: string,
+  accessToken: string,
+  name: string,
+  language: string,
+  category: string,
+  bodyText: string,
+): Promise<{ ok: boolean; id?: string; status?: string; error?: string }> {
+  const url = `https://graph.facebook.com/v19.0/${wabaId}/message_templates`;
+  const safeName = name.toLowerCase().replace(/[^a-z0-9_]/g, "_");
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: safeName,
+        language,
+        category,
+        components: [{ type: "BODY", text: bodyText }],
+      }),
+    });
+    const data = await res.json() as any;
+    if (!res.ok) return { ok: false, error: data?.error?.message || `Meta ${res.status}` };
+    return { ok: true, id: String(data.id), status: data.status || "PENDING" };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || "Erro" };
+  }
+}
+
+async function syncTemplateStatusFromMeta(
+  accessToken: string,
+  metaTemplateId: string,
+): Promise<{ status?: string; rejection_reason?: string }> {
+  try {
+    const res = await fetch(
+      `https://graph.facebook.com/v19.0/${metaTemplateId}?fields=name,status,rejected_reason`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    const data = await res.json() as any;
+    return { status: data.status, rejection_reason: data.rejected_reason };
+  } catch {
+    return {};
+  }
+}
+
+async function handleWhatsappOfficialSettings(request: Request, env: Env, method: string): Promise<Response> {
+  const tenantId = await getTenantId(request, env);
+  await ensureTenant(env, tenantId);
+
+  if (method === "GET") {
+    const creds = await getWaOfficialCreds(env, tenantId);
+    return json({ waba_id: creds.wabaId, phone_number_id: creds.phoneNumberId, access_token: creds.accessToken });
+  }
+
+  if (method === "PUT") {
+    const body = await readBody<{ waba_id?: string; phone_number_id?: string; access_token?: string }>(request);
+    const stmts: D1PreparedStatement[] = [];
+    if (body.waba_id != null) stmts.push(env.DB.prepare("INSERT OR REPLACE INTO tenant_settings (tenant_id, key, value) VALUES (?, 'wa_official_waba_id', ?)").bind(tenantId, String(body.waba_id).trim()));
+    if (body.phone_number_id != null) stmts.push(env.DB.prepare("INSERT OR REPLACE INTO tenant_settings (tenant_id, key, value) VALUES (?, 'wa_official_phone_number_id', ?)").bind(tenantId, String(body.phone_number_id).trim()));
+    if (body.access_token != null) stmts.push(env.DB.prepare("INSERT OR REPLACE INTO tenant_settings (tenant_id, key, value) VALUES (?, 'wa_official_access_token', ?)").bind(tenantId, String(body.access_token).trim()));
+    if (stmts.length) await env.DB.batch(stmts);
+    return json({ ok: true });
+  }
+
+  return new Response("Method not allowed", { status: 405 });
+}
+
+async function handleWhatsappTemplates(request: Request, env: Env, method: string, url: URL): Promise<Response> {
+  const tenantId = await getTenantId(request, env);
+  await ensureTenant(env, tenantId);
+
+  const parts = url.pathname.split("/").filter(Boolean);
+  const idParam = parts[2];
+  const isSingle = idParam && /^\d+$/.test(idParam);
+  const templateId = isSingle ? Number(idParam) : null;
+  const subAction = isSingle ? parts[3] : null;
+
+  if (method === "GET") {
+    if (templateId) {
+      const row = await env.DB.prepare(
+        "SELECT id, meta_template_id, name, language, category, body_text, status, rejection_reason, created_at, updated_at FROM whatsapp_templates WHERE id = ? AND tenant_id = ?",
+      ).bind(templateId, tenantId).first();
+      if (!row) return json({ error: "Template não encontrado" }, { status: 404 });
+      return json(row);
+    }
+    const res = await env.DB.prepare(
+      "SELECT id, meta_template_id, name, language, category, body_text, status, rejection_reason, created_at, updated_at FROM whatsapp_templates WHERE tenant_id = ? ORDER BY created_at DESC",
+    ).bind(tenantId).all();
+    return json(res.results || []);
+  }
+
+  if (method === "POST" && !templateId) {
+    const body = await readBody<{ name?: string; language?: string; category?: string; body_text?: string }>(request);
+    const { name, language = "pt_BR", category = "MARKETING", body_text } = body;
+    if (!name || !body_text) return json({ error: "name e body_text são obrigatórios" }, { status: 400 });
+
+    const creds = await getWaOfficialCreds(env, tenantId);
+    let metaTemplateId: string | null = null;
+    let status = "PENDING";
+    let errorReason: string | null = null;
+
+    if (creds.wabaId && creds.accessToken) {
+      const metaRes = await submitTemplateToMeta(creds.wabaId, creds.accessToken, name, language, category, body_text);
+      if (metaRes.ok && metaRes.id) {
+        metaTemplateId = metaRes.id;
+        status = metaRes.status || "PENDING";
+      } else {
+        status = "ERROR";
+        errorReason = metaRes.error ?? null;
+      }
+    }
+
+    const insertRes = await env.DB.prepare(
+      `INSERT INTO whatsapp_templates (tenant_id, meta_template_id, name, language, category, body_text, status, rejection_reason)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(tenantId, metaTemplateId, name.trim(), language, category, body_text, status, errorReason).run();
+    const raw = insertRes as { meta?: { last_row_id?: number }; lastRowId?: number };
+    const lastId = raw.meta?.last_row_id ?? raw.lastRowId ?? 0;
+    const created = await env.DB.prepare(
+      "SELECT id, meta_template_id, name, language, category, body_text, status, rejection_reason, created_at FROM whatsapp_templates WHERE id = ?",
+    ).bind(lastId).first();
+    return json(created, { status: 201 });
+  }
+
+  if (method === "POST" && templateId && subAction === "sync") {
+    const tmpl = await env.DB.prepare(
+      "SELECT meta_template_id FROM whatsapp_templates WHERE id = ? AND tenant_id = ?",
+    ).bind(templateId, tenantId).first<{ meta_template_id: string | null }>();
+    if (!tmpl) return json({ error: "Template não encontrado" }, { status: 404 });
+    if (!tmpl.meta_template_id) return json({ error: "Template sem ID Meta — não foi enviado para aprovação" }, { status: 400 });
+
+    const creds = await getWaOfficialCreds(env, tenantId);
+    if (!creds.accessToken) return json({ error: "Credenciais da API Oficial não configuradas" }, { status: 400 });
+
+    const syncRes = await syncTemplateStatusFromMeta(creds.accessToken, tmpl.meta_template_id);
+    if (syncRes.status) {
+      await env.DB.prepare(
+        "UPDATE whatsapp_templates SET status = ?, rejection_reason = ?, updated_at = datetime('now') WHERE id = ? AND tenant_id = ?",
+      ).bind(syncRes.status, syncRes.rejection_reason ?? null, templateId, tenantId).run();
+    }
+    const updated = await env.DB.prepare(
+      "SELECT id, meta_template_id, name, language, category, body_text, status, rejection_reason, updated_at FROM whatsapp_templates WHERE id = ?",
+    ).bind(templateId).first();
+    return json(updated);
+  }
+
+  if (method === "DELETE" && templateId) {
+    await env.DB.prepare("DELETE FROM whatsapp_templates WHERE id = ? AND tenant_id = ?")
+      .bind(templateId, tenantId).run();
+    return json({ ok: true });
+  }
+
+  return new Response("Method not allowed", { status: 405 });
 }
 
 async function handleSettings(request: Request, env: Env, method: string) {
@@ -4539,6 +4842,10 @@ export default {
           await env.DB.prepare("DELETE FROM agent_pauses WHERE tenant_id = ? AND phone = ?").bind(tenantId, phone).run();
           response = json({ ok: true });
         }
+      } else if (pathname === "/api/settings/whatsapp-official" && (method === "GET" || method === "PUT")) {
+        response = await handleWhatsappOfficialSettings(request, env, method);
+      } else if (pathname.startsWith("/api/whatsapp-templates")) {
+        response = await handleWhatsappTemplates(request, env, method, urlForRouting);
       } else if (pathname === "/api/settings" && (method === "GET" || method === "PUT")) {
         response = await handleSettings(request, env, method);
       } else if (pathname === "/api/settings/account" && (method === "GET" || method === "PUT")) {

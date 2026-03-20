@@ -45,6 +45,17 @@ interface Campaign {
   no_whatsapp: number;
   funnel_id: number | null;
   folder_id: number | null;
+  api_source: string | null;
+  template_id: number | null;
+  template_variables: string | null;
+}
+
+interface WaTemplate {
+  id: number;
+  name: string;
+  language: string;
+  body_text: string;
+  status: string;
 }
 
 const weekDays = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
@@ -65,6 +76,9 @@ export default function Campaigns() {
   const [blockedDays, setBlockedDays] = useState<string[]>([]);
   const [selectedFunnelId, setSelectedFunnelId] = useState<number | null>(null);
   const [selectedFolderId, setSelectedFolderId] = useState<number | null>(null);
+  const [apiSource, setApiSource] = useState<"evolution" | "whatsapp_official">("evolution");
+  const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
+  const [templateVariables, setTemplateVariables] = useState<string[]>([]);
 
   const funnelsQuery = useQuery({
     queryKey: ["funnels"],
@@ -77,6 +91,12 @@ export default function Campaigns() {
     queryFn: api.getLeadFolders,
   });
   const folderOptions = foldersQuery.data ?? [];
+
+  const waTemplatesQuery = useQuery({
+    queryKey: ["wa-official-templates"],
+    queryFn: api.getWhatsappTemplates,
+  });
+  const waTemplates = (waTemplatesQuery.data ?? []).filter((t) => t.status === "APPROVED") as WaTemplate[];
 
   const settingsQuery = useQuery({
     queryKey: ["settings"],
@@ -122,6 +142,9 @@ export default function Campaigns() {
       setBlockedDays([]);
       setSelectedFunnelId(null);
       setSelectedFolderId(null);
+      setApiSource("evolution");
+      setSelectedTemplateId(null);
+      setTemplateVariables([]);
       setShowCreateDialog(false);
       toast({ title: "Campanha criada." });
     },
@@ -221,6 +244,9 @@ export default function Campaigns() {
       days_blocked: blockedDays,
       funnel_id: selectedFunnelId,
       folder_id: selectedFolderId,
+      api_source: apiSource,
+      template_id: apiSource === "whatsapp_official" ? selectedTemplateId : null,
+      template_variables: apiSource === "whatsapp_official" ? templateVariables : [],
     });
   };
 
@@ -237,6 +263,9 @@ export default function Campaigns() {
     setBlockedDays(Array.isArray(days) ? days : []);
     setSelectedFunnelId(c.funnel_id ?? null);
     setSelectedFolderId(c.folder_id ?? null);
+    setApiSource((c.api_source === "whatsapp_official" ? "whatsapp_official" : "evolution") as "evolution" | "whatsapp_official");
+    setSelectedTemplateId(c.template_id ?? null);
+    try { setTemplateVariables(c.template_variables ? JSON.parse(c.template_variables) : []); } catch { setTemplateVariables([]); }
   };
 
   const handleSaveEdit = () => {
@@ -253,6 +282,9 @@ export default function Campaigns() {
         days_blocked: blockedDays,
         funnel_id: selectedFunnelId,
         folder_id: selectedFolderId,
+        api_source: apiSource,
+        template_id: apiSource === "whatsapp_official" ? selectedTemplateId : null,
+        template_variables: apiSource === "whatsapp_official" ? templateVariables : [],
       },
     });
   };
@@ -319,6 +351,9 @@ export default function Campaigns() {
               setBlockedDays([]);
               setSelectedFunnelId(null);
               setSelectedFolderId(null);
+              setApiSource("evolution");
+              setSelectedTemplateId(null);
+              setTemplateVariables([]);
               setShowCreateDialog(true);
             }}
           >
@@ -588,6 +623,75 @@ export default function Campaigns() {
                 </p>
               )}
             </div>
+            {/* API Source */}
+            <div>
+              <Label className="text-xs text-muted-foreground">Canal de envio</Label>
+              <div className="flex gap-2 mt-1">
+                <button type="button" onClick={() => setApiSource("evolution")}
+                  className={`flex-1 rounded-md border text-xs py-2 px-3 transition-colors ${apiSource === "evolution" ? "border-primary bg-primary/10 text-primary font-medium" : "border-border/50 text-muted-foreground hover:bg-secondary"}`}>
+                  Evolution API
+                </button>
+                <button type="button" onClick={() => setApiSource("whatsapp_official")}
+                  className={`flex-1 rounded-md border text-xs py-2 px-3 transition-colors ${apiSource === "whatsapp_official" ? "border-primary bg-primary/10 text-primary font-medium" : "border-border/50 text-muted-foreground hover:bg-secondary"}`}>
+                  API Oficial WhatsApp
+                </button>
+              </div>
+            </div>
+            {apiSource === "whatsapp_official" && (
+              <>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Template aprovado</Label>
+                  <select
+                    className="mt-1 w-full rounded-md border border-border/50 bg-secondary text-xs px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary"
+                    value={selectedTemplateId ?? ""}
+                    onChange={(e) => {
+                      const id = e.target.value ? Number(e.target.value) : null;
+                      setSelectedTemplateId(id);
+                      setTemplateVariables([]);
+                    }}
+                  >
+                    <option value="">— Selecione um template —</option>
+                    {waTemplates.map((t) => (
+                      <option key={t.id} value={t.id}>{t.name} ({t.language})</option>
+                    ))}
+                  </select>
+                  {waTemplates.length === 0 && (
+                    <p className="text-[10px] text-amber-600 mt-1">Nenhum template aprovado. Crie um em Configurações → WhatsApp Oficial.</p>
+                  )}
+                </div>
+                {selectedTemplateId && (() => {
+                  const tmpl = waTemplates.find((t) => t.id === selectedTemplateId);
+                  if (!tmpl) return null;
+                  const vars = Array.from(tmpl.body_text.matchAll(/\{\{(\d+)\}\}/g));
+                  if (vars.length === 0) return null;
+                  return (
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Mapeamento de variáveis</Label>
+                      <p className="text-[10px] text-muted-foreground mb-1">Para cada {"{{N}}"} no template, escolha o campo do lead.</p>
+                      {vars.map((m, i) => (
+                        <div key={i} className="flex items-center gap-2 mt-1">
+                          <span className="text-xs text-muted-foreground w-10">{`{{${m[1]}}}`}</span>
+                          <select
+                            className="flex-1 rounded-md border border-border/50 bg-secondary text-xs px-2 py-1.5 focus:outline-none"
+                            value={templateVariables[i] ?? ""}
+                            onChange={(e) => {
+                              const newVars = [...templateVariables];
+                              newVars[i] = e.target.value;
+                              setTemplateVariables(newVars);
+                            }}
+                          >
+                            <option value="">— Escolha —</option>
+                            <option value="{{company}}">Nome da empresa</option>
+                            <option value="{{phone}}">Telefone</option>
+                            <option value="{{link_agendamento}}">Link de agendamento</option>
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
@@ -714,6 +818,75 @@ export default function Campaigns() {
                 </p>
               )}
             </div>
+            {/* API Source */}
+            <div>
+              <Label className="text-xs text-muted-foreground">Canal de envio</Label>
+              <div className="flex gap-2 mt-1">
+                <button type="button" onClick={() => setApiSource("evolution")}
+                  className={`flex-1 rounded-md border text-xs py-2 px-3 transition-colors ${apiSource === "evolution" ? "border-primary bg-primary/10 text-primary font-medium" : "border-border/50 text-muted-foreground hover:bg-secondary"}`}>
+                  Evolution API
+                </button>
+                <button type="button" onClick={() => setApiSource("whatsapp_official")}
+                  className={`flex-1 rounded-md border text-xs py-2 px-3 transition-colors ${apiSource === "whatsapp_official" ? "border-primary bg-primary/10 text-primary font-medium" : "border-border/50 text-muted-foreground hover:bg-secondary"}`}>
+                  API Oficial WhatsApp
+                </button>
+              </div>
+            </div>
+            {apiSource === "whatsapp_official" && (
+              <>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Template aprovado</Label>
+                  <select
+                    className="mt-1 w-full rounded-md border border-border/50 bg-secondary text-xs px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary"
+                    value={selectedTemplateId ?? ""}
+                    onChange={(e) => {
+                      const id = e.target.value ? Number(e.target.value) : null;
+                      setSelectedTemplateId(id);
+                      setTemplateVariables([]);
+                    }}
+                  >
+                    <option value="">— Selecione um template —</option>
+                    {waTemplates.map((t) => (
+                      <option key={t.id} value={t.id}>{t.name} ({t.language})</option>
+                    ))}
+                  </select>
+                  {waTemplates.length === 0 && (
+                    <p className="text-[10px] text-amber-600 mt-1">Nenhum template aprovado. Crie um em Configurações → WhatsApp Oficial.</p>
+                  )}
+                </div>
+                {selectedTemplateId && (() => {
+                  const tmpl = waTemplates.find((t) => t.id === selectedTemplateId);
+                  if (!tmpl) return null;
+                  const vars = Array.from(tmpl.body_text.matchAll(/\{\{(\d+)\}\}/g));
+                  if (vars.length === 0) return null;
+                  return (
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Mapeamento de variáveis</Label>
+                      <p className="text-[10px] text-muted-foreground mb-1">Para cada {"{{N}}"} no template, escolha o campo do lead.</p>
+                      {vars.map((m, i) => (
+                        <div key={i} className="flex items-center gap-2 mt-1">
+                          <span className="text-xs text-muted-foreground w-10">{`{{${m[1]}}}`}</span>
+                          <select
+                            className="flex-1 rounded-md border border-border/50 bg-secondary text-xs px-2 py-1.5 focus:outline-none"
+                            value={templateVariables[i] ?? ""}
+                            onChange={(e) => {
+                              const newVars = [...templateVariables];
+                              newVars[i] = e.target.value;
+                              setTemplateVariables(newVars);
+                            }}
+                          >
+                            <option value="">— Escolha —</option>
+                            <option value="{{company}}">Nome da empresa</option>
+                            <option value="{{phone}}">Telefone</option>
+                            <option value="{{link_agendamento}}">Link de agendamento</option>
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditingCampaign(null)}>

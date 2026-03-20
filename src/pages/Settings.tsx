@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Save, Bell, Key, Building2, Loader2, Check, Calendar, Copy, ExternalLink, Link2, Users, Phone } from "lucide-react";
+import { Save, Bell, Key, Building2, Loader2, Check, Calendar, Copy, ExternalLink, Link2, Users, Phone, MessageSquare, Trash2, RefreshCw, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -125,6 +125,7 @@ export default function SettingsPage() {
           <TabsTrigger value="security">Segurança</TabsTrigger>
           <TabsTrigger value="notifications">Notificações</TabsTrigger>
           <TabsTrigger value="booking">Agenda Pública</TabsTrigger>
+          <TabsTrigger value="whatsapp-official">WhatsApp Oficial</TabsTrigger>
         </TabsList>
 
         {/* ── Minha Empresa ── */}
@@ -378,8 +379,236 @@ export default function SettingsPage() {
 
         {/* ── Agenda Pública ── */}
         <BookingSettingsTab />
+
+        {/* ── WhatsApp Oficial ── */}
+        <WhatsappOfficialTab />
       </Tabs>
     </div>
+  );
+}
+
+function WhatsappOfficialTab() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const credsQuery = useQuery({
+    queryKey: ["wa-official-settings"],
+    queryFn: api.getWhatsappOfficialSettings,
+  });
+
+  const templatesQuery = useQuery({
+    queryKey: ["wa-official-templates"],
+    queryFn: api.getWhatsappTemplates,
+  });
+
+  const [wabaId, setWabaId] = useState("");
+  const [phoneNumberId, setPhoneNumberId] = useState("");
+  const [accessToken, setAccessToken] = useState("");
+
+  useEffect(() => {
+    if (credsQuery.data) {
+      setWabaId(credsQuery.data.waba_id ?? "");
+      setPhoneNumberId(credsQuery.data.phone_number_id ?? "");
+      setAccessToken(credsQuery.data.access_token ?? "");
+    }
+  }, [credsQuery.data]);
+
+  const saveCredsMut = useMutation({
+    mutationFn: () => api.updateWhatsappOfficialSettings({ waba_id: wabaId, phone_number_id: phoneNumberId, access_token: accessToken }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["wa-official-settings"] });
+      toast({ title: "Credenciais salvas", description: "API Oficial do WhatsApp configurada." });
+    },
+    onError: (e: Error) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
+  });
+
+  // New template form
+  const [showTemplateForm, setShowTemplateForm] = useState(false);
+  const [tmplName, setTmplName] = useState("");
+  const [tmplLanguage, setTmplLanguage] = useState("pt_BR");
+  const [tmplCategory, setTmplCategory] = useState("MARKETING");
+  const [tmplBodyText, setTmplBodyText] = useState("");
+
+  const createTemplateMut = useMutation({
+    mutationFn: () => api.createWhatsappTemplate({ name: tmplName, language: tmplLanguage, category: tmplCategory, body_text: tmplBodyText }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["wa-official-templates"] });
+      setTmplName(""); setTmplLanguage("pt_BR"); setTmplCategory("MARKETING"); setTmplBodyText("");
+      setShowTemplateForm(false);
+      toast({ title: "Template enviado", description: "Aguarde a aprovação da Meta." });
+    },
+    onError: (e: Error) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
+  });
+
+  const syncTemplateMut = useMutation({
+    mutationFn: (id: number) => api.syncWhatsappTemplate(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["wa-official-templates"] });
+      toast({ title: "Status atualizado" });
+    },
+    onError: (e: Error) => toast({ title: "Erro ao sincronizar", description: e.message, variant: "destructive" }),
+  });
+
+  const deleteTemplateMut = useMutation({
+    mutationFn: (id: number) => api.deleteWhatsappTemplate(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["wa-official-templates"] });
+      toast({ title: "Template removido" });
+    },
+    onError: (e: Error) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
+  });
+
+  const templates = templatesQuery.data ?? [];
+
+  const statusColor = (s: string) => {
+    if (s === "APPROVED") return "text-green-600";
+    if (s === "REJECTED" || s === "ERROR") return "text-destructive";
+    return "text-amber-500";
+  };
+
+  return (
+    <TabsContent value="whatsapp-official" className="space-y-4">
+      {/* Credentials */}
+      <div className="rounded-xl border border-border/50 bg-card p-5 space-y-4">
+        <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+          <MessageSquare className="h-4 w-4 text-primary" /> Credenciais da API Oficial (Meta)
+        </h3>
+        <p className="text-xs text-muted-foreground">
+          Configure o acesso ao WhatsApp Business API da Meta. Você encontra essas informações no{" "}
+          <span className="font-medium">Meta for Developers → WhatsApp → API Setup</span>.
+        </p>
+
+        {credsQuery.isLoading ? (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+            <Loader2 className="h-4 w-4 animate-spin" /> Carregando...
+          </div>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 max-w-2xl">
+            <div>
+              <Label className="text-xs text-muted-foreground">WABA ID (WhatsApp Business Account ID)</Label>
+              <Input className="mt-1 bg-secondary border-border/50" value={wabaId} onChange={(e) => setWabaId(e.target.value)} placeholder="123456789012345" />
+            </div>
+            <div>
+              <Label className="text-xs text-muted-foreground">Phone Number ID</Label>
+              <Input className="mt-1 bg-secondary border-border/50" value={phoneNumberId} onChange={(e) => setPhoneNumberId(e.target.value)} placeholder="123456789012345" />
+            </div>
+            <div className="sm:col-span-2">
+              <Label className="text-xs text-muted-foreground">Access Token (token permanente)</Label>
+              <Input type="password" className="mt-1 bg-secondary border-border/50" value={accessToken} onChange={(e) => setAccessToken(e.target.value)} placeholder="EAABcde..." />
+            </div>
+          </div>
+        )}
+
+        <Button size="sm" className="gap-2" disabled={saveCredsMut.isPending || credsQuery.isLoading} onClick={() => saveCredsMut.mutate()}>
+          {saveCredsMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+          Salvar credenciais
+        </Button>
+      </div>
+
+      {/* Templates */}
+      <div className="rounded-xl border border-border/50 bg-card p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+            <MessageSquare className="h-4 w-4 text-primary" /> Templates de Mensagem
+          </h3>
+          <Button size="sm" className="gap-1.5" onClick={() => setShowTemplateForm((v) => !v)}>
+            <Plus className="h-3.5 w-3.5" /> Novo template
+          </Button>
+        </div>
+
+        {showTemplateForm && (
+          <div className="border border-border/50 rounded-lg p-4 space-y-3 bg-secondary/30">
+            <p className="text-xs text-muted-foreground font-medium">Novo template</p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <Label className="text-xs text-muted-foreground">Nome do template</Label>
+                <Input className="mt-1 bg-secondary border-border/50 text-xs" value={tmplName} onChange={(e) => setTmplName(e.target.value)} placeholder="meu_template_vendas" />
+                <p className="text-[10px] text-muted-foreground mt-0.5">Apenas letras minúsculas, números e underscores.</p>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label className="text-xs text-muted-foreground">Idioma</Label>
+                  <select className="mt-1 w-full rounded-md border border-border/50 bg-secondary text-xs px-2 py-2 focus:outline-none" value={tmplLanguage} onChange={(e) => setTmplLanguage(e.target.value)}>
+                    <option value="pt_BR">pt_BR</option>
+                    <option value="en_US">en_US</option>
+                    <option value="es">es</option>
+                  </select>
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Categoria</Label>
+                  <select className="mt-1 w-full rounded-md border border-border/50 bg-secondary text-xs px-2 py-2 focus:outline-none" value={tmplCategory} onChange={(e) => setTmplCategory(e.target.value)}>
+                    <option value="MARKETING">MARKETING</option>
+                    <option value="UTILITY">UTILITY</option>
+                    <option value="AUTHENTICATION">AUTHENTICATION</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs text-muted-foreground">Corpo da mensagem</Label>
+              <textarea
+                className="mt-1 w-full rounded-md border border-border/50 bg-secondary text-xs px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary resize-none"
+                rows={4}
+                value={tmplBodyText}
+                onChange={(e) => setTmplBodyText(e.target.value)}
+                placeholder={"Olá {{1}}, temos uma oferta especial para você! Acesse: {{2}}"}
+              />
+              <p className="text-[10px] text-muted-foreground mt-0.5">
+                Use {"{{1}}"}, {"{{2}}"} para variáveis. Mapeie-as na campanha ao escolher este template.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" disabled={!tmplName || !tmplBodyText || createTemplateMut.isPending} onClick={() => createTemplateMut.mutate()}>
+                {createTemplateMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
+                Enviar para aprovação
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setShowTemplateForm(false)}>Cancelar</Button>
+            </div>
+          </div>
+        )}
+
+        {templatesQuery.isLoading ? (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground py-2"><Loader2 className="h-4 w-4 animate-spin" /> Carregando...</div>
+        ) : templates.length === 0 ? (
+          <p className="text-xs text-muted-foreground">Nenhum template cadastrado.</p>
+        ) : (
+          <div className="border border-border/30 rounded-lg overflow-x-auto">
+            <table className="w-full text-xs min-w-[540px]">
+              <thead className="bg-secondary/50 border-b border-border/40">
+                <tr>
+                  {["Nome", "Idioma", "Categoria", "Status", "Ações"].map((h) => (
+                    <th key={h} className="px-3 py-2 text-left text-[11px] uppercase text-muted-foreground tracking-wide">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {templates.map((t) => (
+                  <tr key={t.id} className="border-b border-border/20 hover:bg-secondary/30 transition-colors">
+                    <td className="px-3 py-2 font-medium text-foreground">{t.name}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{t.language}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{t.category}</td>
+                    <td className={`px-3 py-2 font-medium ${statusColor(t.status)}`}>
+                      {t.status}
+                      {t.rejection_reason && <span className="block text-[10px] font-normal text-muted-foreground truncate max-w-[120px]">{t.rejection_reason}</span>}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <div className="flex items-center justify-end gap-0.5">
+                        <Button variant="ghost" size="icon" className="h-7 w-7" title="Sincronizar status com a Meta" disabled={syncTemplateMut.isPending} onClick={() => syncTemplateMut.mutate(t.id)}>
+                          <RefreshCw className="h-3 w-3" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" title="Remover template" disabled={deleteTemplateMut.isPending} onClick={() => deleteTemplateMut.mutate(t.id)}>
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </TabsContent>
   );
 }
 
