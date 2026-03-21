@@ -5025,7 +5025,11 @@ export default {
     const allowedOrigins = (env.ALLOWED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean);
     const origin = request.headers.get("Origin") || "";
     const isPublicRoute = pathname.startsWith("/api/public/");
-    const allowOrigin = isPublicRoute ? "*" : (allowedOrigins.includes(origin) ? origin : null);
+    const isExtensionRoute = pathname.startsWith("/api/tools/gmaps/push-leads") || pathname.startsWith("/api/tools/instagram/push-leads");
+    const isExtensionOrigin = origin.startsWith("chrome-extension://") || origin.startsWith("moz-extension://");
+    const allowOrigin = isPublicRoute || (isExtensionRoute && isExtensionOrigin)
+      ? "*"
+      : (allowedOrigins.includes(origin) ? origin : null);
     if (method === "OPTIONS") {
       const headers: Record<string, string> = {
         "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
