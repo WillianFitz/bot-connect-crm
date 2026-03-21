@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <title>Extrator WhatsApp</title>
+    <style>
+      body { font-family: system-ui, -apple-system, sans-serif; margin: 12px; width: 300px; }
+      h1 { font-size: 15px; margin-bottom: 10px; }
+      p { font-size: 12px; color: #6b7280; margin-bottom: 8px; }
+      button {
+        width: 100%; padding: 8px; font-size: 12px; cursor: pointer;
+        background: #22c55e; color: white; border: none; border-radius: 6px; margin-bottom: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+      <div style="width:28px;height:28px;border-radius:7px;background:linear-gradient(135deg,hsl(192,91%,52%),hsl(265,80%,60%));display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16"><path d="M14 2 L6 14 H11 L10 22 L18 10 H13 Z" fill="hsl(222,47%,6%)"/></svg>
+      </div>
+      <h1 style="margin:0;font-size:15px;">Extrator WhatsApp</h1>
+    </div>
+    <p>Abra um grupo no WhatsApp Web, acesse as Informações do grupo e clique em Abrir Dashboard para extrair.</p>
+    <button id="openDashboard">Abrir Dashboard</button>
+    <script src="popup.js"></script>
+  </body>
+</html>

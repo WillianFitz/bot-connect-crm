@@ -3846,6 +3846,120 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
     return new Response("Method not allowed", { status: 405 });
   }
 
+  // /api/tools/whatsapp/push-leads
+  if (parts.length === 4 && parts[2] === "whatsapp" && parts[3] === "push-leads") {
+    if (method !== "POST") return new Response("Method not allowed", { status: 405 });
+
+    const extToken = request.headers.get("x-extension-token") || "";
+    const cfgRow = await env.DB.prepare(
+      "SELECT config_json FROM tools_extractors WHERE tenant_id = ? AND type = 'whatsapp' LIMIT 1",
+    ).bind(tenantId).first<{ config_json?: string }>();
+
+    if (!cfgRow?.config_json) {
+      return json({ error: "Token da extensão não configurado para este tenant." }, { status: 401 });
+    }
+
+    let expectedToken: string | null = null;
+    try {
+      const parsed = JSON.parse(cfgRow.config_json) as { extensionToken?: string };
+      expectedToken = parsed.extensionToken || null;
+    } catch {
+      return json({ error: "Configuração da ferramenta WhatsApp inválida." }, { status: 401 });
+    }
+
+    if (!extToken || !expectedToken || extToken !== expectedToken) {
+      return json({ error: "Token da extensão inválido." }, { status: 401 });
+    }
+
+    const body = await readBody<{
+      leads?: Array<{ company?: string; phone?: string; folder_name?: string }>;
+      folder?: string;
+      source?: string;
+    }>(request);
+
+    if (!Array.isArray(body.leads)) {
+      return json({ error: "Leads são obrigatórios" }, { status: 400 });
+    }
+
+    await ensureTenant(env, tenantId);
+
+    let inserted = 0;
+    for (const lead of body.leads) {
+      const company = lead?.company != null ? String(lead.company).trim() : "";
+      const phone   = lead?.phone   != null ? String(lead.phone).trim()   : "";
+      if (!company && !phone) continue;
+
+      let folderId: number | null = null;
+      const folderName = lead?.folder_name != null
+        ? String(lead.folder_name).trim()
+        : body.folder != null ? String(body.folder).trim() : "";
+      if (folderName) {
+        const folderRow = await env.DB.prepare(
+          "SELECT id FROM lead_folders WHERE tenant_id = ? AND name = ? LIMIT 1",
+        ).bind(tenantId, folderName).first<{ id: number }>();
+        if (folderRow) {
+          folderId = folderRow.id;
+        } else {
+          const res = await env.DB.prepare(
+            "INSERT INTO lead_folders (tenant_id, name) VALUES (?, ?)",
+          ).bind(tenantId, folderName).run();
+          const raw = res as { meta?: { last_row_id?: number }; lastRowId?: number };
+          folderId = raw.meta?.last_row_id ?? raw.lastRowId ?? null;
+        }
+      }
+
+      if (phone) {
+        const exists = await env.DB.prepare(
+          "SELECT id FROM leads WHERE tenant_id = ? AND phone = ? LIMIT 1",
+        ).bind(tenantId, phone).first<{ id: number }>();
+        if (exists) continue;
+      }
+
+      await env.DB.prepare(
+        `INSERT INTO leads (tenant_id, company, phone, folder_id, notes) VALUES (?, ?, ?, ?, ?)`,
+      ).bind(tenantId, company || null, phone || null, folderId, "Origem: WhatsApp").run();
+      inserted += 1;
+    }
+
+    return json({ ok: true, inserted });
+  }
+
+  // /api/tools/whatsapp/config
+  if (parts.length === 4 && parts[2] === "whatsapp" && parts[3] === "config") {
+    if (method === "GET") {
+      const row = await env.DB.prepare(
+        "SELECT config_json FROM tools_extractors WHERE tenant_id = ? AND type = 'whatsapp' LIMIT 1",
+      ).bind(tenantId).first<{ config_json?: string }>();
+
+      let extensionToken: string | null = null;
+      if (row?.config_json) {
+        try {
+          const parsed = JSON.parse(row.config_json) as { extensionToken?: string };
+          extensionToken = parsed.extensionToken || null;
+        } catch { /* ignore */ }
+      }
+
+      if (!extensionToken) {
+        const bytes = new Uint8Array(20);
+        crypto.getRandomValues(bytes);
+        extensionToken = Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+        await env.DB.prepare("DELETE FROM tools_extractors WHERE tenant_id = ? AND type = 'whatsapp'").bind(tenantId).run();
+        await env.DB.prepare("INSERT INTO tools_extractors (tenant_id, type, name, config_json) VALUES (?, 'whatsapp', 'default', ?)").bind(tenantId, JSON.stringify({ extensionToken })).run();
+      }
+
+      return json({ extensionToken });
+    }
+
+    if (method === "PUT") {
+      const body = await readBody<{ extensionToken?: string }>(request);
+      const extensionToken = body.extensionToken?.trim() || "";
+      if (!extensionToken) return json({ error: "extensionToken obrigatório" }, { status: 400 });
+      await env.DB.prepare("DELETE FROM tools_extractors WHERE tenant_id = ? AND type = 'whatsapp'").bind(tenantId).run();
+      await env.DB.prepare("INSERT INTO tools_extractors (tenant_id, type, name, config_json) VALUES (?, 'whatsapp', 'default', ?)").bind(tenantId, JSON.stringify({ extensionToken })).run();
+      return json({ ok: true });
+    }
+  }
+
   return new Response("Not found", { status: 404 });
 }
 
@@ -5025,7 +5139,7 @@ export default {
     const allowedOrigins = (env.ALLOWED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean);
     const origin = request.headers.get("Origin") || "";
     const isPublicRoute = pathname.startsWith("/api/public/");
-    const isExtensionRoute = pathname.startsWith("/api/tools/gmaps/push-leads") || pathname.startsWith("/api/tools/instagram/push-leads");
+    const isExtensionRoute = pathname.startsWith("/api/tools/gmaps/push-leads") || pathname.startsWith("/api/tools/instagram/push-leads") || pathname.startsWith("/api/tools/whatsapp/push-leads");
     const isExtensionOrigin = origin.startsWith("chrome-extension://") || origin.startsWith("moz-extension://");
     const allowOrigin = isPublicRoute || (isExtensionRoute && isExtensionOrigin)
       ? "*"
@@ -5122,7 +5236,7 @@ export default {
         response = await handleCRM(request, env, method, urlForRouting);
       } else if (pathname.startsWith("/api/funnels")) {
         response = await handleProspectFunnels(request, env, method, urlForRouting);
-      } else if (pathname.startsWith("/api/tools/instagram") || pathname.startsWith("/api/tools/gmaps")) {
+      } else if (pathname.startsWith("/api/tools/instagram") || pathname.startsWith("/api/tools/gmaps") || pathname.startsWith("/api/tools/whatsapp")) {
         response = await handleInstagramTools(request, env, method, urlForRouting);
       } else if (pathname === "/api/ai/disparo" && method === "POST") {
         response = await handleAIDisparo(request, env);

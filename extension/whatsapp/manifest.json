@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "Extrator WhatsApp - LeadFlowAI",
+  "version": "1.0.0",
+  "description": "Extrai participantes de grupos do WhatsApp Web e envia como leads para o LeadFlowAI.",
+  "permissions": ["storage", "scripting", "activeTab", "tabs", "downloads"],
+  "host_permissions": ["https://web.whatsapp.com/*"],
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Extrator WhatsApp",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "options_page": "dashboard.html",
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://web.whatsapp.com/*"],
+      "js": ["content-script.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["config.json"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

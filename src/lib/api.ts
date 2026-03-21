@@ -541,6 +541,9 @@ export const api = {
   getGmapsConfig: () =>
     request<{ extensionToken: string }>("/tools/gmaps/config"),
 
+  getWhatsappConfig: () =>
+    request<{ extensionToken: string }>("/tools/whatsapp/config"),
+
   // Lead Heat Map
   getLeadsHeat: () =>
     request<any[]>("/leads/heat"),
