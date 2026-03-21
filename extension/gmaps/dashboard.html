@@ -31,7 +31,7 @@
         display: flex; align-items: center; gap: 10px;
         padding: 18px 8px 14px; border-bottom: 1px solid var(--border); margin-bottom: 12px;
       }
-      .logo-icon { font-size: 22px; }
+      .logo-icon { width: 32px; height: 32px; flex-shrink: 0; }
       .logo-text { font-size: 13px; font-weight: 700; color: var(--text); line-height: 1.2; }
       .logo-sub { font-size: 10px; color: var(--text-3); }
       .nav-item {
@@ -142,7 +142,11 @@
       <!-- Sidebar -->
       <aside class="sidebar">
         <div class="logo">
-          <div class="logo-icon">🗺️</div>
+          <svg class="logo-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+            <defs><linearGradient id="lg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="hsl(192,91%,52%)"/><stop offset="100%" stop-color="hsl(265,80%,60%)"/></linearGradient></defs>
+            <rect width="32" height="32" rx="8" fill="url(#lg)"/>
+            <path d="M18 4 L9 18 H15 L14 28 L23 14 H17 Z" fill="hsl(222,47%,6%)"/>
+          </svg>
           <div>
             <div class="logo-text">Google Maps</div>
             <div class="logo-sub">LeadFlowAI Extractor</div>
