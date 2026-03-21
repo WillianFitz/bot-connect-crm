@@ -78,16 +78,23 @@ function sendWithRetry(tabId, message, callback, maxTries = 12, baseDelay = 1500
 }
 
 /* ── waitTabComplete ── */
-function waitTabComplete(tabId, callback) {
+function waitTabComplete(tabId, callback, _deadline) {
+  const deadline = _deadline || (Date.now() + 12000); // máx 12s
+  if (Date.now() >= deadline) { callback(); return; }  // timeout → segue mesmo assim
   chrome.tabs.get(tabId, (tab) => {
-    if (chrome.runtime.lastError || !tab) { setTimeout(() => waitTabComplete(tabId, callback), 500); return; }
+    if (chrome.runtime.lastError || !tab) { callback(); return; }
     if (tab.status === "complete") { callback(); return; }
     const listener = (id, info) => {
       if (id !== tabId || info.status !== "complete") return;
       chrome.tabs.onUpdated.removeListener(listener);
+      clearTimeout(timer);
       callback();
     };
     chrome.tabs.onUpdated.addListener(listener);
+    const timer = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener);
+      callback();
+    }, Math.max(0, deadline - Date.now()));
   });
 }
 

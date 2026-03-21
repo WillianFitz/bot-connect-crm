@@ -72,15 +72,23 @@ function sendWithRetry(tabId, message, callback, maxTries = 10, baseDelay = 1500
 }
 
 /* ── waitTabComplete ── */
-function waitTabComplete(tabId, callback) {
+function waitTabComplete(tabId, callback, _deadline) {
+  const deadline = _deadline || (Date.now() + 12000);
+  if (Date.now() >= deadline) { callback(); return; }
   chrome.tabs.get(tabId, (tab) => {
-    if (tab && tab.status === "complete") { callback(); return; }
+    if (chrome.runtime.lastError || !tab) { callback(); return; }
+    if (tab.status === "complete") { callback(); return; }
     const listener = (id, info) => {
       if (id !== tabId || info.status !== "complete") return;
       chrome.tabs.onUpdated.removeListener(listener);
+      clearTimeout(timer);
       callback();
     };
     chrome.tabs.onUpdated.addListener(listener);
+    const timer = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener);
+      callback();
+    }, Math.max(0, deadline - Date.now()));
   });
 }
 
@@ -101,6 +109,8 @@ function runPhase1(tabId, profile, startIndex, limit, tenantId, key, profiles, p
             response?.error || "Não foi possível coletar seguidores. Verifique se está logado no Instagram Web.", "err");
           setProgress(null);
           chrome.tabs.get(tabId, t => t?.windowId && chrome.windows.remove(t.windowId));
+          document.getElementById("startCapture").disabled = false;
+          document.getElementById("stopCapture").style.display = "none";
           return;
         }
 
@@ -139,6 +149,8 @@ function runPhase2(tabId, tenantId, profile, key, profiles, limit) {
       setStatus("captureStatus", "Nenhum seguidor para varrer.", "err");
       setProgress(null);
       chrome.tabs.get(tabId, t => t?.windowId && chrome.windows.remove(t.windowId));
+      document.getElementById("startCapture").disabled = false;
+      document.getElementById("stopCapture").style.display = "none";
       return;
     }
 
@@ -147,16 +159,26 @@ function runPhase2(tabId, tenantId, profile, key, profiles, limit) {
     let scanned   = 0;
 
     function step() {
-      if (scanIndex >= p.usernames.length || scanned >= limit) {
+      if (shouldStop() || scanIndex >= p.usernames.length || scanned >= limit) {
         const updated    = { ...p, scanIndex, leads };
         const newProfiles = { ...allProfiles, [key]: updated };
         chrome.storage.local.set({ profiles: newProfiles }, () => {
           const withPhone = leads.filter(l => l.phone).length;
-          setProgress(`✅ Concluído: ${p.usernames.length} usernames · ${scanned} bios varridas · ${withPhone} com telefone`, 100);
-          setStatus("captureStatus", `Captura finalizada. ${withPhone} leads com telefone prontos para envio.`, "ok");
+          const stopped = shouldStop();
+          setProgress(stopped
+            ? `⏹ Parado: ${scanned} bios varridas · ${withPhone} com telefone`
+            : `✅ Concluído: ${p.usernames.length} usernames · ${scanned} bios varridas · ${withPhone} com telefone`, 100);
+          setStatus("captureStatus",
+            stopped
+              ? `Captura parada. ${withPhone} leads com telefone salvos.`
+              : `Captura finalizada. ${withPhone} leads com telefone prontos para envio.`,
+            stopped ? "info" : "ok");
           updateStats(updated);
           renderProfilesTable(newProfiles);
           chrome.tabs.get(tabId, t => t?.windowId && chrome.windows.remove(t.windowId));
+          document.getElementById("startCapture").disabled = false;
+          document.getElementById("stopCapture").style.display = "none";
+          _stopRequested = false;
         });
         return;
       }
@@ -199,6 +221,10 @@ function pushLead(resp, username, leads) {
     phone: resp?.phone || "",
   });
 }
+
+/* ── stop flag ── */
+let _stopRequested = false;
+function shouldStop() { return _stopRequested; }
 
 /* ══════════════════════════════════════════════════════════
    INIT
@@ -330,20 +356,36 @@ document.addEventListener("DOMContentLoaded", () => {
 
         chrome.storage.local.set({ lastProfile: profile });
         setStatus("captureStatus", `Abrindo perfil @${profile}...`, "info");
+        _stopRequested = false;
+        document.getElementById("startCapture").disabled = true;
+        document.getElementById("stopCapture").style.display = "inline-flex";
 
         chrome.windows.create({
           url: `https://www.instagram.com/${profile}/`,
-          state: "minimized",
           focused: false,
+          width: 1200,
+          height: 800,
         }, (win) => {
+          if (win?.id) chrome.windows.update(win.id, { state: "minimized" });
           const tab = win?.tabs?.[0];
           if (!tab?.id) {
-            setStatus("captureStatus", "Não foi possível abrir a aba do Instagram.", "err"); return;
+            setStatus("captureStatus", "Não foi possível abrir a aba do Instagram.", "err");
+            document.getElementById("startCapture").disabled = false;
+            document.getElementById("stopCapture").style.display = "none";
+            return;
           }
           runPhase1(tab.id, profile, startIndex, limit, tenantId, key, profiles, p);
         });
       }
     );
+  });
+
+  /* ── Parar captura ── */
+  document.getElementById("stopCapture").addEventListener("click", () => {
+    _stopRequested = true;
+    setStatus("captureStatus", "Parando após o perfil atual...", "info");
+    document.getElementById("stopCapture").style.display = "none";
+    document.getElementById("startCapture").disabled = false;
   });
 
   /* ── Enviar para SaaS — SOMENTE leads com telefone ── */
