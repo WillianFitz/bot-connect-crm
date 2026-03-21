@@ -25,12 +25,14 @@ function copyExtension(name, files) {
 copyExtension("instagram", [
   "manifest.json", "background.js", "content-script.js",
   "dashboard.html", "dashboard.js", "popup.html", "popup.js", "injected.js",
+  "icon16.png", "icon48.png", "icon128.png",
 ]);
 
 // Google Maps extractor
 copyExtension("gmaps", [
   "manifest.json", "background.js", "content-script.js",
   "dashboard.html", "dashboard.js", "popup.html", "popup.js",
+  "icon16.png", "icon48.png", "icon128.png",
 ]);
 
 console.log("copy-extension: done.");
