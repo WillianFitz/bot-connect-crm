@@ -3468,6 +3468,60 @@ async function processFunnelExecutions(env: Env, tenantId: string): Promise<void
   }
 }
 
+// ─── Proteções para push-leads das extensões ─────────────────────────────────
+const PUSH_MAX_LEADS_PER_REQUEST = 500;   // máx. leads por POST
+const PUSH_MAX_LEADS_PER_DAY     = 5_000; // máx. leads inseridos/dia por tenant
+const PUSH_MAX_BODY_KB           = 512;   // máx. tamanho do body em KB
+
+/** Rejeita telefone claramente inválido (letras, muito curto, muito longo). */
+function isPhonePlausible(phone: string): boolean {
+  const cleaned = phone.replace(/[\s\-\.\(\)\+]/g, "");
+  return /^\d{7,15}$/.test(cleaned);
+}
+
+/** Retorna Response de erro se algum limite for violado, null se tudo ok. */
+async function guardExtensionPush(
+  request: Request,
+  env: Env,
+  tenantId: string,
+  leads: unknown[],
+): Promise<Response | null> {
+  // 1. Tamanho do body (Content-Length header — rejeita payloads gigantes antes de processar)
+  const cl = parseInt(request.headers.get("content-length") || "0", 10);
+  if (cl > PUSH_MAX_BODY_KB * 1024) {
+    return json(
+      { error: `Payload muito grande. Máximo ${PUSH_MAX_BODY_KB}KB por requisição.` },
+      { status: 413 },
+    );
+  }
+
+  // 2. Quantidade de leads por requisição
+  if (leads.length > PUSH_MAX_LEADS_PER_REQUEST) {
+    return json(
+      { error: `Máximo de ${PUSH_MAX_LEADS_PER_REQUEST} leads por requisição. Divida em lotes menores.` },
+      { status: 400 },
+    );
+  }
+
+  // 3. Limite diário por tenant (evita abuso contínuo mesmo com token válido)
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const countRow = await env.DB.prepare(
+    "SELECT COUNT(*) as cnt FROM leads WHERE tenant_id = ? AND DATE(created_at) = ?",
+  )
+    .bind(tenantId, today)
+    .first<{ cnt: number }>();
+
+  const dailyCount = countRow?.cnt ?? 0;
+  if (dailyCount >= PUSH_MAX_LEADS_PER_DAY) {
+    return json(
+      { error: `Limite diário de ${PUSH_MAX_LEADS_PER_DAY.toLocaleString("pt-BR")} leads atingido. Aguarde até amanhã.` },
+      { status: 429 },
+    );
+  }
+
+  return null; // OK — pode prosseguir
+}
+
 async function handleInstagramTools(request: Request, env: Env, method: string, url: URL) {
   const tenantId = await getTenantId(request, env);
   await ensureTenant(env, tenantId);
@@ -3632,6 +3686,9 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
       return json({ error: "Leads são obrigatórios" }, { status: 400 });
     }
 
+    const guard = await guardExtensionPush(request, env, tenantId, body.leads);
+    if (guard) return guard;
+
     await ensureTenant(env, fromExtractorTenant);
 
     // Se não veio jobId, criamos um automaticamente
@@ -3653,6 +3710,7 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
       const company = lead?.company != null ? String(lead.company) : "";
       const phone = lead?.phone != null ? String(lead.phone) : "";
       if (!company.trim() || !phone.trim()) continue;
+      if (phone && !isPhonePlausible(phone)) continue; // rejeita telefone inválido
       await env.DB.prepare(
         "INSERT INTO leads (tenant_id, company, phone, folder_id) VALUES (?, ?, ?, NULL)",
       )
@@ -3729,6 +3787,9 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
       return json({ error: "Leads são obrigatórios" }, { status: 400 });
     }
 
+    const guardGmaps = await guardExtensionPush(request, env, tenantId, body.leads);
+    if (guardGmaps) return guardGmaps;
+
     await ensureTenant(env, tenantId);
 
     const leads = body.leads;
@@ -3738,6 +3799,7 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
       const company = lead?.company != null ? String(lead.company).trim() : "";
       const phone = lead?.phone != null ? String(lead.phone).trim() : "";
       if (!company && !phone) continue;
+      if (phone && !isPhonePlausible(phone)) continue; // rejeita telefone inválido
 
       // Resolve folder_id pelo nome (se informado)
       let folderId: number | null = null;
@@ -3881,6 +3943,9 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
       return json({ error: "Leads são obrigatórios" }, { status: 400 });
     }
 
+    const guardWa = await guardExtensionPush(request, env, tenantId, body.leads);
+    if (guardWa) return guardWa;
+
     await ensureTenant(env, tenantId);
 
     let inserted = 0;
@@ -3888,6 +3953,7 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
       const company = lead?.company != null ? String(lead.company).trim() : "";
       const phone   = lead?.phone   != null ? String(lead.phone).trim()   : "";
       if (!company && !phone) continue;
+      if (phone && !isPhonePlausible(phone)) continue; // rejeita telefone inválido
 
       let folderId: number | null = null;
       const folderName = lead?.folder_name != null
