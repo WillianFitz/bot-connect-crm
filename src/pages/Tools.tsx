@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Instagram, MapPin, FileText, Users, Download } from "lucide-react";
+import { Loader2, Instagram, MapPin, FileText, MessageCircle, Download } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 function StatusBadge({ status }: { status: string }) {
@@ -48,6 +48,19 @@ const EXTENSION_FILES = [
   "icon128.png",
 ];
 
+const WHATSAPP_EXTENSION_FILES = [
+  "manifest.json",
+  "background.js",
+  "content-script.js",
+  "dashboard.html",
+  "dashboard.js",
+  "popup.html",
+  "popup.js",
+  "icon16.png",
+  "icon48.png",
+  "icon128.png",
+];
+
 const GMAPS_EXTENSION_FILES = [
   "manifest.json",
   "background.js",
@@ -66,6 +79,7 @@ export default function Tools() {
   const queryClient = useQueryClient();
   const [downloadExtensionPending, setDownloadExtensionPending] = useState(false);
   const [downloadGmapsPending, setDownloadGmapsPending] = useState(false);
+  const [downloadWhatsappPending, setDownloadWhatsappPending] = useState(false);
   const tenantId =
     (typeof window !== "undefined" &&
       window.localStorage.getItem("tenant_id")) ||
@@ -84,6 +98,11 @@ export default function Tools() {
   const gmapsConfigQuery = useQuery({
     queryKey: ["gmapsConfig"],
     queryFn: () => api.getGmapsConfig(),
+  });
+
+  const whatsappConfigQuery = useQuery({
+    queryKey: ["whatsappConfig"],
+    queryFn: () => api.getWhatsappConfig(),
   });
 
   async function handleDownloadExtension() {
@@ -198,6 +217,47 @@ export default function Tools() {
     }
   }
 
+  async function handleDownloadWhatsappExtension() {
+    const tid = tenantId;
+    const token = whatsappConfigQuery.data?.extensionToken;
+    if (!tid || !token) {
+      toast({
+        title: "Não foi possível gerar a extensão",
+        description: "Faça login e garanta que o Token está disponível. Recarregue a página.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const apiBase =
+      (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ||
+      window.location.origin.replace(/\/$/, "");
+    const baseWithoutApi = apiBase.replace(/\/api\/?$/, "") || apiBase;
+    const webhookUrl = `${baseWithoutApi}/api/tools/whatsapp/push-leads`;
+    const frontBase = window.location.origin.replace(/\/$/, "");
+    setDownloadWhatsappPending(true);
+    try {
+      const zip = new JSZip();
+      zip.file("config.json", JSON.stringify({ tenantId: String(tid), extensionToken: String(token), webhookUrl }));
+      for (const name of WHATSAPP_EXTENSION_FILES) {
+        const res = await fetch(`${frontBase}/extensions/whatsapp/${name}`);
+        if (res.ok) { const blob = await res.blob(); zip.file(name, blob); }
+      }
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = "whatsapp-extractor.zip"; a.click();
+      URL.revokeObjectURL(url);
+      toast({
+        title: "Extensão baixada",
+        description: "Descompacte o ZIP e carregue no Chrome (Extensões → Modo desenvolvedor → Carregar sem compactação).",
+      });
+    } catch (e) {
+      toast({ title: "Erro ao gerar extensão", description: (e as Error)?.message || "Tente novamente.", variant: "destructive" });
+    } finally {
+      setDownloadWhatsappPending(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -221,13 +281,9 @@ export default function Tools() {
             <FileText className="h-4 w-4" />
             Extrator CNPJ (em breve)
           </TabsTrigger>
-          <TabsTrigger
-            value="whatsapp-groups"
-            className="flex items-center gap-2"
-            disabled
-          >
-            <Users className="h-4 w-4" />
-            Grupos WhatsApp (em breve)
+          <TabsTrigger value="whatsapp-groups" className="flex items-center gap-2">
+            <MessageCircle className="h-4 w-4" />
+            Extrator WhatsApp
           </TabsTrigger>
         </TabsList>
 
@@ -551,6 +607,128 @@ export default function Tools() {
                 <div className="space-y-1">
                   <p className="font-medium text-foreground">5. Envie para o LeadFlowAI</p>
                   <p className="text-xs">Clique em "Enviar leads com telefone" para importar os resultados para sua base de leads.</p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="whatsapp-groups">
+          <div className="grid gap-6 md:grid-cols-2 w-full">
+            <Card>
+              <CardHeader>
+                <CardTitle>Extrator WhatsApp</CardTitle>
+                <CardDescription>
+                  Extraia participantes de grupos do WhatsApp Web, colete números de telefone
+                  automaticamente e envie para sua base de leads.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Button
+                    type="button"
+                    onClick={handleDownloadWhatsappExtension}
+                    disabled={downloadWhatsappPending || !tenantId || !whatsappConfigQuery.data?.extensionToken}
+                    className="w-full"
+                  >
+                    {downloadWhatsappPending ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Download className="mr-2 h-4 w-4" />
+                    )}
+                    Baixar extensão (já configurada para sua conta)
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    Descompacte o ZIP e carregue no Chrome (Extensões → Modo desenvolvedor → Carregar sem compactação).
+                    A extensão já vem com seu ID e Token configurados.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-medium">ID da Conta</label>
+                  <div className="flex gap-2">
+                    <Input readOnly value={tenantId || ""} className="text-xs" />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={() => { if (tenantId) { navigator.clipboard.writeText(tenantId); toast({ title: "ID da Conta copiado" }); } }}
+                    >
+                      <span className="text-xs">Copiar</span>
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-medium">Token da extensão</label>
+                  <div className="flex gap-2">
+                    <Input readOnly value={whatsappConfigQuery.data?.extensionToken || ""} className="text-xs" />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={() => {
+                        if (whatsappConfigQuery.data?.extensionToken) {
+                          navigator.clipboard.writeText(whatsappConfigQuery.data.extensionToken);
+                          toast({ title: "Token copiado" });
+                        }
+                      }}
+                    >
+                      <span className="text-xs">Copiar</span>
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-medium">URL do Webhook</label>
+                  <div className="flex gap-2">
+                    <Input
+                      readOnly
+                      value={`${window.location.origin.replace(/\/$/, "")}/api/tools/whatsapp/push-leads`}
+                      className="text-xs"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={() => {
+                        const url = `${window.location.origin.replace(/\/$/, "")}/api/tools/whatsapp/push-leads`;
+                        navigator.clipboard.writeText(url);
+                        toast({ title: "Webhook copiado" });
+                      }}
+                    >
+                      <span className="text-xs">Copiar</span>
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Como usar</CardTitle>
+                <CardDescription>Passo a passo para extrair leads de grupos do WhatsApp</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm text-muted-foreground">
+                <div className="space-y-1">
+                  <p className="font-medium text-foreground">1. Baixe e instale a extensão</p>
+                  <p className="text-xs">Clique em "Baixar extensão", descompacte e carregue no Chrome (Extensões → Modo desenvolvedor → Carregar sem compactação).</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="font-medium text-foreground">2. Abra o WhatsApp Web</p>
+                  <p className="text-xs">Acesse web.whatsapp.com e entre no grupo desejado.</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="font-medium text-foreground">3. Abra as Informações do grupo</p>
+                  <p className="text-xs">Clique no nome do grupo no topo da conversa para abrir o painel de informações com a lista de participantes.</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="font-medium text-foreground">4. Abra o Dashboard da extensão</p>
+                  <p className="text-xs">Clique no ícone da extensão no Chrome e em "Abrir Dashboard". Defina uma pasta (opcional) e clique em "Iniciar extração".</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="font-medium text-foreground">5. Envie para o LeadFlowAI</p>
+                  <p className="text-xs">Clique em "Enviar leads com telefone" para importar os participantes com número para sua base de leads.</p>
                 </div>
               </CardContent>
             </Card>
