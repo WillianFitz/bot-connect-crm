@@ -287,6 +287,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (data.extensionToken) document.getElementById("token").value = data.extensionToken;
         if (data.webhookUrl)     document.getElementById("webhookUrl").value = data.webhookUrl;
         if (data.lastProfile)    document.getElementById("profile").value = data.lastProfile;
+        if (data.lastFolder)     document.getElementById("folder").value  = data.lastFolder;
         if (data.preConfigured) {
           const el = document.getElementById("tenantId");
           if (el) { el.readOnly = true; el.title = "Pré-configurado pelo painel (somente leitura)."; }
@@ -354,7 +355,8 @@ document.addEventListener("DOMContentLoaded", () => {
         const p          = profiles[key] || { usernames: [], lastIndex: 0, totalCaptured: 0, scanIndex: 0, leads: [] };
         const startIndex = p.lastIndex || 0;
 
-        chrome.storage.local.set({ lastProfile: profile });
+        const folder = document.getElementById("folder").value.trim();
+        chrome.storage.local.set({ lastProfile: profile, lastFolder: folder });
         setStatus("captureStatus", `Abrindo perfil @${profile}...`, "info");
         _stopRequested = false;
         document.getElementById("startCapture").disabled = true;
@@ -421,6 +423,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         setStatus("captureStatus", `Enviando ${leadsComTelefone.length} leads com telefone...`, "info");
 
+        const folder = document.getElementById("folder").value.trim();
         const payload = leadsComTelefone.map(l => ({
           company: l.name || l.username,
           phone:   l.phone.trim(),
@@ -434,7 +437,7 @@ document.addEventListener("DOMContentLoaded", () => {
               "x-tenant-id":       tenantId,
               "x-extension-token": extensionToken,
             },
-            body: JSON.stringify({ leads: payload, done: false }),
+            body: JSON.stringify({ leads: payload, folder: folder || undefined, done: false }),
           });
 
           if (!res.ok) {
@@ -493,7 +496,7 @@ function renderProfilesTable(profiles) {
 
   if (!entries.length) {
     body.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:20px">Nenhum dado ainda.</td></tr>';
-    document.getElementById("summary").textContent = "Nenhuma captura realizada ainda.";
+    document.getElementById("summary").textContent = "Nenhuma extração realizada ainda.";
     return;
   }
 
