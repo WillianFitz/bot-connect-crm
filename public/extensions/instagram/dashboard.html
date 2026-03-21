@@ -5,270 +5,187 @@
     <title>Dashboard - Extrator Instagram</title>
     <style>
       :root {
-        --bg: #09090b;
-        --bg-2: #111113;
-        --bg-3: #18181b;
-        --bg-4: #1e1e22;
-        --border: rgba(255,255,255,0.07);
-        --border-bright: rgba(255,255,255,0.13);
-        --accent: #6366f1;
-        --accent-2: #818cf8;
-        --accent-glow: rgba(99,102,241,0.25);
-        --green: #22c55e;
-        --green-dim: rgba(34,197,94,0.12);
-        --red: #f87171;
-        --red-dim: rgba(248,113,113,0.12);
-        --text: #e4e4e7;
-        --text-2: #a1a1aa;
-        --text-3: #52525b;
-        --radius: 12px;
-        --radius-sm: 8px;
+        --bg: #09090b; --bg-2: #111113; --bg-3: #18181b; --bg-4: #1e1e22;
+        --border: rgba(255,255,255,0.07); --border-bright: rgba(255,255,255,0.13);
+        --accent: #22c55e; --accent-2: #4ade80; --accent-glow: rgba(34,197,94,0.2);
+        --green: #22c55e; --green-dim: rgba(34,197,94,0.12);
+        --red: #f87171; --red-dim: rgba(248,113,113,0.12);
+        --text: #e4e4e7; --text-2: #a1a1aa; --text-3: #52525b;
+        --radius: 12px; --radius-sm: 8px;
       }
       *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
       body {
         font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
-        background: var(--bg);
-        color: var(--text);
-        min-height: 100vh;
-        display: flex;
-        font-size: 13px;
-        line-height: 1.5;
+        background: var(--bg); color: var(--text);
+        min-height: 100vh; display: flex; font-size: 13px; line-height: 1.5;
       }
-
       .shell { display: flex; width: 100%; min-height: 100vh; }
 
       /* Sidebar */
       .sidebar {
-        width: 220px; flex-shrink: 0;
-        background: var(--bg-2);
+        width: 220px; flex-shrink: 0; background: var(--bg-2);
         border-right: 1px solid var(--border);
-        display: flex; flex-direction: column;
-        padding: 0 10px 20px;
+        display: flex; flex-direction: column; padding: 0 10px 20px;
       }
       .logo {
         display: flex; align-items: center; gap: 10px;
-        padding: 20px 8px 18px;
-        border-bottom: 1px solid var(--border);
-        margin-bottom: 10px;
+        padding: 18px 8px 14px; border-bottom: 1px solid var(--border); margin-bottom: 12px;
       }
-      .logo-icon { flex-shrink: 0; }
-      .logo-name { font-size: 13px; font-weight: 600; }
-      .logo-sub  { font-size: 10px; color: var(--text-3); margin-top: 1px; }
-
+      .logo-text { font-size: 13px; font-weight: 700; color: var(--text); line-height: 1.2; }
+      .logo-sub { font-size: 10px; color: var(--text-3); }
       .nav-item {
-        display: flex; align-items: center; gap: 9px;
-        padding: 8px 10px; border-radius: var(--radius-sm);
-        border: none; background: transparent;
-        color: var(--text-2); font-size: 12px;
-        cursor: pointer; text-align: left; width: 100%;
-        transition: background 0.15s, color 0.15s;
+        display: flex; align-items: center; gap: 9px; padding: 8px 10px;
+        border-radius: var(--radius-sm); cursor: pointer; color: var(--text-2);
+        font-size: 12px; font-weight: 500; transition: all .15s; border: none;
+        background: none; width: 100%; text-align: left; margin-bottom: 2px;
       }
-      .nav-item:hover { background: var(--bg-4); color: var(--text); }
-      .nav-item.active { background: rgba(99,102,241,0.15); color: var(--accent-2); font-weight: 600; }
+      .nav-item:hover { background: var(--bg-3); color: var(--text); }
+      .nav-item.active { background: var(--accent-glow); color: var(--accent); }
       .nav-icon { font-size: 14px; width: 18px; text-align: center; }
 
-      .sidebar-footer {
-        margin-top: auto; padding: 14px 10px 0;
-        border-top: 1px solid var(--border);
-        font-size: 10px; color: var(--text-3); line-height: 1.7;
-      }
-      .sidebar-footer b { color: var(--text-2); }
-
       /* Main */
-      .main { flex: 1; display: flex; flex-direction: column; background: var(--bg); }
-
+      .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
       .topbar {
+        padding: 16px 24px; border-bottom: 1px solid var(--border);
         display: flex; align-items: center; justify-content: space-between;
-        padding: 15px 28px;
-        border-bottom: 1px solid var(--border);
-        background: var(--bg-2);
       }
-      .topbar-title { font-size: 15px; font-weight: 600; }
-      .topbar-sub   { font-size: 11px; color: var(--text-3); margin-top: 2px; }
-      .badge {
-        font-size: 10px; padding: 3px 9px; border-radius: 999px;
-        background: rgba(99,102,241,0.15); color: var(--accent-2);
-        border: 1px solid rgba(99,102,241,0.3); font-weight: 500;
-      }
+      .topbar h2 { font-size: 16px; font-weight: 700; }
+      .content { padding: 24px; flex: 1; overflow-y: auto; }
 
-      .content { padding: 22px 28px; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
-
-      .section { display: none; flex-direction: column; gap: 16px; }
-      .section.active { display: flex; }
+      /* Sections */
+      .section { display: none; }
+      .section.active { display: block; }
 
       /* Cards */
       .card {
         background: var(--bg-2); border: 1px solid var(--border);
-        border-radius: var(--radius); padding: 20px 22px;
+        border-radius: var(--radius); padding: 20px; margin-bottom: 16px;
       }
-      .card-title { font-size: 13px; font-weight: 600; margin-bottom: 3px; }
-      .card-sub   { font-size: 11px; color: var(--text-3); margin-bottom: 16px; }
+      .card-title {
+        font-size: 13px; font-weight: 600; color: var(--text);
+        margin-bottom: 14px; display: flex; align-items: center; gap: 8px;
+      }
+      .card-title-icon { font-size: 15px; }
 
       /* Stats */
-      .stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-      .stat {
-        background: var(--bg-2); border: 1px solid var(--border);
-        border-radius: var(--radius); padding: 16px 18px;
+      .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
+      .stat-card {
+        background: var(--bg-3); border: 1px solid var(--border);
+        border-radius: var(--radius-sm); padding: 14px 16px;
       }
-      .stat-emoji { font-size: 18px; margin-bottom: 8px; }
-      .stat-value { font-size: 24px; font-weight: 700; letter-spacing: -0.5px; }
-      .stat-label { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+      .stat-label { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 4px; }
+      .stat-value { font-size: 22px; font-weight: 700; color: var(--text); }
+
+      /* Forms */
+      .field { margin-bottom: 12px; }
+      .field label { display: block; font-size: 11px; font-weight: 600; color: var(--text-2); margin-bottom: 5px; text-transform: uppercase; letter-spacing: .04em; }
+      .field input, .field textarea {
+        width: 100%; background: var(--bg-3); border: 1px solid var(--border);
+        border-radius: var(--radius-sm); padding: 8px 10px; color: var(--text);
+        font-size: 12px; outline: none; transition: border .15s; font-family: inherit;
+      }
+      .field input:focus, .field textarea:focus { border-color: var(--accent); }
+      .field input[readonly] { opacity: .5; cursor: not-allowed; }
 
       /* Grid */
       .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
-      /* Fields */
-      .field { display: flex; flex-direction: column; gap: 5px; }
-      label  { font-size: 11px; font-weight: 500; color: var(--text-2); }
-      input[type=text], input[type=number] {
-        background: var(--bg-3); border: 1px solid var(--border-bright);
-        border-radius: var(--radius-sm); color: var(--text);
-        font-size: 12px; padding: 8px 10px; outline: none; width: 100%;
-        transition: border-color 0.15s, box-shadow 0.15s;
-      }
-      input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
-      input::placeholder { color: var(--text-3); }
-
       /* Buttons */
       .btn {
         display: inline-flex; align-items: center; gap: 6px;
-        padding: 8px 16px; border-radius: 999px;
-        border: none; font-size: 12px; font-weight: 500;
-        cursor: pointer; transition: opacity 0.15s, transform 0.1s;
-        white-space: nowrap;
+        padding: 8px 14px; border-radius: var(--radius-sm); font-size: 12px;
+        font-weight: 600; cursor: pointer; border: none; transition: all .15s;
+        font-family: inherit;
       }
-      .btn:active { transform: scale(0.97); }
-      .btn-primary {
-        background: linear-gradient(135deg, #6366f1, #7c3aed);
-        color: #fff; box-shadow: 0 2px 14px rgba(99,102,241,0.3);
-      }
-      .btn-primary:hover { opacity: 0.88; }
-      .btn-green {
-        background: var(--green-dim); color: var(--green);
-        border: 1px solid rgba(34,197,94,0.25);
-      }
-      .btn-green:hover { background: rgba(34,197,94,0.2); }
-      .btn-ghost {
-        background: var(--bg-3); color: var(--text-2);
-        border: 1px solid var(--border-bright);
-      }
-      .btn-ghost:hover { background: var(--bg-4); color: var(--text); }
-      .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+      .btn-primary { background: var(--accent); color: #000; }
+      .btn-primary:hover { background: var(--accent-2); }
+      .btn-primary:disabled { opacity: .45; cursor: not-allowed; }
+      .btn-secondary { background: var(--bg-4); border: 1px solid var(--border-bright); color: var(--text); }
+      .btn-secondary:hover { background: var(--bg-3); }
+      .btn-secondary:disabled { opacity: .45; cursor: not-allowed; }
+      .btn-danger { background: var(--red-dim); border: 1px solid rgba(248,113,113,0.25); color: var(--red); }
+      .btn-danger:hover { background: rgba(248,113,113,0.2); }
+      .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
 
       /* Progress */
-      .progress-wrap {
-        background: var(--bg-2); border: 1px solid var(--border);
-        border-radius: var(--radius); padding: 14px 18px;
-        display: flex; flex-direction: column; gap: 8px;
-      }
-      .progress-track { background: var(--bg-4); border-radius: 999px; height: 4px; overflow: hidden; }
-      .progress-fill {
-        height: 4px; border-radius: 999px;
-        background: linear-gradient(90deg, var(--accent), #a855f7);
-        width: 0%; transition: width 0.4s ease;
-      }
-      .progress-text { font-size: 11px; color: var(--text-2); }
+      .progress-block { margin-top: 14px; display: none; flex-direction: column; gap: 6px; }
+      .progress-block.show { display: flex; }
+      .progress-label { font-size: 11px; color: var(--text-2); }
+      .progress-bar-bg { height: 4px; background: var(--bg-4); border-radius: 99px; overflow: hidden; }
+      .progress-bar { height: 100%; background: var(--accent); border-radius: 99px; transition: width .3s; width: 0%; }
 
-      /* Status */
-      .status-msg { font-size: 11px; padding: 9px 13px; border-radius: var(--radius-sm); display: none; }
+      /* Status messages */
+      .status-msg { font-size: 11px; padding: 8px 12px; border-radius: var(--radius-sm); margin-top: 10px; display: none; }
       .status-msg.show { display: block; }
-      .s-ok   { background: var(--green-dim); color: var(--green); }
-      .s-err  { background: var(--red-dim); color: var(--red); }
-      .s-info { background: rgba(99,102,241,0.1); color: var(--accent-2); }
-
-      /* Hint */
-      .hint {
-        background: rgba(99,102,241,0.06); border: 1px solid rgba(99,102,241,0.15);
-        border-radius: var(--radius-sm); padding: 12px 14px;
-        font-size: 11px; color: var(--text-2); line-height: 1.7;
-      }
-      .hint b { color: var(--accent-2); }
+      .status-msg.s-ok { background: var(--green-dim); color: var(--green); border: 1px solid rgba(34,197,94,0.2); }
+      .status-msg.s-err { background: var(--red-dim); color: var(--red); border: 1px solid rgba(248,113,113,0.2); }
+      .status-msg.s-info { background: var(--bg-4); color: var(--text-2); border: 1px solid var(--border-bright); }
 
       /* Table */
-      .table-wrap { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+      .table-wrap { overflow-x: auto; }
       table { width: 100%; border-collapse: collapse; font-size: 12px; }
-      th {
-        background: var(--bg-3); color: var(--text-3);
-        font-weight: 500; font-size: 11px;
-        padding: 9px 13px; text-align: left;
-        border-bottom: 1px solid var(--border);
-      }
-      td { padding: 8px 13px; border-bottom: 1px solid var(--border); }
-      tr:last-child td { border-bottom: none; }
+      th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+      th { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); font-weight: 600; background: var(--bg-3); }
       tr:hover td { background: rgba(255,255,255,0.02); }
-
-      .chip {
-        display: inline-flex; align-items: center; gap: 4px;
-        font-size: 10px; padding: 2px 8px; border-radius: 999px; font-weight: 500;
-      }
+      .chip { display: inline-block; padding: 2px 7px; border-radius: 99px; font-size: 10px; font-weight: 600; }
       .chip-green { background: var(--green-dim); color: var(--green); }
       .chip-gray  { background: var(--bg-4); color: var(--text-3); }
+
+      #summary { font-size: 11px; color: var(--text-3); margin-bottom: 12px; }
     </style>
   </head>
   <body>
     <div class="shell">
+      <!-- Sidebar -->
       <aside class="sidebar">
         <div class="logo">
-          <div style="width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,hsl(192,91%,52%),hsl(265,80%,60%));display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+          <div style="width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,hsl(192,91%,52%),hsl(265,80%,60%));display:flex;align-items:center;justify-content:center;flex-shrink:0;">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path d="M14 2 L6 14 H11 L10 22 L18 10 H13 Z" fill="hsl(222,47%,6%)"/></svg>
           </div>
           <div>
-            <div class="logo-name">LeadFlow</div>
-            <div class="logo-sub">Instagram Extractor</div>
+            <div class="logo-text">Instagram</div>
+            <div class="logo-sub">LeadFlowAI Extractor</div>
           </div>
         </div>
-
         <button class="nav-item active" data-section="capture">
           <span class="nav-icon">⚡</span> Captura
+        </button>
+        <button class="nav-item" data-section="dashboard">
+          <span class="nav-icon">📊</span> Resultados
         </button>
         <button class="nav-item" data-section="config">
           <span class="nav-icon">⚙️</span> Configuração
         </button>
-        <button class="nav-item" data-section="dashboard">
-          <span class="nav-icon">📊</span> Dashboard
-        </button>
-
-        <div class="sidebar-footer">
-          <b>Dica:</b> faça login no Instagram Web antes de iniciar.
-          Use rodadas de 100–500 para evitar bloqueios.
-        </div>
       </aside>
 
-      <main class="main">
+      <!-- Main -->
+      <div class="main">
         <div class="topbar">
-          <div>
-            <div class="topbar-title">Extrator de Seguidores</div>
-            <div class="topbar-sub">Capture bios e envie apenas leads com telefone para o SaaS</div>
-          </div>
-          <span class="badge">Beta</span>
+          <h2 id="topbarTitle">Captura de Leads</h2>
         </div>
 
         <div class="content">
 
-          <!-- CAPTURA -->
-          <section id="section-capture" class="section active">
-            <div class="stats-row">
-              <div class="stat">
-                <div class="stat-emoji">👥</div>
+          <!-- ── Captura ── -->
+          <div id="section-capture" class="section active">
+            <div class="stats-grid">
+              <div class="stat-card">
+                <div class="stat-label">Usernames</div>
                 <div class="stat-value" id="stat-usernames">—</div>
-                <div class="stat-label">Usernames coletados</div>
               </div>
-              <div class="stat">
-                <div class="stat-emoji">🔍</div>
-                <div class="stat-value" id="stat-scanned">—</div>
+              <div class="stat-card">
                 <div class="stat-label">Bios varridas</div>
+                <div class="stat-value" id="stat-scanned">—</div>
               </div>
-              <div class="stat">
-                <div class="stat-emoji">📱</div>
+              <div class="stat-card">
+                <div class="stat-label">Com Telefone</div>
                 <div class="stat-value" id="stat-phones">—</div>
-                <div class="stat-label">Com telefone</div>
               </div>
             </div>
 
             <div class="card">
-              <div class="card-title">Nova rodada</div>
-              <div class="card-sub">Perfil alvo e quantidade de seguidores a capturar nesta rodada.</div>
+              <div class="card-title"><span class="card-title-icon">⚡</span> Nova Rodada</div>
+
               <div class="grid-2">
                 <div class="field">
                   <label>@perfil do Instagram</label>
@@ -279,79 +196,80 @@
                   <input id="limit" type="number" min="1" max="100000" value="100" />
                 </div>
               </div>
+              <p style="font-size:11px;color:var(--text-3);margin-bottom:12px;">
+                💡 A extensão coleta os usernames dos seguidores e varre a bio de cada um em busca de telefone.
+              </p>
+
               <div class="btn-row">
-                <button id="startCapture" class="btn btn-primary">⚡ Iniciar captura</button>
-                <button id="sendToSaaS" class="btn btn-green">📤 Enviar leads c/ telefone</button>
-                <button id="exportCsv" class="btn btn-ghost">⬇ Exportar CSV</button>
+                <button class="btn btn-primary" id="startCapture">⚡ Iniciar captura</button>
               </div>
+
+              <div id="progressBlock" class="progress-block">
+                <div class="progress-label" id="captureProgress">Aguardando...</div>
+                <div class="progress-bar-bg"><div class="progress-bar" id="progressBar"></div></div>
+              </div>
+              <div id="captureStatus" class="status-msg"></div>
             </div>
 
-            <div class="progress-wrap" id="progressBlock" style="display:none">
-              <div class="progress-text" id="captureProgress">Aguardando...</div>
-              <div class="progress-track"><div class="progress-fill" id="progressBar"></div></div>
-            </div>
-
-            <div id="captureStatus" class="status-msg"></div>
-
-            <div class="hint">
-              <b>Fase 1:</b> coleta usernames dos seguidores. &nbsp;
-              <b>Fase 2:</b> varre a bio de cada usuário em busca de telefone. &nbsp;
-              <b>Envio:</b> somente leads com telefone são enviados ao SaaS — os demais são ignorados.
-            </div>
-          </section>
-
-          <!-- CONFIGURAÇÃO -->
-          <section id="section-config" class="section">
             <div class="card">
-              <div class="card-title">Conexão com o SaaS</div>
-              <div class="card-sub">Preencha uma vez — fica salvo no navegador.</div>
-              <div class="grid-2">
-                <div class="field">
-                  <label>Tenant ID</label>
-                  <input id="tenantId" type="text" placeholder="Ex.: 1" />
-                </div>
-                <div class="field">
-                  <label>Token da extensão</label>
-                  <input id="token" type="text" placeholder="Cole o token do painel do SaaS" />
-                </div>
-              </div>
-              <div class="field" style="margin-top:12px">
-                <label>URL do Webhook</label>
-                <input id="webhookUrl" type="text" placeholder="https://seu-worker/api/tools/instagram/push-leads" />
-              </div>
+              <div class="card-title"><span class="card-title-icon">📤</span> Enviar para LeadFlowAI</div>
+              <p style="font-size:11px;color:var(--text-3);margin-bottom:12px;">
+                Envia apenas os leads <strong>com telefone</strong> encontrados na última captura.
+              </p>
               <div class="btn-row">
-                <button id="saveConfig" class="btn btn-primary">💾 Salvar</button>
+                <button class="btn btn-primary" id="sendToSaaS">Enviar leads com telefone</button>
+                <button class="btn btn-secondary" id="exportCsv">Exportar CSV</button>
               </div>
-              <div id="configStatus" class="status-msg" style="margin-top:10px"></div>
+              <div id="sendStatus" class="status-msg"></div>
             </div>
-          </section>
+          </div>
 
-          <!-- DASHBOARD -->
-          <section id="section-dashboard" class="section">
+          <!-- ── Resultados ── -->
+          <div id="section-dashboard" class="section">
             <div class="card">
-              <div class="card-title">Histórico de capturas</div>
-              <div class="card-sub" id="summary">Carregando...</div>
-              <div class="table-wrap" style="margin-top:14px">
+              <div class="card-title"><span class="card-title-icon">📊</span> Histórico de Capturas</div>
+              <div id="summary">Nenhuma captura realizada ainda.</div>
+              <div class="table-wrap">
                 <table>
                   <thead>
                     <tr>
-                      <th>Tenant</th>
                       <th>Perfil</th>
                       <th>Usernames</th>
-                      <th>Com telefone</th>
+                      <th>Com Telefone</th>
                       <th>Bios varridas</th>
                     </tr>
                   </thead>
-                  <tbody id="profilesBody">
-                    <tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:20px">Nenhum dado ainda.</td></tr>
-                  </tbody>
+                  <tbody id="profilesBody"></tbody>
                 </table>
               </div>
             </div>
-          </section>
+          </div>
+
+          <!-- ── Configuração ── -->
+          <div id="section-config" class="section">
+            <div class="card">
+              <div class="card-title"><span class="card-title-icon">⚙️</span> Credenciais LeadFlowAI</div>
+              <div class="field">
+                <label>Tenant ID</label>
+                <input id="tenantId" type="text" placeholder="Ex.: 1" />
+              </div>
+              <div class="field">
+                <label>Token da extensão</label>
+                <input id="token" type="text" placeholder="Cole o token do painel" />
+              </div>
+              <div class="field">
+                <label>URL do Webhook</label>
+                <input id="webhookUrl" type="text" placeholder="https://SEU_WORKER/api/tools/instagram/push-leads" />
+              </div>
+              <div class="btn-row">
+                <button class="btn btn-primary" id="saveConfig">Salvar configuração</button>
+              </div>
+              <div id="configStatus" class="status-msg"></div>
+            </div>
+          </div>
 
         </div>
-      </main>
+      </div>
     </div>
     <script src="dashboard.js"></script>
   </body>
