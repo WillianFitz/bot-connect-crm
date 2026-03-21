@@ -43,6 +43,9 @@ const EXTENSION_FILES = [
   "dashboard.js",
   "popup.html",
   "popup.js",
+  "icon16.png",
+  "icon48.png",
+  "icon128.png",
 ];
 
 const GMAPS_EXTENSION_FILES = [
@@ -53,6 +56,9 @@ const GMAPS_EXTENSION_FILES = [
   "dashboard.js",
   "popup.html",
   "popup.js",
+  "icon16.png",
+  "icon48.png",
+  "icon128.png",
 ];
 
 export default function Tools() {
