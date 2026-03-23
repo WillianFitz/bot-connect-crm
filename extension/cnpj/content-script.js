@@ -1,287 +1,324 @@
 /* ══════════════════════════════════════════════════════════
    Content Script — Extrator CNPJ (portal.casadosdados.com.br)
-   Preenche filtros, clica Pesquisar, scrapa resultados, pagina.
+
+   Fase 1 — Preenche filtros, clica Pesquisar, coleta a lista
+            de CNPJs/links paginando até o limite pedido.
+   Fase 2 — Entra em cada página de empresa e extrai telefone,
+            e-mail, WhatsApp, endereço.
    ══════════════════════════════════════════════════════════ */
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-/* ── Forçar valor em input Vue/Oruga ── */
+/* ── Simula clique real (para Vue/Nuxt) ── */
+function simulateClick(el) {
+  el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+  el.dispatchEvent(new MouseEvent('mouseup',   { bubbles: true, cancelable: true, view: window }));
+  el.dispatchEvent(new MouseEvent('click',     { bubbles: true, cancelable: true, view: window }));
+}
+
+/* ── Força valor em input Vue (setter nativo para o reativo detectar) ── */
 function setNativeValue(el, value) {
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set ||
-                 Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+  const proto  = el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
   if (setter) setter.call(el, value);
   el.dispatchEvent(new Event('input',  { bubbles: true }));
   el.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
-/* ── Verificar se o usuário está logado ── */
+/* ── Verifica login ── */
 function checkLogin() {
-  // Presença de "Minhas Assinaturas" ou ausência do link "Login" indica autenticado
+  const subsLink  = document.querySelector('a[href*="minha-conta"], a[href*="assinatura"]');
   const loginLink = document.querySelector('a[href="/entrar"]');
-  const subsLink  = document.querySelector('a[href="/plataforma/minha-conta/assinatura"]');
-  if (subsLink) return true;
+  if (subsLink)  return true;
   if (loginLink) return false;
-  // fallback: se há menu de "Plataforma" está logado
-  return !!document.querySelector('a[href="/plataforma"]');
+  return !!document.querySelector('.navbar-item[href="/plataforma"]');
 }
 
-/* ── Preenche e dispara a pesquisa ── */
+/* ═══════════════════════════════════════════════════════
+   FASE 1 — Preenche formulário e coleta links
+   ═══════════════════════════════════════════════════════ */
+
+/* ── Seleciona item de taginput/autocomplete ── */
+async function selectTagInputOption(placeholder, value) {
+  const input = document.querySelector(`input[placeholder="${placeholder}"]`);
+  if (!input) return false;
+
+  input.focus();
+  setNativeValue(input, value);
+  await sleep(700);
+
+  // Espera dropdown aparecer
+  const dropdowns = document.querySelectorAll('.dropdown-item[role="option"]');
+  for (const item of dropdowns) {
+    const txt = item.textContent.trim();
+    if (txt.startsWith(value + ' -') || txt.startsWith(value + ' ') || txt === value || txt.toUpperCase().startsWith(value.toUpperCase())) {
+      simulateClick(item);
+      await sleep(400);
+      return true;
+    }
+  }
+  // Tenta pressionar Enter para confirmar
+  input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter', keyCode: 13 }));
+  await sleep(300);
+  return false;
+}
+
 async function fillAndSearch(filters) {
   const { uf, situacao, termo, comTelefone, comEmail, somenteMEI, excluirMEI, somenteMatriz } = filters;
 
-  /* Aguarda a página estar pronta */
-  await sleep(1500);
+  await sleep(2000); // aguarda hidratação Nuxt
 
-  /* ── Busca Textual (opcional) ── */
+  /* ── Busca Textual ── */
   if (termo) {
-    const termoInputs = document.querySelectorAll('input[placeholder="Digite o texto e aperte enter"]');
-    if (termoInputs.length) {
-      const inp = termoInputs[0];
+    const inputs = document.querySelectorAll('input[placeholder*="texto"][placeholder*="enter"], input[placeholder*="Digite"]');
+    if (inputs.length) {
+      const inp = inputs[0];
       inp.focus();
       setNativeValue(inp, termo);
-      await sleep(300);
-      inp.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter', keyCode: 13 }));
-      inp.dispatchEvent(new KeyboardEvent('keyup',   { bubbles: true, key: 'Enter', keyCode: 13 }));
       await sleep(400);
+      inp.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter', keyCode: 13, which: 13 }));
+      await sleep(500);
     }
   }
 
   /* ── Situação Cadastral ── */
-  if (situacao) {
-    // Desmarca todas primeiro
-    document.querySelectorAll('input[type="checkbox"][value="ativa"], input[type="checkbox"][value="baixada"], input[type="checkbox"][value="inapta"], input[type="checkbox"][value="nula"], input[type="checkbox"][value="suspensa"]')
-      .forEach(cb => { if (cb.checked) cb.click(); });
-    await sleep(200);
-    // Marca a desejada
-    const cb = document.querySelector(`input[type="checkbox"][value="${situacao}"]`);
-    if (cb && !cb.checked) cb.click();
-    await sleep(200);
-  } else {
-    // Marca "Ativa" por padrão se nada especificado
-    const cb = document.querySelector('input[type="checkbox"][value="ativa"]');
-    if (cb && !cb.checked) cb.click();
-    await sleep(200);
-  }
+  // Desmarca todas
+  ['ativa','baixada','inapta','nula','suspensa'].forEach(v => {
+    const cb = document.querySelector(`input[type="checkbox"][value="${v}"]`);
+    if (cb?.checked) simulateClick(cb);
+  });
+  await sleep(200);
+  // Marca a desejada (ou "ativa" por padrão)
+  const sitValue = situacao || 'ativa';
+  const sitCb = document.querySelector(`input[type="checkbox"][value="${sitValue}"]`);
+  if (sitCb && !sitCb.checked) simulateClick(sitCb);
+  await sleep(200);
 
   /* ── Estado (UF) ── */
   if (uf) {
-    // O campo de UF é um taginput com autocomplete
-    const ufInput = document.querySelector('input[placeholder="Selecione o estado"]');
-    if (ufInput) {
-      ufInput.focus();
-      setNativeValue(ufInput, uf);
-      await sleep(600); // aguarda dropdown aparecer
-      // Clica no primeiro item do dropdown que contenha a UF
-      const dropdowns = document.querySelectorAll('.dropdown-content .dropdown-item');
-      for (const item of dropdowns) {
-        if (item.textContent.trim().startsWith(uf + ' -') || item.textContent.trim().startsWith(uf)) {
-          item.click();
-          await sleep(300);
-          break;
-        }
-      }
-    }
+    await selectTagInputOption('Selecione o estado', uf);
   }
 
-  /* ── Switches (com telefone, com email, MEI, etc.) ── */
-  // Ativa "Com contato de telefone"
-  if (comTelefone) await toggleSwitch('Com contato de telefone', true);
-  // Ativa "Com e-mail"
-  if (comEmail)    await toggleSwitch('Com e-mail', true);
-  // Somente MEI
-  if (somenteMEI)  await toggleSwitch('Somente MEI', true);
-  // Excluir MEI
-  if (excluirMEI)  await toggleSwitch('Excluir MEI', true);
-  // Somente matriz
-  if (somenteMatriz) await toggleSwitch('Somente matriz', true);
+  /* ── Switches ── */
+  if (comTelefone)   await toggleSwitch('telefone',  true);
+  if (comEmail)      await toggleSwitch('e-mail',    true);
+  if (somenteMEI)    await toggleSwitch('Somente MEI', true);
+  if (excluirMEI)    await toggleSwitch('Excluir MEI', true);
+  if (somenteMatriz) await toggleSwitch('matriz',    true);
 
-  /* ── Limite por página (100) ── */
-  const limitSelects = document.querySelectorAll('select');
-  for (const sel of limitSelects) {
-    const options = Array.from(sel.options).map(o => o.value);
-    if (options.includes('100')) {
+  /* ── Limite por página → 100 ── */
+  const selects = document.querySelectorAll('select');
+  for (const sel of selects) {
+    if (Array.from(sel.options).some(o => o.value === '100')) {
       setNativeValue(sel, '100');
       break;
     }
   }
-
-  await sleep(400);
+  await sleep(300);
 
   /* ── Clica em Pesquisar ── */
-  const buttons = Array.from(document.querySelectorAll('a.button, button.button'));
-  const searchBtn = buttons.find(b => b.textContent.trim().toLowerCase().includes('pesquisar'));
-  if (!searchBtn) return { ok: false, error: 'Botão Pesquisar não encontrado.' };
-  searchBtn.click();
+  // Tenta múltiplas estratégias
+  let clicked = false;
+
+  // Estratégia 1: <a> com texto "Pesquisar"
+  const allLinks = Array.from(document.querySelectorAll('a.button'));
+  const pesquisarLink = allLinks.find(a => a.textContent.trim().toLowerCase() === 'pesquisar');
+  if (pesquisarLink) { simulateClick(pesquisarLink); clicked = true; }
+
+  // Estratégia 2: qualquer elemento com texto Pesquisar e classe button
+  if (!clicked) {
+    const all = Array.from(document.querySelectorAll('.button, button, a'));
+    const btn = all.find(el => el.textContent.trim().toLowerCase() === 'pesquisar');
+    if (btn) { simulateClick(btn); clicked = true; }
+  }
+
+  if (!clicked) return { ok: false, error: 'Botão Pesquisar não encontrado na página.' };
 
   return { ok: true };
 }
 
-async function toggleSwitch(labelText, enable) {
-  // Procura label de switch que contenha o texto
+async function toggleSwitch(labelKeyword, enable) {
   const labels = Array.from(document.querySelectorAll('label.control-label'));
   for (const label of labels) {
-    if (label.textContent.trim().toLowerCase().includes(labelText.toLowerCase())) {
+    if (label.textContent.toLowerCase().includes(labelKeyword.toLowerCase())) {
       const input = document.getElementById(label.getAttribute('for'));
-      if (!input) break;
+      if (!input) continue;
       const isChecked = input.getAttribute('aria-checked') === 'true' || input.checked;
-      if (enable && !isChecked)  { input.click(); await sleep(200); }
-      if (!enable && isChecked)  { input.click(); await sleep(200); }
+      if (enable !== isChecked) { simulateClick(input); await sleep(200); }
       break;
     }
   }
 }
 
-/* ── Aguarda resultados aparecerem ── */
-async function waitForResults(timeoutMs = 15000) {
+/* ── Aguarda resultados aparecerem na página ── */
+async function waitForResults(timeoutMs = 18000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const rows = scrapeResults();
-    if (rows.length > 0) return true;
-    await sleep(500);
+    if (getResultEntries().length > 0) return true;
+    await sleep(600);
   }
-  return false; // timeout
+  return false;
 }
 
-/* ── Scrapa resultados da página atual ── */
-function scrapeResults() {
-  const leads = [];
+/* ── Coleta entradas de resultado (CNPJ + nome + link) ── */
+function getResultEntries() {
+  const entries = [];
 
-  /* Tenta tabela */
-  const rows = document.querySelectorAll('table tbody tr');
-  if (rows.length > 0) {
-    rows.forEach(tr => {
-      const cells = Array.from(tr.querySelectorAll('td'));
-      if (cells.length < 2) return;
-      const texts = cells.map(c => c.textContent.trim());
-      const lead = extractLeadFromCells(texts, tr);
-      if (lead) leads.push(lead);
-    });
-    return leads;
-  }
-
-  /* Tenta cards (.box, .card) */
-  const cards = document.querySelectorAll('.box, .card');
-  cards.forEach(card => {
-    const text = card.textContent;
-    const cnpjMatch = text.match(/\d{2}[\.\-]?\d{3}[\.\-]?\d{3}[\/\.\-]?\d{4}[\-\.]?\d{2}/);
-    if (!cnpjMatch) return;
-    const phone = extractPhone(text);
-    const name  = extractName(card);
-    leads.push({ name, phone, cnpj: cnpjMatch[0].replace(/\D/g, ''), email: extractEmail(text), notes: extractNotes(text) });
+  // Padrão 1: links com CNPJ no href — /empresa/CNPJ ou similar
+  const companyLinks = document.querySelectorAll('a[href*="/empresa/"]');
+  companyLinks.forEach(a => {
+    const href = a.getAttribute('href') || '';
+    const cnpjMatch = href.match(/(\d{14})/);
+    if (cnpjMatch) {
+      const cnpj = cnpjMatch[1];
+      const url  = href.startsWith('http') ? href : `https://portal.casadosdados.com.br${href}`;
+      entries.push({ cnpj, name: a.textContent.trim() || '', url });
+    }
   });
+  if (entries.length > 0) return entries;
 
-  return leads;
-}
+  // Padrão 2: tabela ou lista — procura linhas com padrão de CNPJ
+  const rows = document.querySelectorAll('table tbody tr, .result-item, .columns.is-mobile, .box');
+  rows.forEach(row => {
+    const text = row.textContent;
+    const cnpjMatch = text.match(/(\d{2}[\.\-]?\d{3}[\.\-]?\d{3}[\/\.\-]?\d{4}[\-\.]?\d{2})/);
+    if (!cnpjMatch) return;
+    const cnpj = cnpjMatch[1].replace(/\D/g, '');
 
-function extractLeadFromCells(texts, tr) {
-  let name  = '';
-  let cnpj  = '';
-  let phone = '';
-  let email = '';
-  let uf    = '';
-  let municipio = '';
-  let situacao  = '';
+    // Link dentro da linha
+    const link = row.querySelector('a[href]');
+    const href = link?.getAttribute('href') || '';
+    const url  = href
+      ? (href.startsWith('http') ? href : `https://portal.casadosdados.com.br${href}`)
+      : `https://portal.casadosdados.com.br/empresa/${cnpj}`;
 
-  for (const text of texts) {
-    const t = text.trim();
-    if (!cnpj  && /^\d{2}[\.\-]?\d{3}[\.\-]?\d{3}[\/\.\-]?\d{4}[\-\.]?\d{2}$/.test(t.replace(/\s/g, ''))) {
-      cnpj = t.replace(/\D/g, ''); continue;
+    // Nome da empresa: primeiro texto longo que não seja CNPJ/status
+    const cells = Array.from(row.querySelectorAll('td, .column'));
+    let name = '';
+    for (const c of cells) {
+      const t = c.textContent.trim();
+      if (t.length > 5 && !/^\d{2}[\.\-]/.test(t) && !['ativa','baixada','inapta','nula','suspensa'].includes(t.toLowerCase())) {
+        name = t; break;
+      }
     }
-    if (!phone && /^[\(\d][\d\s\(\)\-\.]{7,14}$/.test(t) && /\d{8,}/.test(t.replace(/\D/g, ''))) {
-      phone = t.replace(/\D/g, ''); continue;
+    if (!name) {
+      // Tenta extrair nome do texto geral depois do CNPJ
+      const afterCnpj = text.replace(cnpjMatch[1], '').trim();
+      name = afterCnpj.split('\n')[0].trim().slice(0, 80);
     }
-    if (!email && /\S+@\S+\.\S+/.test(t)) {
-      email = t.toLowerCase(); continue;
-    }
-    if (!uf && /^[A-Z]{2}$/.test(t) && ['SP','RJ','MG','RS','PR','SC','BA','GO','DF','PE','CE','PA','MA','ES','RO','AM','TO','RN','AL','PB','AC','AP','RR','MS','MT','SE','PI'].includes(t)) {
-      uf = t; continue;
-    }
-    if (!situacao && ['ativa','baixada','inapta','nula','suspensa','cancelada'].includes(t.toLowerCase())) {
-      situacao = t; continue;
-    }
-    // Primeira string longa sem CNPJ/phone é o nome
-    if (!name && t.length > 3 && !/^\d/.test(t)) {
-      name = t;
+
+    entries.push({ cnpj, name, url });
+  });
+  if (entries.length > 0) return entries;
+
+  // Padrão 3: texto puro com padrão "XX.XXX.XXX/XXXX-XX - NOME"
+  const bodyText = document.body.innerHTML;
+  const regex = /(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2})\s*[-–]\s*([A-ZÁÀÃÉÊÓÔÇÕÜ][^\n<]{3,80})/g;
+  let m;
+  while ((m = regex.exec(bodyText)) !== null) {
+    const cnpj = m[1].replace(/\D/g, '');
+    const name = m[2].trim();
+    if (!entries.find(e => e.cnpj === cnpj)) {
+      entries.push({ cnpj, name, url: `https://portal.casadosdados.com.br/empresa/${cnpj}` });
     }
   }
 
-  // Tenta extrair telefone de link tel:
-  const telLink = tr.querySelector('a[href^="tel:"]');
-  if (telLink && !phone) phone = telLink.getAttribute('href').replace('tel:', '').replace(/\D/g, '');
-
-  if (!name && !cnpj && !phone) return null;
-  const notes = [situacao, municipio, uf].filter(Boolean).join(' - ');
-  return { name, phone, cnpj, email, notes };
+  return entries;
 }
 
-function extractPhone(text) {
-  const m = text.match(/\(?\d{2}\)?\s*\d{4,5}[\-\s]?\d{4}/);
-  return m ? m[0].replace(/\D/g, '') : '';
-}
-
-function extractEmail(text) {
-  const m = text.match(/[\w.\-+]+@[\w.\-]+\.\w{2,}/);
-  return m ? m[0].toLowerCase() : '';
-}
-
-function extractName(card) {
-  // Tenta h1/h2/h3/strong/b dentro do card
-  for (const sel of ['h1','h2','h3','strong','b','.title','.subtitle']) {
-    const el = card.querySelector(sel);
-    if (el && el.textContent.trim().length > 2) return el.textContent.trim();
-  }
-  return '';
-}
-
-function extractNotes(text) {
-  const cnae = text.match(/CNAE[:\s]+[\d\.\-\/]+([\w\s]+)?/i);
-  return cnae ? cnae[0].slice(0, 100) : '';
-}
-
-/* ── Conta total de resultados e páginas ── */
+/* ── Info de paginação ── */
 function getPageInfo() {
-  // Tenta encontrar texto como "X resultados encontrados" ou paginação
-  const allText = document.body.innerText;
+  // Total de resultados
+  const bodyText = document.body.innerText;
+  const totalMatch = bodyText.match(/(\d[\d\.,]*)\s*resultado[s]?/i) ||
+                     bodyText.match(/Encontrado[s]?\s+(\d[\d\.,]*)/i);
+  const total = totalMatch ? parseInt(totalMatch[1].replace(/[^\d]/g, ''), 10) : null;
 
-  // Total de registros
-  const totalMatch = allText.match(/(\d[\d\.]*)\s*(empresa[s]?|registro[s]?|resultado[s]?)\s*(encontrado[s]?|disponível[s]?)?/i);
-  const total = totalMatch ? parseInt(totalMatch[1].replace(/\D/g, ''), 10) : null;
-
-  // Paginação
-  const pagination = document.querySelector('[data-oruga="pagination"], .pagination, nav[role="navigation"]');
-  const currentPage = pagination ? getCurrentPage(pagination) : 1;
-  const hasNextPage = !!getNextPageButton();
-
-  return { total, currentPage, hasNextPage };
-}
-
-function getCurrentPage(paginationEl) {
-  const active = paginationEl?.querySelector('[aria-current="page"], .is-current, .pagination-link.is-current');
-  if (active) return parseInt(active.textContent.trim(), 10) || 1;
-  return 1;
+  const hasNext = !!getNextPageButton();
+  return { total, hasNext };
 }
 
 function getNextPageButton() {
-  // Oruga pagination
-  const buttons = Array.from(document.querySelectorAll('button, a'));
-  return buttons.find(b => {
-    const label = b.getAttribute('aria-label') || b.textContent.trim();
-    return /next|próxim|seguinte|>/.test(label.toLowerCase()) && !b.disabled && !b.classList.contains('is-disabled');
+  const pagination = document.querySelector('[data-oruga="pagination"], .pagination');
+  if (!pagination) return null;
+  const btns = Array.from(pagination.querySelectorAll('a, button'));
+  return btns.find(b => {
+    if (b.disabled || b.classList.contains('is-disabled') || b.getAttribute('aria-disabled') === 'true') return false;
+    const label = (b.getAttribute('aria-label') || b.textContent || '').toLowerCase();
+    return label.includes('próxim') || label.includes('next') || label === '>' || label === '»';
   }) || null;
 }
 
-/* ── Vai para próxima página ── */
 async function goNextPage() {
   const btn = getNextPageButton();
-  if (!btn) return { ok: false, hasMore: false };
-  btn.click();
-  await sleep(2000);
-  const appeared = await waitForResults(8000);
-  return { ok: appeared, hasMore: !!getNextPageButton() };
+  if (!btn) return { ok: false };
+  simulateClick(btn);
+  await sleep(2500);
+  const found = await waitForResults(10000);
+  return { ok: found, hasNext: !!getNextPageButton() };
+}
+
+/* ═══════════════════════════════════════════════════════
+   FASE 2 — Extrai detalhes de uma página de empresa
+   ═══════════════════════════════════════════════════════ */
+function extractCompanyDetails() {
+  const text = document.body.innerText;
+  const html = document.body.innerHTML;
+
+  /* ── Telefone / WhatsApp ── */
+  let phone = '';
+
+  // Link tel: ou wa.me
+  const telLink = document.querySelector('a[href^="tel:"]');
+  if (telLink) phone = telLink.getAttribute('href').replace('tel:', '').replace(/\D/g, '');
+
+  const waLink = document.querySelector('a[href*="wa.me/"], a[href*="api.whatsapp.com/send"]');
+  if (waLink && !phone) {
+    const waHref = waLink.getAttribute('href');
+    const waMatch = waHref.match(/(\d{10,13})/);
+    if (waMatch) phone = waMatch[1];
+  }
+
+  // Padrão em texto: (DDD) NNNNN-NNNN
+  if (!phone) {
+    const phoneMatch = text.match(/\((\d{2})\)\s*(\d{4,5})[-\s]?(\d{4})/);
+    if (phoneMatch) phone = phoneMatch[1] + phoneMatch[2] + phoneMatch[3];
+  }
+
+  // Padrão compacto: 11 dígitos começando com DDD
+  if (!phone) {
+    const raw = text.match(/\b(\d{10,11})\b/);
+    if (raw) phone = raw[1];
+  }
+
+  /* ── E-mail ── */
+  const emailMatch = text.match(/[\w.\-+]+@[\w.\-]+\.\w{2,}/);
+  const email = emailMatch ? emailMatch[0].toLowerCase() : '';
+
+  /* ── Nome da empresa ── */
+  const h1 = document.querySelector('h1, h2, .title');
+  const name = h1 ? h1.textContent.trim() : '';
+
+  /* ── Endereço / CEP ── */
+  const cepMatch  = text.match(/\d{5}-\d{3}/);
+  const cep = cepMatch ? cepMatch[0] : '';
+
+  /* ── CNAE ── */
+  const cnaeMatch = text.match(/CNAE[:\s]+([^\n]{5,60})/i);
+  const cnae = cnaeMatch ? cnaeMatch[1].trim().slice(0, 80) : '';
+
+  /* ── Situação ── */
+  const sitMatch = text.match(/\b(Ativa|Baixada|Inapta|Nula|Suspensa)\b/i);
+  const situacao = sitMatch ? sitMatch[1] : '';
+
+  /* ── Monta notes ── */
+  const notes = [cnae, cep ? `CEP: ${cep}` : '', situacao].filter(Boolean).join(' | ');
+
+  return { phone, email, name, notes };
 }
 
 /* ══════════════════════════════════════════════════════════
-   Listener de mensagens do dashboard
+   Listener de mensagens
    ══════════════════════════════════════════════════════════ */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
@@ -291,31 +328,38 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === 'CDADOS_FILL_AND_SEARCH') {
-    fillAndSearch(message.filters).then(result => sendResponse(result));
+    fillAndSearch(message.filters).then(r => sendResponse(r));
     return true;
   }
 
   if (message.type === 'CDADOS_WAIT_RESULTS') {
-    waitForResults(message.timeout || 15000).then(found => {
-      const results = found ? scrapeResults() : [];
+    waitForResults(message.timeout || 18000).then(found => {
+      const entries = found ? getResultEntries() : [];
       const pageInfo = getPageInfo();
-      sendResponse({ ok: found, results, pageInfo });
+      sendResponse({ ok: found, entries, pageInfo });
     });
     return true;
   }
 
   if (message.type === 'CDADOS_SCRAPE') {
-    const results = scrapeResults();
+    const entries = getResultEntries();
     const pageInfo = getPageInfo();
-    sendResponse({ ok: true, results, pageInfo });
+    sendResponse({ ok: true, entries, pageInfo });
     return true;
   }
 
   if (message.type === 'CDADOS_NEXT_PAGE') {
-    goNextPage().then(result => {
-      const results = scrapeResults();
-      sendResponse({ ...result, results });
+    goNextPage().then(r => {
+      const entries = getResultEntries();
+      sendResponse({ ...r, entries });
     });
     return true;
   }
+
+  if (message.type === 'CDADOS_EXTRACT_DETAILS') {
+    const details = extractCompanyDetails();
+    sendResponse({ ok: true, ...details });
+    return true;
+  }
+
 });
