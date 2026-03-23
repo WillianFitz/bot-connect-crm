@@ -49,6 +49,15 @@ function extractFromItems(items) {
   return leads;
 }
 
+/* O painel de info do grupo fica na DIREITA da tela.
+   A lista de conversas fica na ESQUERDA — mesmos seletores, lado errado. */
+const RIGHT_THRESHOLD = () => window.innerWidth * 0.5;
+
+function isOnRightSide(el) {
+  const rect = el.getBoundingClientRect();
+  return rect.left >= RIGHT_THRESHOLD() && rect.width > 50;
+}
+
 function findItems(container) {
   for (const sel of [
     '[data-testid="cell-frame-container"]',
@@ -57,11 +66,14 @@ function findItems(container) {
     '[data-testid*="participant"]',
     '[role="listitem"]',
   ]) {
-    const items = container.querySelectorAll(sel);
-    if (items.length >= 2) return Array.from(items);
+    const items = Array.from(container.querySelectorAll(sel))
+      .filter(isOnRightSide);
+    if (items.length >= 2) return items;
   }
+  // Fallback geométrico — só lado direito
   const all = Array.from(container.querySelectorAll('div'));
   const candidates = all.filter(el => {
+    if (!isOnRightSide(el)) return false;
     const h = el.getBoundingClientRect().height;
     return h >= 40 && h <= 90 && el.querySelectorAll('span[dir="auto"], span[dir="ltr"]').length >= 1;
   });
@@ -69,19 +81,27 @@ function findItems(container) {
 }
 
 function findInfoPanel() {
+  // data-testid específicos (painel de info)
   for (const id of ['contact-info-panel','group-info-drawer','contact-info-drawer',
                     'group-participants-list','participant-list','participant-list-scroll']) {
     const el = document.querySelector(`[data-testid="${id}"]`);
     if (el) return el;
   }
+
+  // Painel rolável no LADO DIREITO da tela
   for (const el of document.querySelectorAll('div')) {
-    if (el.scrollHeight <= el.clientHeight + 30 || el.clientWidth < 150 || el.clientWidth > 550) continue;
-    const s = window.getComputedStyle(el);
+    if (el.scrollHeight <= el.clientHeight + 30 || el.clientWidth < 150 || el.clientWidth > 600) continue;
+    const s    = window.getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
     if (s.overflowY !== 'auto' && s.overflowY !== 'scroll') continue;
+    if (rect.left < RIGHT_THRESHOLD()) continue; // ignora lado esquerdo
     if (findItems(el).length >= 2) return el;
   }
+
+  // Sobe a partir do heading "Participantes" — garante que está na direita
   for (const el of document.querySelectorAll('span, div, p')) {
     if (el.children.length > 0) continue;
+    if (!isOnRightSide(el)) continue;
     const txt = el.textContent.trim().toLowerCase();
     if (txt === 'participantes' || txt === 'participants' ||
         /^\d+\s+participantes?$/.test(txt) || /^\d+\s+members?$/.test(txt)) {
@@ -101,13 +121,6 @@ async function extractParticipants(targetCount, onProgress) {
   const panel = findInfoPanel();
 
   if (!panel) {
-    const docItems = document.querySelectorAll(
-      '[data-testid="cell-frame-container"], [data-testid*="list-item"], [role="listitem"]'
-    );
-    if (docItems.length >= 2) {
-      const leads = extractFromItems(Array.from(docItems));
-      if (leads.length >= 1) return { ok: true, leads };
-    }
     return { ok: false, error: 'Painel de participantes não encontrado. Clique no nome do grupo para abrir as Informações do grupo.' };
   }
 
