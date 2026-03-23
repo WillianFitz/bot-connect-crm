@@ -6,6 +6,13 @@
 /* ── Utilidades ── */
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+function simulateClick(el) {
+  // Dispara eventos de mouse reais para garantir que o React/Vue do WhatsApp Web reaja
+  ['mousedown','mouseup','click'].forEach(type => {
+    el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+  });
+}
+
 function looksLikePhone(text) {
   if (!text) return false;
   const cleaned = text.replace(/[\s\-\.\(\)]/g, '');
@@ -116,22 +123,39 @@ function findInfoPanel() {
   return null;
 }
 
-/* ── Procura botão "Ver tudo" no DOM (lado direito, texto curto) ── */
+/* ── Procura botão "Ver tudo" pelo nó de texto (imune a estrutura) ── */
 function findVerTudoBtn() {
   // data-testid direto
   for (const sel of ['[data-testid="see-all-participants"]','[data-testid*="see-all"]','[data-testid*="view-all"]']) {
     const btn = document.querySelector(sel);
     if (btn && btn.offsetParent) return btn;
   }
-  const terms = ['ver tudo','ver todos','ver mais','view all','view more','show all','show more','see all','see more'];
-  for (const el of document.querySelectorAll('[role="button"], button, span[dir="auto"], div')) {
-    const rect = el.getBoundingClientRect();
-    if (rect.left < window.innerWidth * 0.4) continue;
-    if (!el.offsetParent) continue;
-    // Só elementos folha ou com poucos filhos (para pegar o botão, não o container)
-    if (el.querySelectorAll('*').length > 5) continue;
-    const txt = (el.textContent || '').trim().toLowerCase();
-    if (terms.some(t => txt === t)) return el;
+
+  const terms = ['ver tudo','ver todos','ver mais','view all','view more','see all','see more','show all'];
+
+  // TreeWalker acha nós de texto exatos — não depende de seletores nem nesting
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  let node;
+  while ((node = walker.nextNode())) {
+    const txt = (node.textContent || '').trim().toLowerCase();
+    if (!terms.includes(txt)) continue;
+
+    // Garante que está no lado direito
+    const parent = node.parentElement;
+    if (!parent) continue;
+    const rect = parent.getBoundingClientRect();
+    if (rect.left < window.innerWidth * 0.35) continue;
+    if (!parent.offsetParent) continue;
+
+    // Sobe até achar elemento clicável
+    let el = parent;
+    for (let i = 0; i < 6; i++) {
+      if (!el) break;
+      const role = el.getAttribute('role');
+      if (role === 'button' || el.tagName === 'BUTTON' || el.tagName === 'A') return el;
+      el = el.parentElement;
+    }
+    return parent; // clica no próprio pai do texto se não achar role=button
   }
   return null;
 }
@@ -147,14 +171,73 @@ async function scrollAndClickVerMais(panel) {
       btn.scrollIntoView({ block: 'center' });
       await sleep(200);
       simulateClick(btn);
-      await sleep(1500); // Aguarda a nova tela de participantes carregar
-      return true;
+      return true; // apenas sinaliza que clicou — quem aguarda é waitForParticipantPanel
     }
     panel.scrollTop += 300;
     await sleep(350);
     if (panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 20) break;
   }
   return false;
+}
+
+/* ── Após "Ver tudo", aguarda o novo painel de participantes surgir ── */
+async function waitForParticipantPanel(oldPanel, maxWait = 6000) {
+  const deadline = Date.now() + maxWait;
+  while (Date.now() < deadline) {
+    await sleep(400);
+
+    // Testa data-testids específicos da tela de participantes
+    for (const sel of [
+      '[data-testid="participant-list"]',
+      '[data-testid="group-participants-list"]',
+      '[data-testid="community-participants-list"]',
+      '[data-testid="participants-list"]',
+    ]) {
+      const el = document.querySelector(sel);
+      if (el && el !== oldPanel) return el;
+    }
+
+    // Procura qualquer novo painel rolável no lado direito com participantes
+    const newPanel = findInfoPanel();
+    if (newPanel && newPanel !== oldPanel && findItems(newPanel).length >= 2) {
+      return newPanel;
+    }
+
+    // Tenta também por container que cresceu — mesmo painel, mas agora com + itens
+    if (oldPanel && findItems(oldPanel).length >= 3) return oldPanel;
+  }
+
+  // Fallback: tenta achar container rolável que tenha itens de participante
+  for (const el of document.querySelectorAll('div')) {
+    if (!isOnRightSide(el)) continue;
+    const s = window.getComputedStyle(el);
+    if (s.overflowY !== 'auto' && s.overflowY !== 'scroll') continue;
+    if (el.clientWidth < 150 || el.scrollHeight <= el.clientHeight + 30) continue;
+    if (findItems(el).length >= 2) return el;
+  }
+
+  return oldPanel; // último recurso: mantém painel original
+}
+
+/* ── Rola um painel tentando múltiplos métodos ── */
+async function scrollPanel(panel, amount) {
+  const before = panel.scrollTop;
+  panel.scrollTop += amount;
+  await sleep(50);
+  if (panel.scrollTop !== before) return; // funcionou
+
+  // Tenta scroll() e wheel event como fallback
+  panel.scroll({ top: panel.scrollTop + amount, behavior: 'instant' });
+  panel.dispatchEvent(new WheelEvent('wheel', { deltaY: amount, bubbles: true }));
+  await sleep(50);
+
+  // Último recurso: Arrow Down no elemento focado dentro do painel
+  if (panel.scrollTop === before) {
+    const focusable = panel.querySelector('[tabindex], [role="listitem"], [data-testid*="cell"]');
+    if (focusable) {
+      focusable.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    }
+  }
 }
 
 async function extractParticipants(targetCount, onProgress) {
@@ -166,10 +249,14 @@ async function extractParticipants(targetCount, onProgress) {
   }
 
   // 2. Rola até "Ver tudo" e clica — pode abrir nova tela com todos participantes
-  await scrollAndClickVerMais(panel);
+  const clicked = await scrollAndClickVerMais(panel);
 
-  // 3. Re-acha o painel (pode ser um novo container após clicar "Ver tudo")
-  panel = findInfoPanel() || panel;
+  // 3. Re-acha o painel — aguarda carregamento da nova tela se clicou "Ver tudo"
+  if (clicked) {
+    panel = await waitForParticipantPanel(panel, 6000);
+  } else {
+    panel = findInfoPanel() || panel;
+  }
 
   const seen = new Set();
   const leads = [];
@@ -187,14 +274,8 @@ async function extractParticipants(targetCount, onProgress) {
 
     if (onProgress) onProgress(leads.length);
 
-    // Tenta rolar de múltiplas formas (WhatsApp Web usa virtual scrolling)
-    const before = panel.scrollTop;
-    panel.scrollTop += 600;
-    if (panel.scrollTop === before) {
-      // scrollTop não mudou — tenta scroll() e wheel event
-      panel.scroll({ top: panel.scrollTop + 600, behavior: 'instant' });
-      panel.dispatchEvent(new WheelEvent('wheel', { deltaY: 600, bubbles: true }));
-    }
+    // Rola o painel (WhatsApp Web usa virtual scrolling)
+    await scrollPanel(panel, 600);
     await sleep(600);
 
     // Para se chegou ao fim
