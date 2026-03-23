@@ -116,48 +116,60 @@ function findInfoPanel() {
   return null;
 }
 
-/* ── Clica em "Ver tudo / Ver mais participantes" se existir ── */
-async function tryClickVerMais() {
+/* ── Procura botão "Ver tudo" no DOM (lado direito, texto curto) ── */
+function findVerTudoBtn() {
   // data-testid direto
   for (const sel of ['[data-testid="see-all-participants"]','[data-testid*="see-all"]','[data-testid*="view-all"]']) {
     const btn = document.querySelector(sel);
-    if (btn) { simulateClick(btn); await sleep(1200); return true; }
+    if (btn && btn.offsetParent) return btn;
   }
-
-  // Termos em PT e EN — inclui "Ver tudo" que é o texto real no WhatsApp PT
-  const terms = [
-    'ver tudo', 'ver todos', 'ver mais', 'view all', 'view more', 'show all', 'show more', 'see all', 'see more',
-  ];
-
-  // Busca em toda a metade direita (não só no painel, pois o botão pode estar num container pai)
-  for (const el of document.querySelectorAll('[role="button"], button, span, div')) {
+  const terms = ['ver tudo','ver todos','ver mais','view all','view more','show all','show more','see all','see more'];
+  for (const el of document.querySelectorAll('[role="button"], button, span[dir="auto"], div')) {
     const rect = el.getBoundingClientRect();
-    // Lado direito: left > 40% da largura (um pouco mais permissivo)
     if (rect.left < window.innerWidth * 0.4) continue;
     if (!el.offsetParent) continue;
+    // Só elementos folha ou com poucos filhos (para pegar o botão, não o container)
+    if (el.querySelectorAll('*').length > 5) continue;
     const txt = (el.textContent || '').trim().toLowerCase();
-    if (terms.some(t => txt === t) || txt.includes('participante')) {
-      // Só clica se o texto for curto (botão, não um parágrafo)
-      if (txt.length <= 50) {
-        simulateClick(el);
-        await sleep(1200);
-        return true;
-      }
+    if (terms.some(t => txt === t)) return el;
+  }
+  return null;
+}
+
+/* ── Rola o painel devagar até achar o botão "Ver tudo" e clicar ── */
+async function scrollAndClickVerMais(panel) {
+  panel.scrollTop = 0;
+  await sleep(300);
+
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const btn = findVerTudoBtn();
+    if (btn) {
+      btn.scrollIntoView({ block: 'center' });
+      await sleep(200);
+      simulateClick(btn);
+      await sleep(1500); // Aguarda a nova tela de participantes carregar
+      return true;
     }
+    panel.scrollTop += 300;
+    await sleep(350);
+    if (panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 20) break;
   }
   return false;
 }
 
 async function extractParticipants(targetCount, onProgress) {
   await sleep(600);
-  // Clica em "Ver mais participantes" se aparecer
-  await tryClickVerMais();
-
-  const panel = findInfoPanel();
-
+  // 1. Acha o painel de info do grupo
+  let panel = findInfoPanel();
   if (!panel) {
     return { ok: false, error: 'Painel de participantes não encontrado. Clique no nome do grupo para abrir as Informações do grupo.' };
   }
+
+  // 2. Rola até "Ver tudo" e clica — pode abrir nova tela com todos participantes
+  await scrollAndClickVerMais(panel);
+
+  // 3. Re-acha o painel (pode ser um novo container após clicar "Ver tudo")
+  panel = findInfoPanel() || panel;
 
   const seen = new Set();
   const leads = [];
