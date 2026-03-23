@@ -79,12 +79,13 @@ document.addEventListener("DOMContentLoaded", () => {
   /* ── Carrega config ── */
   loadConfigJson().then(() => {
     chrome.storage.local.get(
-      ["tenantId", "extensionToken", "webhookUrl", "lastFolder", "lastLeads", "preConfigured"],
+      ["tenantId", "extensionToken", "webhookUrl", "lastFolder", "lastLimit", "lastLeads", "preConfigured"],
       (data) => {
         if (data.tenantId)       document.getElementById("tenantId").value   = data.tenantId;
         if (data.extensionToken) document.getElementById("token").value      = data.extensionToken;
         if (data.webhookUrl)     document.getElementById("webhookUrl").value = data.webhookUrl;
         if (data.lastFolder)     document.getElementById("folder").value     = data.lastFolder;
+        if (data.lastLimit)      document.getElementById("limit").value      = data.lastLimit;
         if (data.preConfigured) {
           const el = document.getElementById("tenantId");
           if (el) { el.readOnly = true; el.title = "Pré-configurado pelo painel."; }
@@ -113,13 +114,14 @@ document.addEventListener("DOMContentLoaded", () => {
       const tenantId       = document.getElementById("tenantId").value.trim() || data.tenantId?.trim();
       const extensionToken = document.getElementById("token").value.trim()    || data.extensionToken?.trim();
       const webhookUrl     = document.getElementById("webhookUrl").value.trim() || data.webhookUrl?.trim();
-      const folder         = document.getElementById("folder").value.trim();
+      const folder = document.getElementById("folder").value.trim();
+      const limit  = parseInt(document.getElementById("limit").value || "200", 10);
 
       if (!tenantId || !extensionToken || !webhookUrl) {
         setStatus("captureStatus", "Configure Tenant, Token e Webhook antes (aba Configuração).", "err"); return;
       }
 
-      chrome.storage.local.set({ lastFolder: folder });
+      chrome.storage.local.set({ lastFolder: folder, lastLimit: limit });
 
       // Encontra aba do WhatsApp Web
       chrome.tabs.query({ url: "https://web.whatsapp.com/*" }, (tabs) => {
@@ -136,7 +138,7 @@ document.addEventListener("DOMContentLoaded", () => {
         chrome.tabs.sendMessage(tab.id, { type: "PING" }, (pingResp) => {
           const proceed = () => {
             setProgress("Extraindo participantes do grupo...", 40);
-            chrome.tabs.sendMessage(tab.id, { type: "EXTRACT_PARTICIPANTS", targetCount: 5000 }, (resp) => {
+            chrome.tabs.sendMessage(tab.id, { type: "EXTRACT_PARTICIPANTS", targetCount: limit }, (resp) => {
               document.getElementById("startCapture").disabled = false;
               if (chrome.runtime.lastError || !resp) {
                 setProgress(null);

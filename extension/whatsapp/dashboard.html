@@ -186,12 +186,18 @@
             <div class="card">
               <div class="card-title"><span class="card-title-icon">🔍</span> Busca no WhatsApp</div>
 
-              <div class="field">
-                <label>Pasta no LeadFlowAI (opcional)</label>
-                <input id="folder" type="text" placeholder="ex.: Grupo Vendas SP" />
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                <div class="field">
+                  <label>Pasta no LeadFlowAI (opcional)</label>
+                  <input id="folder" type="text" placeholder="ex.: Grupo Vendas SP" />
+                </div>
+                <div class="field">
+                  <label>Limite de participantes</label>
+                  <input id="limit" type="number" min="1" max="5000" value="200" />
+                </div>
               </div>
               <p style="font-size:11px;color:var(--text-3);margin-bottom:12px;">
-                💡 Abra o WhatsApp Web, entre no grupo desejado e clique no <strong>nome do grupo</strong> para abrir as Informações. Depois clique em Iniciar extração.
+                💡 Abra o WhatsApp Web, entre no grupo desejado e clique no <strong>nome do grupo</strong> para abrir as Informações. Clique em <strong>Ver mais participantes</strong> se aparecer. Depois clique em Iniciar extração.
               </p>
 
               <div class="btn-row">

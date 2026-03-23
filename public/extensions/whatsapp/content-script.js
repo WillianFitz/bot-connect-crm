@@ -39,28 +39,39 @@ function getItemKey(el) {
   return el.textContent.trim().slice(0, 50);
 }
 
-/* ── Localiza o painel de info do grupo (rolável, lado direito) ── */
-function findGroupInfoPanel() {
-  for (const id of ['group-info-drawer','contact-info-panel','contact-info-drawer','app-viewer']) {
-    const el = document.querySelector(`[data-testid="${id}"]`);
-    if (el) return el;
-  }
-  // Painel rolável no lado direito da tela
-  const divs = Array.from(document.querySelectorAll('div'));
-  for (const el of divs) {
-    if (el.clientWidth < 200 || el.clientWidth > 650) continue;
-    if (el.scrollHeight <= el.clientHeight + 30) continue;
-    const s    = window.getComputedStyle(el);
-    const rect = el.getBoundingClientRect();
-    if ((s.overflowY === 'auto' || s.overflowY === 'scroll') && rect.left > window.innerWidth * 0.35) {
-      return el;
+/* ══════════════════════════════════════════════════════════
+   Tenta clicar em "Ver mais participantes"
+   ══════════════════════════════════════════════════════════ */
+async function tryExpandParticipants() {
+  // data-testid específico
+  const testBtn = document.querySelector('[data-testid="see-all-participants"]');
+  if (testBtn) { simulateClick(testBtn); await sleep(1200); return true; }
+
+  // Busca por texto em qualquer elemento clicável
+  const terms = ['ver mais', 'ver todos', 'show more', 'see all', 'see more', 'view all'];
+  const allClickable = document.querySelectorAll('[role="button"], button, span, div');
+  for (const el of allClickable) {
+    if (!el.offsetParent) continue; // Ignora elementos ocultos
+    const txt = (el.textContent || '').trim().toLowerCase();
+    if (terms.some(t => txt === t || txt.startsWith(t + ' ') || txt.includes('participantes'))) {
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 30 && rect.height > 10 && rect.left > window.innerWidth * 0.3) {
+        simulateClick(el);
+        await sleep(1200);
+        return true;
+      }
     }
   }
-  return null;
+  return false;
 }
 
-/* ── Retorna itens de participante visíveis no painel ── */
-function queryParticipantItems(panel) {
+/* ══════════════════════════════════════════════════════════
+   Encontra items de participante na metade direita da tela
+   ══════════════════════════════════════════════════════════ */
+function findParticipantItems() {
+  const rightX = window.innerWidth * 0.3; // Metade direita
+
+  // Tenta seletores conhecidos primeiro, filtrado pelo lado direito
   for (const sel of [
     '[data-testid="cell-frame-container"]',
     '[data-testid*="list-item"]',
@@ -68,22 +79,49 @@ function queryParticipantItems(panel) {
     '[data-testid*="contact-list-item"]',
     '[role="listitem"]',
   ]) {
-    const items = panel.querySelectorAll(sel);
-    if (items.length >= 2) return Array.from(items);
+    const items = Array.from(document.querySelectorAll(sel)).filter(el => {
+      const r = el.getBoundingClientRect();
+      return r.left >= rightX && r.height >= 40 && r.height <= 95 && r.width > 100;
+    });
+    if (items.length >= 2) return items;
   }
-  // Fallback geometria
-  const all = Array.from(panel.querySelectorAll('div'));
-  const candidates = all.filter(el => {
-    const h = el.getBoundingClientRect().height;
-    return h >= 40 && h <= 90 && el.querySelectorAll('span[dir="auto"], span[dir="ltr"]').length >= 1;
+
+  // Fallback geométrico: divs na direita com altura de item de lista
+  const candidates = Array.from(document.querySelectorAll('div')).filter(el => {
+    const r = el.getBoundingClientRect();
+    if (r.left < rightX || r.height < 40 || r.height > 95 || r.width < 100) return false;
+    return el.querySelectorAll('span[dir="auto"], span[dir="ltr"], span[title]').length >= 1;
   });
+  // Remove pai/filho duplicados
   return candidates.filter(el => !candidates.some(o => o !== el && o.contains(el)));
 }
 
-/* ── Aguarda o painel de perfil do contato abrir ── */
-async function waitForProfilePanel(timeout = 3500) {
-  // NÃO checa botão Voltar — ele existe no próprio painel de info do grupo
-  // Checa apenas se um telefone apareceu no DOM (só existe em perfil individual)
+/* ══════════════════════════════════════════════════════════
+   Encontra o container rolável da área de participantes
+   ══════════════════════════════════════════════════════════ */
+function findScrollablePanel() {
+  // Tenta data-testid
+  for (const id of ['group-info-drawer','contact-info-panel','contact-info-drawer','app-viewer','participant-list']) {
+    const el = document.querySelector(`[data-testid="${id}"]`);
+    if (el) return el;
+  }
+
+  const rightX = window.innerWidth * 0.3;
+  // Painel rolável no lado direito
+  for (const el of document.querySelectorAll('div')) {
+    if (el.clientWidth < 150 || el.clientWidth > 700) continue;
+    if (el.scrollHeight <= el.clientHeight + 20) continue;
+    const s    = window.getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    if ((s.overflowY === 'auto' || s.overflowY === 'scroll') && rect.left >= rightX) return el;
+  }
+  return null;
+}
+
+/* ══════════════════════════════════════════════════════════
+   Aguarda telefone aparecer no DOM (perfil individual aberto)
+   ══════════════════════════════════════════════════════════ */
+async function waitForPhone(timeout = 3500) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     if (document.querySelector('[data-testid="contact-phone-number"]')) return true;
@@ -91,7 +129,7 @@ async function waitForProfilePanel(timeout = 3500) {
       const t = s.textContent.trim();
       if (looksLikePhone(t) && t.length <= 22) return true;
     }
-    await sleep(300);
+    await sleep(250);
   }
   return false;
 }
@@ -102,29 +140,29 @@ async function extractFromProfilePanel() {
   let name  = '';
 
   // Telefone — data-testid
-  for (const sel of ['[data-testid="contact-phone-number"]','[data-testid*="phone"]']) {
-    const el = document.querySelector(sel);
-    if (el) { const t = el.textContent.trim(); if (looksLikePhone(t)) { phone = normalizePhone(t); break; } }
-  }
-  // Telefone — spans ltr (formato de número)
+  const phoneEl = document.querySelector('[data-testid="contact-phone-number"]');
+  if (phoneEl) phone = normalizePhone(phoneEl.textContent.trim());
+
+  // Telefone — spans ltr (números)
   if (!phone) {
     for (const s of document.querySelectorAll('span[dir="ltr"]')) {
       const t = s.textContent.trim();
       if (looksLikePhone(t) && t.length <= 22) { phone = normalizePhone(t); break; }
     }
   }
+
   // Telefone — link tel:
   if (!phone) {
     const tel = document.querySelector('a[href^="tel:"]');
     if (tel) phone = normalizePhone(tel.getAttribute('href').replace('tel:', ''));
   }
 
-  // Nome — header do painel de contato
+  // Nome — header do perfil
   for (const sel of [
     '[data-testid="contact-info-header"] span[dir="auto"]',
     '[data-testid="contact-name"]',
     '[data-testid="contact-display-name"]',
-    'h1 span[dir="auto"]', 'h2 span[dir="auto"]', 'h1', 'h2',
+    'h1 span[dir="auto"]', 'h2 span[dir="auto"]',
   ]) {
     const el = document.querySelector(sel);
     if (el) {
@@ -132,7 +170,8 @@ async function extractFromProfilePanel() {
       if (t.length >= 2 && !looksLikePhone(t)) { name = t; break; }
     }
   }
-  // Nome — fallback span[title]
+
+  // Nome — fallback: primeiro span[title] ou span[dir=auto] relevante
   if (!name) {
     for (const s of document.querySelectorAll('span[title], span[dir="auto"]')) {
       const t = (s.getAttribute('title') || s.textContent || '').trim();
@@ -145,11 +184,9 @@ async function extractFromProfilePanel() {
 
 /* ── Clica no botão Voltar ── */
 async function clickBack() {
-  for (const sel of [
-    '[data-testid="back"]','[data-testid="btn-back"]',
-    'button[aria-label="Back"]','button[aria-label="Voltar"]',
-    '[data-testid*="back"]',
-  ]) {
+  for (const sel of ['[data-testid="back"]','[data-testid="btn-back"]',
+                     'button[aria-label="Back"]','button[aria-label="Voltar"]',
+                     '[data-testid*="back"]']) {
     const el = document.querySelector(sel);
     if (el) { el.click(); await sleep(700); return; }
   }
@@ -162,72 +199,73 @@ async function clickBack() {
 }
 
 /* ══════════════════════════════════════════════════════════
-   Extração principal — processa itens visíveis progressivamente
+   Extração principal
    ══════════════════════════════════════════════════════════ */
 async function extractParticipants(targetCount) {
-  await sleep(600);
+  await sleep(800);
 
-  const panel = findGroupInfoPanel();
-  if (!panel) {
-    return {
-      ok: false,
-      error: 'Painel de informações do grupo não encontrado. Clique no nome do grupo para abrir as informações e tente novamente.',
-    };
-  }
+  // Tenta expandir a lista de participantes
+  await tryExpandParticipants();
+  await sleep(800);
 
   const processed  = new Set();
   const leads      = [];
   let   noProgress = 0;
+  const panel      = findScrollablePanel();
 
-  while (leads.length < targetCount && noProgress < 10) {
-    const items = queryParticipantItems(panel);
+  while (leads.length < targetCount && noProgress < 12) {
+    const items = findParticipantItems();
 
-    // Encontra o primeiro item não processado
-    let target    = null;
-    let targetKey = '';
-    for (const item of items) {
-      const key = getItemKey(item);
-      if (!processed.has(key)) { target = item; targetKey = key; break; }
-    }
+    // Filtra os não processados
+    const unprocessed = items.filter(el => !processed.has(getItemKey(el)));
 
-    if (!target) {
-      // Sem item novo visível — rola para baixo
-      const before = panel.scrollTop;
-      panel.scrollTop += 600;
-      await sleep(500);
-      if (panel.scrollTop === before) break; // Chegou ao fim
+    if (!unprocessed.length) {
+      // Sem item novo — rola para baixo
+      if (panel) {
+        const before = panel.scrollTop;
+        panel.scrollTop += 600;
+        await sleep(500);
+        if (panel.scrollTop === before) break;
+      } else {
+        // Tenta rolar a janela
+        window.scrollBy(0, 400);
+        await sleep(500);
+      }
       noProgress++;
       continue;
     }
 
     noProgress = 0;
+    const target    = unprocessed[0];
+    const targetKey = getItemKey(target);
     processed.add(targetKey);
 
     // Clica no participante
     target.scrollIntoView({ block: 'center' });
-    await sleep(250);
+    await sleep(300);
     simulateClick(target);
 
-    // Aguarda o painel de perfil abrir
-    const opened = await waitForProfilePanel(3500);
+    // Aguarda o perfil abrir (só verifica telefone, não botão Voltar)
+    const opened = await waitForPhone(3500);
 
     if (opened) {
-      await sleep(300); // Deixa o painel estabilizar
+      await sleep(200);
       const { name, phone } = await extractFromProfilePanel();
       await clickBack();
-      await sleep(500); // Aguarda painel do grupo reaparecer
+      await sleep(600);
 
       if ((name || phone) && name !== 'Você' && name !== 'You') {
         leads.push({ name: name || phone, phone });
       }
-    } else {
-      // Perfil não abriu — segue para o próximo sem fechar nada
-      await sleep(300);
     }
+    // Se não abriu, apenas pula — não chama clickBack para não fechar o painel do grupo
   }
 
   if (!leads.length) {
-    return { ok: false, error: 'Nenhum dado extraído. Verifique se o painel de informações do grupo está aberto com a lista de participantes visível.' };
+    return {
+      ok: false,
+      error: 'Nenhum participante encontrado. Certifique-se de que o painel de informações do grupo está aberto e os participantes estão visíveis na tela.',
+    };
   }
 
   return { ok: true, leads, total: leads.length };
@@ -239,7 +277,7 @@ async function extractParticipants(targetCount) {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'PING') { sendResponse({ ok: true }); return false; }
   if (msg.type === 'EXTRACT_PARTICIPANTS') {
-    extractParticipants(msg.targetCount || 5000).then(result => sendResponse(result));
+    extractParticipants(msg.targetCount || 200).then(result => sendResponse(result));
     return true;
   }
 });
