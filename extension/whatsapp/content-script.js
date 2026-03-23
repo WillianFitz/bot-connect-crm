@@ -127,9 +127,18 @@ async function extractParticipants(targetCount, onProgress) {
 
     if (onProgress) onProgress(leads.length);
 
+    // Tenta rolar de múltiplas formas (WhatsApp Web usa virtual scrolling)
+    const before = panel.scrollTop;
     panel.scrollTop += 600;
-    await sleep(500);
-    if (panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 30) break;
+    if (panel.scrollTop === before) {
+      // scrollTop não mudou — tenta scroll() e wheel event
+      panel.scroll({ top: panel.scrollTop + 600, behavior: 'instant' });
+      panel.dispatchEvent(new WheelEvent('wheel', { deltaY: 600, bubbles: true }));
+    }
+    await sleep(600);
+
+    // Para se chegou ao fim
+    if (panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 50) break;
   }
 
   if (!leads.length) return { ok: false, error: 'Nenhum participante encontrado. Certifique-se de que o painel de informações está aberto.' };
@@ -360,25 +369,29 @@ function initPanel(shadow) {
 
       showStatus(shadow, 'sendStatus', `Enviando ${withPhone.length} leads...`, 'info');
 
-      try {
-        const res = await fetch(data.webhookUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-tenant-id': data.tenantId,
-            'x-extension-token': data.extensionToken,
-          },
-          body: JSON.stringify({
-            leads: withPhone.map(l => ({ company: l.name || l.phone, phone: l.phone.trim(), folder_name: folder || undefined })),
-            source: 'whatsapp',
-          }),
-        });
-        if (!res.ok) { showStatus(shadow, 'sendStatus', 'Erro: ' + (await res.text() || res.statusText), 'err'); return; }
-        const r = await res.json().catch(() => ({}));
+      // Fetch via background.js (evita CORS — content script tem origem web.whatsapp.com)
+      chrome.runtime.sendMessage({
+        type:    'DO_FETCH',
+        url:     data.webhookUrl,
+        method:  'POST',
+        headers: {
+          'Content-Type':      'application/json',
+          'x-tenant-id':       data.tenantId,
+          'x-extension-token': data.extensionToken,
+        },
+        body: {
+          leads: withPhone.map(l => ({ company: l.name || l.phone, phone: l.phone.trim(), folder_name: folder || undefined })),
+          source: 'whatsapp',
+        },
+      }, resp => {
+        if (!resp?.ok) {
+          showStatus(shadow, 'sendStatus', 'Erro ao enviar: ' + (resp?.text || resp?.error || 'desconhecido'), 'err');
+          return;
+        }
+        let r = {};
+        try { r = JSON.parse(resp.text); } catch {}
         showStatus(shadow, 'sendStatus', `✅ ${r.inserted ?? withPhone.length} leads enviados!`, 'ok');
-      } catch {
-        showStatus(shadow, 'sendStatus', 'Erro de rede. Verifique o Webhook.', 'err');
-      }
+      });
     });
   });
 
