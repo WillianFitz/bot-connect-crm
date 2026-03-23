@@ -217,7 +217,7 @@ function runPhase2(tabId, limit, totalAvailable) {
 
     const company = _companies[idx];
     const pct = 25 + Math.round((idx / _companies.length) * 73);
-    setProgress(`Fase 2: ${idx + 1}/${_companies.length} — ${company.name || company.cnpj}`, pct);
+    setProgress(`Fase 2: ${idx + 1}/${_companies.length} — aguardando...`, pct);
     updateStats(_companies, _leads, totalAvailable);
 
     // Navega para a página da empresa
@@ -226,11 +226,12 @@ function runPhase2(tabId, limit, totalAvailable) {
         sendWithRetry(tabId, { type: 'CDADOS_EXTRACT_DETAILS' }, detailResp => {
           if (_stopped) { finishExtraction(tabId, totalAvailable); return; }
 
-          const name  = detailResp?.name  || company.name  || '';
+          const name  = detailResp?.name  || company.name  || company.cnpj;
           const phone = (detailResp?.phone || '').replace(/\D/g, '');
           const email = detailResp?.email || '';
           const notes = detailResp?.notes || '';
 
+          setProgress(`Fase 2: ${idx + 1}/${_companies.length} — ${name}`, pct);
           _leads.push({ cnpj: company.cnpj, name, phone, email, notes, url: company.url });
           idx++;
 
