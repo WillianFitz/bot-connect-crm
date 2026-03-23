@@ -1,239 +1,271 @@
 /* ══════════════════════════════════════════════════════════
    Content Script — Extrator WhatsApp
-   Extrai participantes do painel de info do grupo aberto
+   Clica em cada participante do grupo para extrair
+   nome e telefone do perfil individual.
    ══════════════════════════════════════════════════════════ */
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+/* ── Normalização de telefone ── */
+function normalizePhone(raw) {
+  if (!raw) return '';
+  const cleaned = raw.replace(/[^\d+]/g, '').replace(/(?!^)\+/g, '');
+  if (!cleaned) return '';
+  let num = cleaned;
+  if (num.startsWith('+')) return num;
+  if (num.length === 10 || num.length === 11) return '+55' + num;
+  if (num.length === 12 || num.length === 13) return '+' + num;
+  if (num.length === 8  || num.length === 9)  return '+55' + num;
+  return '+' + num;
+}
+
 function looksLikePhone(text) {
   if (!text) return false;
-  const cleaned = text.replace(/[\s\-\.\(\)+]/g, '');
-  return /^\d{10,15}$/.test(cleaned);
+  const d = text.replace(/[^\d]/g, '');
+  return d.length >= 8 && d.length <= 15 && /[\d\s\-\+\(\)]{8,}/.test(text.trim());
 }
 
-function normalizePhone(text) {
-  if (!text) return '';
-  const cleaned = text.replace(/[\s\-\.\(\)]/g, '');
-  const m = cleaned.match(/(\+?\d{10,15})/);
-  if (!m) return '';
-  let num = m[1];
-  if (!num.startsWith('+')) {
-    if (num.length >= 10 && num.length <= 11) num = '+55' + num;
-    else if (num.length >= 12) num = '+' + num;
+/* ── Localiza o painel de info do grupo ── */
+function findGroupInfoPanel() {
+  for (const id of ['group-info-drawer','contact-info-panel','contact-info-drawer','app-viewer']) {
+    const el = document.querySelector(`[data-testid="${id}"]`);
+    if (el) return el;
   }
-  return num;
+  // Painel rolável no lado direito
+  for (const el of document.querySelectorAll('div')) {
+    if (el.clientWidth < 200 || el.clientWidth > 620) continue;
+    if (el.scrollHeight <= el.clientHeight + 30) continue;
+    const s = window.getComputedStyle(el);
+    if (s.overflowY !== 'auto' && s.overflowY !== 'scroll') continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.left < window.innerWidth * 0.4) continue;
+    return el;
+  }
+  return null;
 }
 
-/* ── Extrai nome/telefone de um elemento de lista ── */
-function extractLeadFromItem(el) {
-  const spans = Array.from(el.querySelectorAll('span[dir="auto"], span[dir="ltr"], span[title]'));
-  const texts = [];
-
-  // Prioriza span[title] pois costuma ter o nome exato
-  for (const s of spans) {
+/* ── Retorna chave de texto de um item de lista ── */
+function getItemKey(el) {
+  for (const s of el.querySelectorAll('span[title], span[dir="auto"], span[dir="ltr"]')) {
     const t = (s.getAttribute('title') || s.textContent || '').trim();
-    if (t && !texts.includes(t)) texts.push(t);
+    if (t.length >= 2) return t;
   }
+  return el.textContent.trim().slice(0, 50);
+}
 
-  // Fallback: divs com texto curto (nomes/telefones)
-  if (!texts.length) {
-    const divs = Array.from(el.querySelectorAll('div'));
-    for (const d of divs) {
-      if (d.children.length === 0) {
-        const t = d.textContent.trim();
-        if (t && t.length <= 60 && !texts.includes(t)) texts.push(t);
+/* ── Encontra itens de participante no painel ── */
+function queryParticipantItems(panel) {
+  for (const sel of [
+    '[data-testid="cell-frame-container"]',
+    '[data-testid*="list-item"]',
+    '[data-testid*="participant"]',
+    '[data-testid*="contact-list-item"]',
+    '[role="listitem"]',
+  ]) {
+    const items = panel.querySelectorAll(sel);
+    if (items.length >= 2) return Array.from(items);
+  }
+  // Fallback geometria
+  const all = Array.from(panel.querySelectorAll('div'));
+  const candidates = all.filter(el => {
+    const h = el.getBoundingClientRect().height;
+    return h >= 40 && h <= 90 &&
+           el.querySelectorAll('span[dir="auto"], span[dir="ltr"]').length >= 1;
+  });
+  return candidates.filter(el => !candidates.some(o => o !== el && o.contains(el)));
+}
+
+/* ── Fase 1: Rola o painel e coleta todas as chaves de participante ── */
+async function collectParticipantKeys(panel) {
+  const keys = [];
+  const seen = new Set();
+
+  panel.scrollTop = 0;
+  await sleep(400);
+
+  let noNewRounds = 0;
+
+  while (noNewRounds < 6) {
+    const items = queryParticipantItems(panel);
+    let added = 0;
+    for (const item of items) {
+      const key = getItemKey(item);
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        keys.push(key);
+        added++;
       }
     }
+    if (!added) noNewRounds++;
+    else noNewRounds = 0;
+
+    panel.scrollTop += 700;
+    await sleep(400);
+    if (panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 30) break;
   }
+
+  // Coleta itens que apareceram no final também
+  const items = queryParticipantItems(panel);
+  for (const item of items) {
+    const key = getItemKey(item);
+    if (key && !seen.has(key)) { seen.add(key); keys.push(key); }
+  }
+
+  return keys;
+}
+
+/* ── Encontra item no DOM pela chave de texto ── */
+function findItemByKey(panel, key) {
+  const items = queryParticipantItems(panel);
+  return items.find(el => getItemKey(el) === key) || null;
+}
+
+/* ── Extrai nome e telefone do painel de perfil aberto ── */
+async function extractFromProfilePanel() {
+  await sleep(900);
 
   let phone = '';
   let name  = '';
 
-  for (const t of texts) {
-    if (looksLikePhone(t)) {
-      if (!phone) phone = normalizePhone(t);
-    } else if (!name && t.length >= 2) {
-      name = t;
+  // Telefone — data-testid
+  for (const sel of ['[data-testid="contact-phone-number"]','[data-testid*="phone"]']) {
+    const el = document.querySelector(sel);
+    if (el) { const t = el.textContent.trim(); if (looksLikePhone(t)) { phone = normalizePhone(t); break; } }
+  }
+
+  // Telefone — spans com texto de telefone
+  if (!phone) {
+    for (const span of document.querySelectorAll('span[dir="ltr"], span[dir="auto"]')) {
+      const t = span.textContent.trim();
+      if (looksLikePhone(t) && t.length <= 22) { phone = normalizePhone(t); break; }
+    }
+  }
+
+  // Telefone — link tel:
+  if (!phone) {
+    const tel = document.querySelector('a[href^="tel:"]');
+    if (tel) phone = normalizePhone(tel.getAttribute('href').replace('tel:', ''));
+  }
+
+  // Nome — header do painel de contato
+  for (const sel of [
+    '[data-testid="contact-info-header"] span[dir="auto"]',
+    '[data-testid="contact-name"]',
+    '[data-testid="contact-display-name"]',
+    'h1 span', 'h2 span', 'h1', 'h2',
+  ]) {
+    const el = document.querySelector(sel);
+    if (el) {
+      const t = el.textContent.trim();
+      if (t.length >= 2 && !looksLikePhone(t)) { name = t; break; }
+    }
+  }
+
+  // Nome — fallback: primeiro span com texto relevante
+  if (!name) {
+    for (const s of document.querySelectorAll('span[title], span[dir="auto"]')) {
+      const t = (s.getAttribute('title') || s.textContent || '').trim();
+      if (t.length >= 2 && !looksLikePhone(t) && t !== 'Você' && t !== 'You') {
+        name = t; break;
+      }
     }
   }
 
   return { name, phone };
 }
 
-/* ── Encontra o painel de informações do grupo ── */
-function findInfoPanel() {
-  // Estratégia 1: data-testid conhecidos (WhatsApp Web muda com frequência)
-  const testIds = [
-    'group-info-drawer',
-    'contact-info-panel',
-    'contact-info-drawer',
-    'group-participants-list',
-    'participant-list',
-    'participant-list-scroll',
-    'app-viewer',
-  ];
-  for (const id of testIds) {
-    const el = document.querySelector(`[data-testid="${id}"]`);
-    if (el) return el;
+/* ── Clica no botão Voltar ── */
+async function clickBack() {
+  for (const sel of [
+    '[data-testid="back"]', '[data-testid="btn-back"]',
+    'button[aria-label="Back"]', 'button[aria-label="Voltar"]',
+    '[data-testid*="back"]',
+  ]) {
+    const el = document.querySelector(sel);
+    if (el) { el.click(); await sleep(600); return; }
   }
-
-  // Estratégia 2: painel rolável no lado direito da tela que contenha items de lista
-  const allDivs = Array.from(document.querySelectorAll('div'));
-  for (const el of allDivs) {
-    if (el.clientWidth < 200 || el.clientWidth > 600) continue;
-    if (el.scrollHeight <= el.clientHeight + 30)      continue;
-    const style = window.getComputedStyle(el);
-    if (style.overflowY !== 'auto' && style.overflowY !== 'scroll') continue;
-    // Deve conter pelo menos 2 items de lista de algum tipo
-    const items = el.querySelectorAll(
-      '[data-testid="cell-frame-container"], [data-testid*="list-item"], ' +
-      '[role="listitem"], [data-testid*="contact"], [data-testid*="participant"]'
-    );
-    if (items.length >= 2) return el;
+  for (const el of document.querySelectorAll('button,[role="button"]')) {
+    const lbl = (el.getAttribute('aria-label') || '').toLowerCase();
+    if (lbl.includes('back') || lbl.includes('voltar')) { el.click(); await sleep(600); return; }
   }
-
-  // Estratégia 3: procura pelo heading "Participantes" e sobe para o container pai
-  const headings = Array.from(document.querySelectorAll('span, div, h2, h3, p'));
-  for (const h of headings) {
-    if (h.children.length > 0) continue;
-    const txt = h.textContent.trim().toLowerCase();
-    if (txt === 'participantes' || txt === 'participants' ||
-        txt.startsWith('participantes (') || txt.startsWith('participants (')) {
-      // Sobe até achar um container com overflow
-      let parent = h.parentElement;
-      for (let i = 0; i < 8 && parent; i++) {
-        const s = window.getComputedStyle(parent);
-        if ((s.overflowY === 'auto' || s.overflowY === 'scroll') && parent.clientWidth > 150) {
-          return parent;
-        }
-        parent = parent.parentElement;
-      }
-    }
-  }
-
-  return null;
+  document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Escape', keyCode: 27 }));
+  await sleep(600);
 }
 
-/* ── Encontra items de participante dentro de um container ── */
-function findParticipantItems(container) {
-  // Tenta seletores conhecidos em ordem de especificidade
-  const selectors = [
-    '[data-testid="cell-frame-container"]',
-    '[data-testid*="list-item"]',
-    '[data-testid*="participant"]',
-    '[data-testid*="contact-list-item"]',
-    '[role="listitem"]',
-  ];
-
-  for (const sel of selectors) {
-    const items = container.querySelectorAll(sel);
-    if (items.length >= 2) return Array.from(items);
-  }
-
-  // Fallback: filhos diretos que têm altura compatível com item de lista (40–80px)
-  // e contêm spans com texto
-  const candidates = Array.from(container.querySelectorAll('div > div > div'));
-  const likeItems = candidates.filter(el => {
-    const h = el.getBoundingClientRect().height;
-    if (h < 35 || h > 90) return false;
-    const spans = el.querySelectorAll('span[dir="auto"], span[dir="ltr"]');
-    return spans.length >= 1;
-  });
-
-  // Remove duplicatas (elementos pai/filho)
-  const unique = likeItems.filter(el =>
-    !likeItems.some(other => other !== el && other.contains(el))
-  );
-
-  return unique;
-}
-
-/* ── Extração principal ── */
+/* ══════════════════════════════════════════════════════════
+   Extração principal
+   ══════════════════════════════════════════════════════════ */
 async function extractParticipants(targetCount) {
   await sleep(600);
 
-  const panel = findInfoPanel();
-
+  const panel = findGroupInfoPanel();
   if (!panel) {
-    // Tentativa de emergência: busca direto no documento com seletores amplos
-    const docItems = document.querySelectorAll(
-      '[data-testid="cell-frame-container"], [data-testid*="list-item"], [role="listitem"]'
-    );
-    if (docItems.length >= 2) {
-      const leads = processItems(Array.from(docItems));
-      if (leads.length >= 2) return { ok: true, leads, total: leads.length };
-    }
-
     return {
       ok: false,
-      error: 'Painel de participantes não encontrado. Certifique-se de que o painel de informações do grupo está aberto (clique no nome do grupo) e role até ver os participantes. Depois clique em Extrair.',
+      error: 'Painel de informações do grupo não encontrado. Clique no nome do grupo para abrir as informações e tente novamente.',
     };
   }
 
-  const seen   = new Set();
-  const leads  = [];
-  let noNewRounds = 0;
-  let prevCount   = 0;
+  // Fase 1: coleta todas as chaves de participante rolando o painel
+  const keys = await collectParticipantKeys(panel);
 
-  while (leads.length < targetCount && noNewRounds < 12) {
-    const items    = findParticipantItems(panel);
-    const newLeads = processItems(items);
+  if (!keys.length) {
+    return {
+      ok: false,
+      error: 'Nenhum participante encontrado. Certifique-se de que o painel de informações está aberto com a lista de participantes visível.',
+    };
+  }
 
-    for (const lead of newLeads) {
-      const key = lead.phone || lead.name;
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      leads.push(lead);
+  const leads   = [];
+  const seenKey = new Set();
+
+  // Fase 2: clica em cada participante pelo sua chave
+  for (const key of keys) {
+    if (leads.length >= targetCount) break;
+    if (seenKey.has(key)) continue;
+    seenKey.add(key);
+
+    // Rola o painel para que o item fique visível
+    panel.scrollTop = 0;
+    await sleep(200);
+    let target = null;
+    for (let scroll = 0; scroll < 40; scroll++) {
+      target = findItemByKey(panel, key);
+      if (target) break;
+      panel.scrollTop += 500;
+      await sleep(300);
     }
 
-    if (leads.length === prevCount) {
-      noNewRounds++;
-    } else {
-      noNewRounds = 0;
-      prevCount = leads.length;
-    }
+    if (!target) continue; // Item não encontrado, pula
 
-    panel.scrollTop += 700;
-    await sleep(500);
+    target.scrollIntoView({ block: 'center' });
+    await sleep(200);
+    target.click();
 
-    if (panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 50) break;
+    const { name, phone } = await extractFromProfilePanel();
+    await clickBack();
+
+    // Aguarda o painel de grupo reaparecer
+    await sleep(400);
+
+    if (!name && !phone) continue;
+    if (name === 'Você' || name === 'You') continue;
+
+    leads.push({ name: name || phone, phone });
   }
 
   if (!leads.length) {
-    return {
-      ok: false,
-      error: 'Nenhum participante encontrado. Role manualmente o painel de informações do grupo até os participantes aparecerem e tente novamente.',
-    };
+    return { ok: false, error: 'Nenhum dado extraído. O painel de perfil pode não estar carregando.' };
   }
 
   return { ok: true, leads, total: leads.length };
-}
-
-/* ── Processa array de elementos → leads ── */
-function processItems(items) {
-  const leads = [];
-  const seen  = new Set();
-
-  for (const item of items) {
-    const { name, phone } = extractLeadFromItem(item);
-    const key = phone || name;
-    if (!key || seen.has(key)) continue;
-    if (name === 'Você' || name === 'You' || name.length < 2) continue;
-    seen.add(key);
-    leads.push({ name, phone });
-  }
-
-  return leads;
 }
 
 /* ══════════════════════════════════════════════════════════
    Listener de mensagens
    ══════════════════════════════════════════════════════════ */
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.type === 'PING') {
-    sendResponse({ ok: true });
-    return false;
-  }
+  if (msg.type === 'PING') { sendResponse({ ok: true }); return false; }
   if (msg.type === 'EXTRACT_PARTICIPANTS') {
     extractParticipants(msg.targetCount || 5000).then(result => sendResponse(result));
     return true;
