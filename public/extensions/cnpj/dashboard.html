@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <title>Dashboard - Extrator CNPJ</title>
+    <style>
+      :root {
+        --bg: #09090b; --bg-2: #111113; --bg-3: #18181b; --bg-4: #1e1e22;
+        --border: rgba(255,255,255,0.07); --border-bright: rgba(255,255,255,0.13);
+        --accent: #22c55e; --accent-2: #4ade80; --accent-glow: rgba(34,197,94,0.2);
+        --green: #22c55e; --green-dim: rgba(34,197,94,0.12);
+        --red: #f87171; --red-dim: rgba(248,113,113,0.12);
+        --text: #e4e4e7; --text-2: #a1a1aa; --text-3: #52525b;
+        --radius: 12px; --radius-sm: 8px;
+      }
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+        background: var(--bg); color: var(--text);
+        min-height: 100vh; display: flex; font-size: 13px; line-height: 1.5;
+      }
+      .shell { display: flex; width: 100%; min-height: 100vh; }
+
+      /* Sidebar */
+      .sidebar {
+        width: 220px; flex-shrink: 0; background: var(--bg-2);
+        border-right: 1px solid var(--border);
+        display: flex; flex-direction: column; padding: 0 10px 20px;
+      }
+      .logo {
+        display: flex; align-items: center; gap: 10px;
+        padding: 18px 8px 14px; border-bottom: 1px solid var(--border); margin-bottom: 12px;
+      }
+      .logo-icon { width: 32px; height: 32px; flex-shrink: 0; }
+      .logo-text { font-size: 13px; font-weight: 700; color: var(--text); line-height: 1.2; }
+      .logo-sub { font-size: 10px; color: var(--text-3); }
+      .nav-item {
+        display: flex; align-items: center; gap: 9px; padding: 8px 10px;
+        border-radius: var(--radius-sm); cursor: pointer; color: var(--text-2);
+        font-size: 12px; font-weight: 500; transition: all .15s; border: none;
+        background: none; width: 100%; text-align: left; margin-bottom: 2px;
+      }
+      .nav-item:hover { background: var(--bg-3); color: var(--text); }
+      .nav-item.active { background: var(--accent-glow); color: var(--accent); }
+      .nav-icon { font-size: 14px; width: 18px; text-align: center; }
+
+      /* Main */
+      .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+      .topbar {
+        padding: 16px 24px; border-bottom: 1px solid var(--border);
+        display: flex; align-items: center; justify-content: space-between;
+      }
+      .topbar h2 { font-size: 16px; font-weight: 700; }
+      .content { padding: 24px; flex: 1; overflow-y: auto; }
+
+      /* Sections */
+      .section { display: none; }
+      .section.active { display: block; }
+
+      /* Cards */
+      .card {
+        background: var(--bg-2); border: 1px solid var(--border);
+        border-radius: var(--radius); padding: 20px; margin-bottom: 16px;
+      }
+      .card-title {
+        font-size: 13px; font-weight: 600; color: var(--text);
+        margin-bottom: 14px; display: flex; align-items: center; gap: 8px;
+      }
+      .card-title-icon { font-size: 15px; }
+
+      /* Stats */
+      .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+      .stat-card {
+        background: var(--bg-3); border: 1px solid var(--border);
+        border-radius: var(--radius-sm); padding: 14px 16px;
+      }
+      .stat-label { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 4px; }
+      .stat-value { font-size: 22px; font-weight: 700; color: var(--text); }
+
+      /* Forms */
+      .field { margin-bottom: 12px; }
+      .field label { display: block; font-size: 11px; font-weight: 600; color: var(--text-2); margin-bottom: 5px; text-transform: uppercase; letter-spacing: .04em; }
+      .field input, .field select {
+        width: 100%; background: var(--bg-3); border: 1px solid var(--border);
+        border-radius: var(--radius-sm); padding: 8px 10px; color: var(--text);
+        font-size: 12px; outline: none; transition: border .15s; font-family: inherit;
+      }
+      .field input:focus, .field select:focus { border-color: var(--accent); }
+      .field input[readonly] { opacity: .5; cursor: not-allowed; }
+      .field select option { background: var(--bg-3); }
+
+      /* Checkboxes */
+      .checks-row { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+      .check-item {
+        display: flex; align-items: center; gap: 6px;
+        font-size: 12px; color: var(--text-2); cursor: pointer;
+      }
+      .check-item input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px; cursor: pointer; }
+
+      /* Grid */
+      .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+
+      /* Buttons */
+      .btn {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 8px 14px; border-radius: var(--radius-sm); font-size: 12px;
+        font-weight: 600; cursor: pointer; border: none; transition: all .15s;
+        font-family: inherit;
+      }
+      .btn-primary { background: var(--accent); color: #000; }
+      .btn-primary:hover { background: var(--accent-2); }
+      .btn-primary:disabled { opacity: .45; cursor: not-allowed; }
+      .btn-secondary { background: var(--bg-4); border: 1px solid var(--border-bright); color: var(--text); }
+      .btn-secondary:hover { background: var(--bg-3); }
+      .btn-secondary:disabled { opacity: .45; cursor: not-allowed; }
+      .btn-danger { background: var(--red-dim); border: 1px solid rgba(248,113,113,0.25); color: var(--red); }
+      .btn-danger:hover { background: rgba(248,113,113,0.2); }
+      .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+
+      /* Progress */
+      .progress-block { margin-top: 14px; display: none; flex-direction: column; gap: 6px; }
+      .progress-block.show { display: flex; }
+      .progress-label { font-size: 11px; color: var(--text-2); }
+      .progress-bar-bg { height: 4px; background: var(--bg-4); border-radius: 99px; overflow: hidden; }
+      .progress-bar { height: 100%; background: var(--accent); border-radius: 99px; transition: width .3s; width: 0%; }
+
+      /* Status messages */
+      .status-msg { font-size: 11px; padding: 8px 12px; border-radius: var(--radius-sm); margin-top: 10px; display: none; }
+      .status-msg.show { display: block; }
+      .status-msg.s-ok { background: var(--green-dim); color: var(--green); border: 1px solid rgba(34,197,94,0.2); }
+      .status-msg.s-err { background: var(--red-dim); color: var(--red); border: 1px solid rgba(248,113,113,0.2); }
+      .status-msg.s-info { background: var(--bg-4); color: var(--text-2); border: 1px solid var(--border-bright); }
+
+      /* Table */
+      .table-wrap { overflow-x: auto; }
+      table { width: 100%; border-collapse: collapse; font-size: 12px; }
+      th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+      th { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); font-weight: 600; background: var(--bg-3); }
+      tr:hover td { background: rgba(255,255,255,0.02); }
+      .chip { display: inline-block; padding: 2px 7px; border-radius: 99px; font-size: 10px; font-weight: 600; }
+      .chip-green { background: var(--green-dim); color: var(--green); }
+      .chip-gray  { background: var(--bg-4); color: var(--text-3); }
+
+      #summary { font-size: 11px; color: var(--text-3); margin-bottom: 12px; }
+      .hint { font-size: 11px; color: var(--text-3); margin-bottom: 12px; }
+
+      .divider { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <!-- Sidebar -->
+      <aside class="sidebar">
+        <div class="logo">
+          <div style="width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,hsl(192,91%,52%),hsl(265,80%,60%));display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path d="M14 2 L6 14 H11 L10 22 L18 10 H13 Z" fill="hsl(222,47%,6%)"/></svg>
+          </div>
+          <div>
+            <div class="logo-text">Extrator CNPJ</div>
+            <div class="logo-sub">LeadFlowAI Extractor</div>
+          </div>
+        </div>
+        <button class="nav-item active" data-section="capture">
+          <span class="nav-icon">🔍</span> Extração
+        </button>
+        <button class="nav-item" data-section="dashboard">
+          <span class="nav-icon">📊</span> Resultados
+        </button>
+        <button class="nav-item" data-section="config">
+          <span class="nav-icon">⚙️</span> Configuração
+        </button>
+      </aside>
+
+      <!-- Main -->
+      <div class="main">
+        <div class="topbar">
+          <h2 id="topbarTitle">Extração de Leads via CNPJ</h2>
+        </div>
+
+        <div class="content">
+
+          <!-- ── Extração ── -->
+          <div id="section-capture" class="section active">
+            <div class="stats-grid">
+              <div class="stat-card">
+                <div class="stat-label">Total Disponível</div>
+                <div class="stat-value" id="stat-total">—</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">Extraídos</div>
+                <div class="stat-value" id="stat-extracted">—</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">Com Telefone</div>
+                <div class="stat-value" id="stat-phones">—</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">Com E-mail</div>
+                <div class="stat-value" id="stat-emails">—</div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title"><span class="card-title-icon">🔍</span> Filtros de Busca</div>
+
+              <div class="grid-2">
+                <div class="field">
+                  <label>Busca Textual (Razão / Fantasia)</label>
+                  <input id="termo" type="text" placeholder="ex.: academia, farmácia..." />
+                </div>
+                <div class="field">
+                  <label>CNAE (código ou nome)</label>
+                  <input id="cnae" type="text" placeholder="ex.: 8630-5/04 ou medicina" />
+                </div>
+              </div>
+
+              <div class="grid-3">
+                <div class="field">
+                  <label>Estado (UF)</label>
+                  <select id="uf">
+                    <option value="">Todos</option>
+                    <option value="AC">AC - Acre</option>
+                    <option value="AL">AL - Alagoas</option>
+                    <option value="AP">AP - Amapá</option>
+                    <option value="AM">AM - Amazonas</option>
+                    <option value="BA">BA - Bahia</option>
+                    <option value="CE">CE - Ceará</option>
+                    <option value="DF">DF - Distrito Federal</option>
+                    <option value="ES">ES - Espírito Santo</option>
+                    <option value="GO">GO - Goiás</option>
+                    <option value="MA">MA - Maranhão</option>
+                    <option value="MT">MT - Mato Grosso</option>
+                    <option value="MS">MS - Mato Grosso do Sul</option>
+                    <option value="MG">MG - Minas Gerais</option>
+                    <option value="PA">PA - Pará</option>
+                    <option value="PB">PB - Paraíba</option>
+                    <option value="PR">PR - Paraná</option>
+                    <option value="PE">PE - Pernambuco</option>
+                    <option value="PI">PI - Piauí</option>
+                    <option value="RJ">RJ - Rio de Janeiro</option>
+                    <option value="RN">RN - Rio Grande do Norte</option>
+                    <option value="RS">RS - Rio Grande do Sul</option>
+                    <option value="RO">RO - Rondônia</option>
+                    <option value="RR">RR - Roraima</option>
+                    <option value="SC">SC - Santa Catarina</option>
+                    <option value="SP">SP - São Paulo</option>
+                    <option value="SE">SE - Sergipe</option>
+                    <option value="TO">TO - Tocantins</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Situação Cadastral</label>
+                  <select id="situacao">
+                    <option value="ativa">Ativa</option>
+                    <option value="">Todas</option>
+                    <option value="baixada">Baixada</option>
+                    <option value="inapta">Inapta</option>
+                    <option value="suspensa">Suspensa</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>DDD</label>
+                  <input id="ddd" type="text" maxlength="2" placeholder="ex.: 11" />
+                </div>
+              </div>
+
+              <div class="checks-row">
+                <label class="check-item">
+                  <input type="checkbox" id="comTelefone" checked />
+                  Com telefone
+                </label>
+                <label class="check-item">
+                  <input type="checkbox" id="comEmail" />
+                  Com e-mail
+                </label>
+                <label class="check-item">
+                  <input type="checkbox" id="somenteMEI" />
+                  Somente MEI
+                </label>
+                <label class="check-item">
+                  <input type="checkbox" id="excluirMEI" />
+                  Excluir MEI
+                </label>
+                <label class="check-item">
+                  <input type="checkbox" id="somenteMatriz" />
+                  Somente Matriz
+                </label>
+              </div>
+
+              <hr class="divider" />
+
+              <div class="grid-2">
+                <div class="field">
+                  <label>Quantidade de leads</label>
+                  <input id="limit" type="number" min="1" max="2000" value="100" />
+                </div>
+                <div class="field">
+                  <label>Pasta no LeadFlowAI (opcional)</label>
+                  <input id="folder" type="text" placeholder="ex.: CNPJ SP Academias" />
+                </div>
+              </div>
+
+              <p class="hint">
+                💡 A extensão consulta a API da Casa dos Dados e coleta empresas conforme os filtros. Nenhuma aba do navegador é aberta.
+              </p>
+
+              <div class="btn-row">
+                <button class="btn btn-primary" id="startCapture">▶ Iniciar extração</button>
+                <button class="btn btn-danger" id="stopCapture" style="display:none">⏹ Parar</button>
+              </div>
+
+              <div id="progressBlock" class="progress-block">
+                <div class="progress-label" id="captureProgress">Aguardando...</div>
+                <div class="progress-bar-bg"><div class="progress-bar" id="progressBar"></div></div>
+              </div>
+              <div id="captureStatus" class="status-msg"></div>
+            </div>
+
+            <div class="card">
+              <div class="card-title"><span class="card-title-icon">📤</span> Enviar para LeadFlowAI</div>
+              <p class="hint">Envia os leads extraídos com telefone para o CRM.</p>
+              <div class="btn-row">
+                <button class="btn btn-primary" id="sendToSaaS">Enviar leads com telefone</button>
+                <button class="btn btn-secondary" id="exportCsv">Exportar CSV</button>
+              </div>
+              <div id="sendStatus" class="status-msg"></div>
+            </div>
+          </div>
+
+          <!-- ── Resultados ── -->
+          <div id="section-dashboard" class="section">
+            <div class="card">
+              <div class="card-title"><span class="card-title-icon">📊</span> Histórico de Extrações</div>
+              <div id="summary">Nenhuma extração realizada ainda.</div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Busca</th>
+                      <th>UF</th>
+                      <th>Extraídos</th>
+                      <th>Com Telefone</th>
+                      <th>Com E-mail</th>
+                    </tr>
+                  </thead>
+                  <tbody id="searchesBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── Configuração ── -->
+          <div id="section-config" class="section">
+            <div class="card">
+              <div class="card-title"><span class="card-title-icon">⚙️</span> Credenciais LeadFlowAI</div>
+              <div class="field">
+                <label>Tenant ID</label>
+                <input id="tenantId" type="text" placeholder="Ex.: tenant_demo" />
+              </div>
+              <div class="field">
+                <label>Token da extensão</label>
+                <input id="token" type="text" placeholder="Cole o token do painel LeadFlowAI" />
+              </div>
+              <div class="field">
+                <label>URL do Webhook</label>
+                <input id="webhookUrl" type="text" placeholder="https://SEU_WORKER/api/tools/cnpj/push-leads" />
+              </div>
+              <p class="hint">
+                ⚠️ A extensão abrirá o <strong>portal.casadosdados.com.br</strong> em segundo plano. Certifique-se de estar <strong>logado</strong> no site antes de iniciar a extração.
+              </p>
+              <div class="btn-row">
+                <button class="btn btn-primary" id="saveConfig">Salvar configuração</button>
+              </div>
+              <div id="configStatus" class="status-msg"></div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+    <script src="dashboard.js"></script>
+  </body>
+</html>

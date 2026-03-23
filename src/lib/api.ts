@@ -544,6 +544,9 @@ export const api = {
   getWhatsappConfig: () =>
     request<{ extensionToken: string }>("/tools/whatsapp/config"),
 
+  getCnpjConfig: () =>
+    request<{ extensionToken: string }>("/tools/cnpj/config"),
+
   // Lead Heat Map
   getLeadsHeat: () =>
     request<any[]>("/leads/heat"),

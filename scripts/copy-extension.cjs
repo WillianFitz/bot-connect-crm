@@ -42,4 +42,11 @@ copyExtension("whatsapp", [
   "icon16.png", "icon48.png", "icon128.png",
 ]);
 
+// CNPJ extractor
+copyExtension("cnpj", [
+  "manifest.json", "background.js", "content-script.js",
+  "dashboard.html", "dashboard.js", "popup.html", "popup.js",
+  "icon16.png", "icon48.png", "icon128.png",
+]);
+
 console.log("copy-extension: done.");

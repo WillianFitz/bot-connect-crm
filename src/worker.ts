@@ -4026,6 +4026,136 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
     }
   }
 
+  // /api/tools/cnpj/config  (GET/PUT)
+  if (parts.length === 4 && parts[2] === "cnpj" && parts[3] === "config") {
+    if (method === "GET") {
+      const row = await env.DB.prepare(
+        "SELECT config_json FROM tools_extractors WHERE tenant_id = ? AND type = 'cnpj' LIMIT 1",
+      ).bind(tenantId).first<{ config_json?: string }>();
+
+      let extensionToken: string | null = null;
+      if (row?.config_json) {
+        try {
+          const parsed = JSON.parse(row.config_json) as { extensionToken?: string };
+          extensionToken = parsed.extensionToken || null;
+        } catch { /* ignore */ }
+      }
+
+      if (!extensionToken) {
+        const bytes = new Uint8Array(20);
+        crypto.getRandomValues(bytes);
+        extensionToken = Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+        await env.DB.prepare("DELETE FROM tools_extractors WHERE tenant_id = ? AND type = 'cnpj'").bind(tenantId).run();
+        await env.DB.prepare("INSERT INTO tools_extractors (tenant_id, type, name, config_json) VALUES (?, 'cnpj', 'default', ?)").bind(tenantId, JSON.stringify({ extensionToken })).run();
+      }
+
+      return json({ extensionToken });
+    }
+
+    if (method === "PUT") {
+      const body = await readBody<{ extensionToken?: string }>(request);
+      const extensionToken = body.extensionToken?.trim() || "";
+      if (!extensionToken) return json({ error: "extensionToken obrigatório" }, { status: 400 });
+      await env.DB.prepare("DELETE FROM tools_extractors WHERE tenant_id = ? AND type = 'cnpj'").bind(tenantId).run();
+      await env.DB.prepare("INSERT INTO tools_extractors (tenant_id, type, name, config_json) VALUES (?, 'cnpj', 'default', ?)").bind(tenantId, JSON.stringify({ extensionToken })).run();
+      return json({ ok: true });
+    }
+    return new Response("Method not allowed", { status: 405 });
+  }
+
+  // /api/tools/cnpj/push-leads  (chamado pela extensão CNPJ)
+  if (parts.length === 4 && parts[2] === "cnpj" && parts[3] === "push-leads") {
+    if (method !== "POST") return new Response("Method not allowed", { status: 405 });
+
+    const extToken = request.headers.get("x-extension-token") || "";
+    const cfgRow = await env.DB.prepare(
+      "SELECT config_json FROM tools_extractors WHERE tenant_id = ? AND type = 'cnpj' LIMIT 1",
+    ).bind(tenantId).first<{ config_json?: string }>();
+
+    if (!cfgRow?.config_json) {
+      return json({ error: "Token da extensão CNPJ não configurado para este tenant." }, { status: 401 });
+    }
+
+    let expectedToken: string | null = null;
+    try {
+      const parsed = JSON.parse(cfgRow.config_json) as { extensionToken?: string };
+      expectedToken = parsed.extensionToken || null;
+    } catch {
+      return json({ error: "Configuração da ferramenta CNPJ inválida." }, { status: 401 });
+    }
+
+    if (!extToken || !expectedToken || extToken !== expectedToken) {
+      return json({ error: "Token da extensão inválido." }, { status: 401 });
+    }
+
+    const body = await readBody<{
+      leads?: Array<{
+        company?: string;
+        phone?: string;
+        email?: string;
+        website?: string;
+        cnpj?: string;
+        notes?: string;
+        folder_name?: string;
+      }>;
+      source?: string;
+    }>(request);
+
+    if (!Array.isArray(body.leads)) {
+      return json({ error: "Leads são obrigatórios" }, { status: 400 });
+    }
+
+    const guardCnpj = await guardExtensionPush(request, env, tenantId, body.leads);
+    if (guardCnpj) return guardCnpj;
+
+    await ensureTenant(env, tenantId);
+
+    let inserted = 0;
+    for (const lead of body.leads) {
+      const company = lead?.company != null ? String(lead.company).trim() : "";
+      const phone   = lead?.phone   != null ? String(lead.phone).trim()   : "";
+      if (!company && !phone) continue;
+      if (phone && !isPhonePlausible(phone)) continue;
+
+      // Resolve folder_id
+      let folderId: number | null = null;
+      const folderName = lead?.folder_name != null ? String(lead.folder_name).trim() : "";
+      if (folderName) {
+        const folderRow = await env.DB.prepare(
+          "SELECT id FROM lead_folders WHERE tenant_id = ? AND name = ? LIMIT 1",
+        ).bind(tenantId, folderName).first<{ id: number }>();
+        if (folderRow) {
+          folderId = folderRow.id;
+        } else {
+          const res = await env.DB.prepare("INSERT INTO lead_folders (tenant_id, name) VALUES (?, ?)")
+            .bind(tenantId, folderName).run();
+          const raw = res as { meta?: { last_row_id?: number }; lastRowId?: number };
+          folderId = raw.meta?.last_row_id ?? raw.lastRowId ?? null;
+        }
+      }
+
+      // Deduplicação por phone
+      if (phone) {
+        const exists = await env.DB.prepare(
+          "SELECT id FROM leads WHERE tenant_id = ? AND phone = ? LIMIT 1",
+        ).bind(tenantId, phone).first<{ id: number }>();
+        if (exists) continue;
+      }
+
+      const email   = lead?.email   != null ? String(lead.email).trim()   : null;
+      const website = lead?.website != null ? String(lead.website).trim() : null;
+      const notes   = lead?.notes   != null ? String(lead.notes).trim()   : null;
+
+      await env.DB.prepare(
+        `INSERT INTO leads (tenant_id, company, phone, folder_id, website, notes)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).bind(tenantId, company || null, phone || null, folderId, website, notes).run();
+      inserted += 1;
+    }
+
+    return json({ ok: true, inserted });
+  }
+
   return new Response("Not found", { status: 404 });
 }
 
@@ -5205,7 +5335,7 @@ export default {
     const allowedOrigins = (env.ALLOWED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean);
     const origin = request.headers.get("Origin") || "";
     const isPublicRoute = pathname.startsWith("/api/public/");
-    const isExtensionRoute = pathname.startsWith("/api/tools/gmaps/push-leads") || pathname.startsWith("/api/tools/instagram/push-leads") || pathname.startsWith("/api/tools/whatsapp/push-leads");
+    const isExtensionRoute = pathname.startsWith("/api/tools/gmaps/push-leads") || pathname.startsWith("/api/tools/instagram/push-leads") || pathname.startsWith("/api/tools/whatsapp/push-leads") || pathname.startsWith("/api/tools/cnpj/push-leads");
     const isExtensionOrigin = origin.startsWith("chrome-extension://") || origin.startsWith("moz-extension://");
     const allowOrigin = isPublicRoute || (isExtensionRoute && isExtensionOrigin)
       ? "*"
@@ -5302,7 +5432,7 @@ export default {
         response = await handleCRM(request, env, method, urlForRouting);
       } else if (pathname.startsWith("/api/funnels")) {
         response = await handleProspectFunnels(request, env, method, urlForRouting);
-      } else if (pathname.startsWith("/api/tools/instagram") || pathname.startsWith("/api/tools/gmaps") || pathname.startsWith("/api/tools/whatsapp")) {
+      } else if (pathname.startsWith("/api/tools/instagram") || pathname.startsWith("/api/tools/gmaps") || pathname.startsWith("/api/tools/whatsapp") || pathname.startsWith("/api/tools/cnpj")) {
         response = await handleInstagramTools(request, env, method, urlForRouting);
       } else if (pathname === "/api/ai/disparo" && method === "POST") {
         response = await handleAIDisparo(request, env);
