@@ -116,21 +116,35 @@ function findInfoPanel() {
   return null;
 }
 
-/* ── Clica em "Ver mais participantes" se existir ── */
+/* ── Clica em "Ver tudo / Ver mais participantes" se existir ── */
 async function tryClickVerMais() {
-  const terms = ['ver mais', 'view more', 'show more', 'see more', 'ver todos'];
-  for (const el of document.querySelectorAll('[role="button"], span, div, button')) {
-    if (!isOnRightSide(el)) continue;
-    if (!el.offsetParent) continue; // elemento oculto
+  // data-testid direto
+  for (const sel of ['[data-testid="see-all-participants"]','[data-testid*="see-all"]','[data-testid*="view-all"]']) {
+    const btn = document.querySelector(sel);
+    if (btn) { simulateClick(btn); await sleep(1200); return true; }
+  }
+
+  // Termos em PT e EN — inclui "Ver tudo" que é o texto real no WhatsApp PT
+  const terms = [
+    'ver tudo', 'ver todos', 'ver mais', 'view all', 'view more', 'show all', 'show more', 'see all', 'see more',
+  ];
+
+  // Busca em toda a metade direita (não só no painel, pois o botão pode estar num container pai)
+  for (const el of document.querySelectorAll('[role="button"], button, span, div')) {
+    const rect = el.getBoundingClientRect();
+    // Lado direito: left > 40% da largura (um pouco mais permissivo)
+    if (rect.left < window.innerWidth * 0.4) continue;
+    if (!el.offsetParent) continue;
     const txt = (el.textContent || '').trim().toLowerCase();
-    if (terms.some(t => txt === t) || txt.includes('ver mais participante')) {
-      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-      await sleep(1000);
-      return true;
+    if (terms.some(t => txt === t) || txt.includes('participante')) {
+      // Só clica se o texto for curto (botão, não um parágrafo)
+      if (txt.length <= 50) {
+        simulateClick(el);
+        await sleep(1200);
+        return true;
+      }
     }
   }
-  const btn = document.querySelector('[data-testid="see-all-participants"]');
-  if (btn) { btn.click(); await sleep(1000); return true; }
   return false;
 }
 
