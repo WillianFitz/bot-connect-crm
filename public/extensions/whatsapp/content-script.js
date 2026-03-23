@@ -6,17 +6,22 @@
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+function simulateClick(el) {
+  el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+  el.dispatchEvent(new MouseEvent('mouseup',   { bubbles: true, cancelable: true }));
+  el.dispatchEvent(new MouseEvent('click',     { bubbles: true, cancelable: true }));
+}
+
 /* ── Normalização de telefone ── */
 function normalizePhone(raw) {
   if (!raw) return '';
   const cleaned = raw.replace(/[^\d+]/g, '').replace(/(?!^)\+/g, '');
   if (!cleaned) return '';
-  let num = cleaned;
-  if (num.startsWith('+')) return num;
-  if (num.length === 10 || num.length === 11) return '+55' + num;
-  if (num.length === 12 || num.length === 13) return '+' + num;
-  if (num.length === 8  || num.length === 9)  return '+55' + num;
-  return '+' + num;
+  if (cleaned.startsWith('+')) return cleaned;
+  if (cleaned.length === 10 || cleaned.length === 11) return '+55' + cleaned;
+  if (cleaned.length === 12 || cleaned.length === 13) return '+' + cleaned;
+  if (cleaned.length === 8  || cleaned.length === 9)  return '+55' + cleaned;
+  return '+' + cleaned;
 }
 
 function looksLikePhone(text) {
@@ -25,26 +30,7 @@ function looksLikePhone(text) {
   return d.length >= 8 && d.length <= 15 && /[\d\s\-\+\(\)]{8,}/.test(text.trim());
 }
 
-/* ── Localiza o painel de info do grupo ── */
-function findGroupInfoPanel() {
-  for (const id of ['group-info-drawer','contact-info-panel','contact-info-drawer','app-viewer']) {
-    const el = document.querySelector(`[data-testid="${id}"]`);
-    if (el) return el;
-  }
-  // Painel rolável no lado direito
-  for (const el of document.querySelectorAll('div')) {
-    if (el.clientWidth < 200 || el.clientWidth > 620) continue;
-    if (el.scrollHeight <= el.clientHeight + 30) continue;
-    const s = window.getComputedStyle(el);
-    if (s.overflowY !== 'auto' && s.overflowY !== 'scroll') continue;
-    const rect = el.getBoundingClientRect();
-    if (rect.left < window.innerWidth * 0.4) continue;
-    return el;
-  }
-  return null;
-}
-
-/* ── Retorna chave de texto de um item de lista ── */
+/* ── Chave de texto de um item de lista ── */
 function getItemKey(el) {
   for (const s of el.querySelectorAll('span[title], span[dir="auto"], span[dir="ltr"]')) {
     const t = (s.getAttribute('title') || s.textContent || '').trim();
@@ -53,7 +39,27 @@ function getItemKey(el) {
   return el.textContent.trim().slice(0, 50);
 }
 
-/* ── Encontra itens de participante no painel ── */
+/* ── Localiza o painel de info do grupo (rolável, lado direito) ── */
+function findGroupInfoPanel() {
+  for (const id of ['group-info-drawer','contact-info-panel','contact-info-drawer','app-viewer']) {
+    const el = document.querySelector(`[data-testid="${id}"]`);
+    if (el) return el;
+  }
+  // Painel rolável no lado direito da tela
+  const divs = Array.from(document.querySelectorAll('div'));
+  for (const el of divs) {
+    if (el.clientWidth < 200 || el.clientWidth > 650) continue;
+    if (el.scrollHeight <= el.clientHeight + 30) continue;
+    const s    = window.getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    if ((s.overflowY === 'auto' || s.overflowY === 'scroll') && rect.left > window.innerWidth * 0.35) {
+      return el;
+    }
+  }
+  return null;
+}
+
+/* ── Retorna itens de participante visíveis no painel ── */
 function queryParticipantItems(panel) {
   for (const sel of [
     '[data-testid="cell-frame-container"]',
@@ -69,61 +75,31 @@ function queryParticipantItems(panel) {
   const all = Array.from(panel.querySelectorAll('div'));
   const candidates = all.filter(el => {
     const h = el.getBoundingClientRect().height;
-    return h >= 40 && h <= 90 &&
-           el.querySelectorAll('span[dir="auto"], span[dir="ltr"]').length >= 1;
+    return h >= 40 && h <= 90 && el.querySelectorAll('span[dir="auto"], span[dir="ltr"]').length >= 1;
   });
   return candidates.filter(el => !candidates.some(o => o !== el && o.contains(el)));
 }
 
-/* ── Fase 1: Rola o painel e coleta todas as chaves de participante ── */
-async function collectParticipantKeys(panel) {
-  const keys = [];
-  const seen = new Set();
-
-  panel.scrollTop = 0;
-  await sleep(400);
-
-  let noNewRounds = 0;
-
-  while (noNewRounds < 6) {
-    const items = queryParticipantItems(panel);
-    let added = 0;
-    for (const item of items) {
-      const key = getItemKey(item);
-      if (key && !seen.has(key)) {
-        seen.add(key);
-        keys.push(key);
-        added++;
-      }
+/* ── Aguarda o painel de perfil do contato abrir ── */
+async function waitForProfilePanel(timeout = 3500) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    // Verifica se apareceu um back button (indica novo painel aberto)
+    for (const sel of ['[data-testid="back"]','[data-testid="btn-back"]',
+                       'button[aria-label="Back"]','button[aria-label="Voltar"]']) {
+      if (document.querySelector(sel)) return true;
     }
-    if (!added) noNewRounds++;
-    else noNewRounds = 0;
-
-    panel.scrollTop += 700;
-    await sleep(400);
-    if (panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 30) break;
+    // Ou se apareceu um telefone visível
+    for (const s of document.querySelectorAll('span[dir="ltr"]')) {
+      if (looksLikePhone(s.textContent.trim())) return true;
+    }
+    await sleep(300);
   }
-
-  // Coleta itens que apareceram no final também
-  const items = queryParticipantItems(panel);
-  for (const item of items) {
-    const key = getItemKey(item);
-    if (key && !seen.has(key)) { seen.add(key); keys.push(key); }
-  }
-
-  return keys;
-}
-
-/* ── Encontra item no DOM pela chave de texto ── */
-function findItemByKey(panel, key) {
-  const items = queryParticipantItems(panel);
-  return items.find(el => getItemKey(el) === key) || null;
+  return false;
 }
 
 /* ── Extrai nome e telefone do painel de perfil aberto ── */
 async function extractFromProfilePanel() {
-  await sleep(900);
-
   let phone = '';
   let name  = '';
 
@@ -132,15 +108,13 @@ async function extractFromProfilePanel() {
     const el = document.querySelector(sel);
     if (el) { const t = el.textContent.trim(); if (looksLikePhone(t)) { phone = normalizePhone(t); break; } }
   }
-
-  // Telefone — spans com texto de telefone
+  // Telefone — spans ltr (formato de número)
   if (!phone) {
-    for (const span of document.querySelectorAll('span[dir="ltr"], span[dir="auto"]')) {
-      const t = span.textContent.trim();
+    for (const s of document.querySelectorAll('span[dir="ltr"]')) {
+      const t = s.textContent.trim();
       if (looksLikePhone(t) && t.length <= 22) { phone = normalizePhone(t); break; }
     }
   }
-
   // Telefone — link tel:
   if (!phone) {
     const tel = document.querySelector('a[href^="tel:"]');
@@ -152,7 +126,7 @@ async function extractFromProfilePanel() {
     '[data-testid="contact-info-header"] span[dir="auto"]',
     '[data-testid="contact-name"]',
     '[data-testid="contact-display-name"]',
-    'h1 span', 'h2 span', 'h1', 'h2',
+    'h1 span[dir="auto"]', 'h2 span[dir="auto"]', 'h1', 'h2',
   ]) {
     const el = document.querySelector(sel);
     if (el) {
@@ -160,14 +134,11 @@ async function extractFromProfilePanel() {
       if (t.length >= 2 && !looksLikePhone(t)) { name = t; break; }
     }
   }
-
-  // Nome — fallback: primeiro span com texto relevante
+  // Nome — fallback span[title]
   if (!name) {
     for (const s of document.querySelectorAll('span[title], span[dir="auto"]')) {
       const t = (s.getAttribute('title') || s.textContent || '').trim();
-      if (t.length >= 2 && !looksLikePhone(t) && t !== 'Você' && t !== 'You') {
-        name = t; break;
-      }
+      if (t.length >= 2 && !looksLikePhone(t) && t !== 'Você' && t !== 'You') { name = t; break; }
     }
   }
 
@@ -177,23 +148,23 @@ async function extractFromProfilePanel() {
 /* ── Clica no botão Voltar ── */
 async function clickBack() {
   for (const sel of [
-    '[data-testid="back"]', '[data-testid="btn-back"]',
-    'button[aria-label="Back"]', 'button[aria-label="Voltar"]',
+    '[data-testid="back"]','[data-testid="btn-back"]',
+    'button[aria-label="Back"]','button[aria-label="Voltar"]',
     '[data-testid*="back"]',
   ]) {
     const el = document.querySelector(sel);
-    if (el) { el.click(); await sleep(600); return; }
+    if (el) { el.click(); await sleep(700); return; }
   }
   for (const el of document.querySelectorAll('button,[role="button"]')) {
     const lbl = (el.getAttribute('aria-label') || '').toLowerCase();
-    if (lbl.includes('back') || lbl.includes('voltar')) { el.click(); await sleep(600); return; }
+    if (lbl.includes('back') || lbl.includes('voltar')) { el.click(); await sleep(700); return; }
   }
   document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Escape', keyCode: 27 }));
-  await sleep(600);
+  await sleep(700);
 }
 
 /* ══════════════════════════════════════════════════════════
-   Extração principal
+   Extração principal — processa itens visíveis progressivamente
    ══════════════════════════════════════════════════════════ */
 async function extractParticipants(targetCount) {
   await sleep(600);
@@ -206,56 +177,60 @@ async function extractParticipants(targetCount) {
     };
   }
 
-  // Fase 1: coleta todas as chaves de participante rolando o painel
-  const keys = await collectParticipantKeys(panel);
+  const processed  = new Set();
+  const leads      = [];
+  let   noProgress = 0;
 
-  if (!keys.length) {
-    return {
-      ok: false,
-      error: 'Nenhum participante encontrado. Certifique-se de que o painel de informações está aberto com a lista de participantes visível.',
-    };
-  }
+  while (leads.length < targetCount && noProgress < 10) {
+    const items = queryParticipantItems(panel);
 
-  const leads   = [];
-  const seenKey = new Set();
-
-  // Fase 2: clica em cada participante pelo sua chave
-  for (const key of keys) {
-    if (leads.length >= targetCount) break;
-    if (seenKey.has(key)) continue;
-    seenKey.add(key);
-
-    // Rola o painel para que o item fique visível
-    panel.scrollTop = 0;
-    await sleep(200);
-    let target = null;
-    for (let scroll = 0; scroll < 40; scroll++) {
-      target = findItemByKey(panel, key);
-      if (target) break;
-      panel.scrollTop += 500;
-      await sleep(300);
+    // Encontra o primeiro item não processado
+    let target    = null;
+    let targetKey = '';
+    for (const item of items) {
+      const key = getItemKey(item);
+      if (!processed.has(key)) { target = item; targetKey = key; break; }
     }
 
-    if (!target) continue; // Item não encontrado, pula
+    if (!target) {
+      // Sem item novo visível — rola para baixo
+      const before = panel.scrollTop;
+      panel.scrollTop += 600;
+      await sleep(500);
+      if (panel.scrollTop === before) break; // Chegou ao fim
+      noProgress++;
+      continue;
+    }
 
+    noProgress = 0;
+    processed.add(targetKey);
+
+    // Clica no participante
     target.scrollIntoView({ block: 'center' });
-    await sleep(200);
-    target.click();
+    await sleep(250);
+    simulateClick(target);
 
-    const { name, phone } = await extractFromProfilePanel();
-    await clickBack();
+    // Aguarda o painel de perfil abrir
+    const opened = await waitForProfilePanel(3500);
 
-    // Aguarda o painel de grupo reaparecer
-    await sleep(400);
+    if (opened) {
+      await sleep(300); // Deixa o painel estabilizar
+      const { name, phone } = await extractFromProfilePanel();
+      await clickBack();
+      await sleep(500); // Aguarda painel do grupo reaparecer
 
-    if (!name && !phone) continue;
-    if (name === 'Você' || name === 'You') continue;
-
-    leads.push({ name: name || phone, phone });
+      if ((name || phone) && name !== 'Você' && name !== 'You') {
+        leads.push({ name: name || phone, phone });
+      }
+    } else {
+      // Perfil não abriu — tenta fechar qualquer painel aberto e continua
+      await clickBack();
+      await sleep(500);
+    }
   }
 
   if (!leads.length) {
-    return { ok: false, error: 'Nenhum dado extraído. O painel de perfil pode não estar carregando.' };
+    return { ok: false, error: 'Nenhum dado extraído. Verifique se o painel de informações do grupo está aberto com a lista de participantes visível.' };
   }
 
   return { ok: true, leads, total: leads.length };
