@@ -82,16 +82,14 @@ function queryParticipantItems(panel) {
 
 /* ── Aguarda o painel de perfil do contato abrir ── */
 async function waitForProfilePanel(timeout = 3500) {
+  // NÃO checa botão Voltar — ele existe no próprio painel de info do grupo
+  // Checa apenas se um telefone apareceu no DOM (só existe em perfil individual)
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    // Verifica se apareceu um back button (indica novo painel aberto)
-    for (const sel of ['[data-testid="back"]','[data-testid="btn-back"]',
-                       'button[aria-label="Back"]','button[aria-label="Voltar"]']) {
-      if (document.querySelector(sel)) return true;
-    }
-    // Ou se apareceu um telefone visível
+    if (document.querySelector('[data-testid="contact-phone-number"]')) return true;
     for (const s of document.querySelectorAll('span[dir="ltr"]')) {
-      if (looksLikePhone(s.textContent.trim())) return true;
+      const t = s.textContent.trim();
+      if (looksLikePhone(t) && t.length <= 22) return true;
     }
     await sleep(300);
   }
@@ -223,9 +221,8 @@ async function extractParticipants(targetCount) {
         leads.push({ name: name || phone, phone });
       }
     } else {
-      // Perfil não abriu — tenta fechar qualquer painel aberto e continua
-      await clickBack();
-      await sleep(500);
+      // Perfil não abriu — segue para o próximo sem fechar nada
+      await sleep(300);
     }
   }
 
