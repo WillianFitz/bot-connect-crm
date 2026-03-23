@@ -77,6 +77,7 @@ const GMAPS_EXTENSION_FILES = [
 const CNPJ_EXTENSION_FILES = [
   "manifest.json",
   "background.js",
+  "content-script.js",
   "dashboard.html",
   "dashboard.js",
   "popup.html",
