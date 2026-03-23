@@ -131,14 +131,21 @@ function findVerTudoBtn() {
     if (btn && btn.offsetParent) return btn;
   }
 
-  const terms = ['ver tudo','ver todos','ver mais','view all','view more','see all','see more','show all'];
+  // Termos que podem aparecer EM QUALQUER PARTE do texto do botão
+  const terms = ['ver tudo','ver todos','ver mais','view all','view more','see all','see more','show all','show more'];
 
-  // TreeWalker acha nós de texto exatos — não depende de seletores nem nesting
+  function textMatches(txt) {
+    const lower = txt.trim().toLowerCase();
+    return terms.some(t => lower.includes(t));
+  }
+
+  // TreeWalker varre todos os nós de texto
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   let node;
   while ((node = walker.nextNode())) {
-    const txt = (node.textContent || '').trim().toLowerCase();
-    if (!terms.includes(txt)) continue;
+    const txt = (node.textContent || '').trim();
+    if (!txt || txt.length > 60) continue; // ignora textos muito longos (corpo de mensagem)
+    if (!textMatches(txt)) continue;
 
     // Garante que está no lado direito
     const parent = node.parentElement;
@@ -149,7 +156,7 @@ function findVerTudoBtn() {
 
     // Sobe até achar elemento clicável
     let el = parent;
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 8; i++) {
       if (!el) break;
       const role = el.getAttribute('role');
       if (role === 'button' || el.tagName === 'BUTTON' || el.tagName === 'A') return el;
