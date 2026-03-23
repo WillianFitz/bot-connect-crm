@@ -1,8 +1,9 @@
 /* ══════════════════════════════════════════════════════════
    Content Script — Extrator WhatsApp
-   Extrai participantes do painel de info do grupo aberto
+   Injeta painel flutuante diretamente no WhatsApp Web
    ══════════════════════════════════════════════════════════ */
 
+/* ── Utilidades ── */
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 function looksLikePhone(text) {
@@ -24,127 +25,381 @@ function normalizePhone(text) {
   return num;
 }
 
-function extractFromCells(cells) {
+/* ── Extrai leads de uma lista de elementos ── */
+function extractFromItems(items) {
   const seen = new Set();
   const leads = [];
-
-  cells.forEach(cell => {
-    // Try data-testid selectors first, fall back to span[dir=auto]
-    const allSpans = Array.from(cell.querySelectorAll('span[dir="auto"], span[dir="ltr"]'));
-    const texts = allSpans.map(s => s.textContent?.trim()).filter(Boolean);
-
-    let phone = '';
-    let name = texts[0] || '';
-
+  items.forEach(item => {
+    const spans = Array.from(item.querySelectorAll('span[dir="auto"], span[dir="ltr"]'));
+    const texts = spans.map(s => s.textContent?.trim()).filter(Boolean);
+    let phone = '', name = texts[0] || '';
     if (looksLikePhone(texts[0])) {
-      phone = normalizePhone(texts[0]);
-      name = '';
+      phone = normalizePhone(texts[0]); name = '';
     } else {
       for (const t of texts.slice(1)) {
         if (looksLikePhone(t)) { phone = normalizePhone(t); break; }
       }
     }
-
     const key = phone || name;
     if (!key || seen.has(key)) return;
-    // Skip "Você" / "You" / empty / very short
     if (name === 'Você' || name === 'You' || name.length < 2) return;
     seen.add(key);
     leads.push({ name, phone });
   });
-
   return leads;
 }
 
-function findScrollableInfoPanel() {
-  // WhatsApp Web uses various structures — try several strategies
+function findItems(container) {
+  for (const sel of [
+    '[data-testid="cell-frame-container"]',
+    '[data-testid*="list-item"]',
+    '[data-testid*="contact-list-item"]',
+    '[data-testid*="participant"]',
+    '[role="listitem"]',
+  ]) {
+    const items = container.querySelectorAll(sel);
+    if (items.length >= 2) return Array.from(items);
+  }
+  const all = Array.from(container.querySelectorAll('div'));
+  const candidates = all.filter(el => {
+    const h = el.getBoundingClientRect().height;
+    return h >= 40 && h <= 90 && el.querySelectorAll('span[dir="auto"], span[dir="ltr"]').length >= 1;
+  });
+  return candidates.filter(el => !candidates.some(o => o !== el && o.contains(el)));
+}
 
-  // Strategy 1: data-testid selectors
-  const testIds = [
-    'contact-info-panel',
-    'group-info-drawer',
-    'contact-info-drawer',
-    'group-participants-list',
-    'participant-list',
-    'participant-list-scroll',
-  ];
-  for (const id of testIds) {
+function findInfoPanel() {
+  for (const id of ['contact-info-panel','group-info-drawer','contact-info-drawer',
+                    'group-participants-list','participant-list','participant-list-scroll']) {
     const el = document.querySelector(`[data-testid="${id}"]`);
     if (el) return el;
   }
-
-  // Strategy 2: find a scrollable element that contains cell-frame-container items
-  const allScrollable = document.querySelectorAll('div');
-  for (const el of allScrollable) {
-    if (el.scrollHeight > el.clientHeight + 50 && el.clientWidth > 150 && el.clientWidth < 500) {
-      const cells = el.querySelectorAll('[data-testid="cell-frame-container"]');
-      if (cells.length > 0) return el;
+  for (const el of document.querySelectorAll('div')) {
+    if (el.scrollHeight <= el.clientHeight + 30 || el.clientWidth < 150 || el.clientWidth > 550) continue;
+    const s = window.getComputedStyle(el);
+    if (s.overflowY !== 'auto' && s.overflowY !== 'scroll') continue;
+    if (findItems(el).length >= 2) return el;
+  }
+  for (const el of document.querySelectorAll('span, div, p')) {
+    if (el.children.length > 0) continue;
+    const txt = el.textContent.trim().toLowerCase();
+    if (txt === 'participantes' || txt === 'participants' ||
+        /^\d+\s+participantes?$/.test(txt) || /^\d+\s+members?$/.test(txt)) {
+      let parent = el.parentElement;
+      for (let i = 0; i < 10 && parent; i++) {
+        const s = window.getComputedStyle(parent);
+        if ((s.overflowY === 'auto' || s.overflowY === 'scroll') && parent.clientWidth > 150) return parent;
+        parent = parent.parentElement;
+      }
     }
   }
-
   return null;
 }
 
-async function extractParticipants(targetCount) {
-  // Wait a moment for DOM to stabilize
-  await sleep(500);
-
-  const panel = findScrollableInfoPanel();
-  const allCells = (panel || document).querySelectorAll('[data-testid="cell-frame-container"]');
-
-  if (allCells.length === 0) {
-    return {
-      ok: false,
-      error: "Painel de participantes não encontrado. No WhatsApp Web, abra um grupo e clique no nome do grupo para abrir as Informações do grupo. Em seguida, clique em Extrair."
-    };
-  }
+async function extractParticipants(targetCount, onProgress) {
+  await sleep(600);
+  const panel = findInfoPanel();
 
   if (!panel) {
-    // No scrollable container found, just extract what's visible
-    const leads = extractFromCells(allCells);
-    return { ok: true, leads, total: leads.length };
+    const docItems = document.querySelectorAll(
+      '[data-testid="cell-frame-container"], [data-testid*="list-item"], [role="listitem"]'
+    );
+    if (docItems.length >= 2) {
+      const leads = extractFromItems(Array.from(docItems));
+      if (leads.length >= 1) return { ok: true, leads };
+    }
+    return { ok: false, error: 'Painel de participantes não encontrado. Clique no nome do grupo para abrir as Informações do grupo.' };
   }
 
   const seen = new Set();
   const leads = [];
-  let noNewRounds = 0;
-  let prevCount = 0;
+  let noNewRounds = 0, prevCount = 0;
 
-  while (leads.length < targetCount && noNewRounds < 10) {
-    const cells = panel.querySelectorAll('[data-testid="cell-frame-container"]');
-    const newLeads = extractFromCells(cells);
-
+  while (leads.length < targetCount && noNewRounds < 12) {
+    const newLeads = extractFromItems(findItems(panel));
     for (const lead of newLeads) {
       const key = lead.phone || lead.name;
       if (!key || seen.has(key)) continue;
-      seen.add(key);
-      leads.push(lead);
+      seen.add(key); leads.push(lead);
     }
+    if (leads.length === prevCount) noNewRounds++;
+    else { noNewRounds = 0; prevCount = leads.length; }
 
-    if (leads.length === prevCount) {
-      noNewRounds++;
-    } else {
-      noNewRounds = 0;
-      prevCount = leads.length;
-    }
+    if (onProgress) onProgress(leads.length);
 
-    // Scroll to load more
     panel.scrollTop += 600;
-    await sleep(600);
-
-    // Stop if reached bottom
+    await sleep(500);
     if (panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 30) break;
   }
 
-  return { ok: true, leads, total: leads.length };
+  if (!leads.length) return { ok: false, error: 'Nenhum participante encontrado. Certifique-se de que o painel de informações está aberto.' };
+  return { ok: true, leads };
 }
 
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.type === "PING") {
-    sendResponse({ ok: true });
-    return false;
+/* ══════════════════════════════════════════════════════════
+   PAINEL FLUTUANTE — injeta Shadow DOM no WhatsApp Web
+   ══════════════════════════════════════════════════════════ */
+
+const PANEL_CSS = `
+  :host { all: initial; }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif; }
+  .panel {
+    position: fixed; bottom: 80px; right: 16px; z-index: 2147483647;
+    width: 310px; background: #111113; border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 14px; box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+    color: #e4e4e7; font-size: 13px; overflow: hidden;
+    display: flex; flex-direction: column;
   }
-  if (msg.type === "EXTRACT_PARTICIPANTS") {
+  .header {
+    padding: 12px 14px; background: #18181b;
+    border-bottom: 1px solid rgba(255,255,255,0.07);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .header-left { display: flex; align-items: center; gap: 8px; }
+  .logo-icon {
+    width: 26px; height: 26px; border-radius: 7px; flex-shrink: 0;
+    background: linear-gradient(135deg,hsl(192,91%,52%),hsl(265,80%,60%));
+    display: flex; align-items: center; justify-content: center;
+  }
+  .title { font-size: 13px; font-weight: 700; }
+  .close-btn {
+    background: none; border: none; color: #71717a; font-size: 18px;
+    cursor: pointer; padding: 0 4px; line-height: 1;
+  }
+  .close-btn:hover { color: #e4e4e7; }
+  .body { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+  .field label {
+    display: block; font-size: 10px; font-weight: 700; color: #a1a1aa;
+    margin-bottom: 4px; text-transform: uppercase; letter-spacing: .05em;
+  }
+  .field input {
+    width: 100%; background: #18181b; border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px; padding: 7px 10px; color: #e4e4e7; font-size: 12px;
+    outline: none; font-family: inherit;
+  }
+  .field input:focus { border-color: #22c55e; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .btn {
+    padding: 8px 12px; border-radius: 8px; font-size: 12px; font-weight: 600;
+    cursor: pointer; border: none; font-family: inherit; display: flex;
+    align-items: center; justify-content: center; gap: 5px;
+  }
+  .btn-primary { background: #22c55e; color: #000; }
+  .btn-primary:hover { background: #4ade80; }
+  .btn-primary:disabled { opacity: .45; cursor: not-allowed; }
+  .btn-secondary { background: #1e1e22; border: 1px solid rgba(255,255,255,0.1); color: #e4e4e7; }
+  .btn-secondary:hover { background: #27272a; }
+  .btn-secondary:disabled { opacity: .45; cursor: not-allowed; }
+  .btn-row { display: flex; gap: 7px; }
+  .status {
+    font-size: 11px; padding: 7px 10px; border-radius: 8px;
+    display: none; line-height: 1.4;
+  }
+  .status.show { display: block; }
+  .status.ok   { background: rgba(34,197,94,.12);  color: #22c55e; border: 1px solid rgba(34,197,94,.2); }
+  .status.err  { background: rgba(248,113,113,.12); color: #f87171; border: 1px solid rgba(248,113,113,.2); }
+  .status.info { background: #1e1e22; color: #a1a1aa; border: 1px solid rgba(255,255,255,.08); }
+  .progress { display: none; flex-direction: column; gap: 4px; }
+  .progress.show { display: flex; }
+  .progress-label { font-size: 10px; color: #a1a1aa; }
+  .progress-track { height: 3px; background: #27272a; border-radius: 99px; overflow: hidden; }
+  .progress-bar   { height: 100%; background: #22c55e; border-radius: 99px; transition: width .3s; width: 0%; }
+  .divider { border: none; border-top: 1px solid rgba(255,255,255,.07); }
+`;
+
+const PANEL_HTML = `
+  <div class="panel" id="panel">
+    <div class="header">
+      <div class="header-left">
+        <div class="logo-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14">
+            <path d="M14 2 L6 14 H11 L10 22 L18 10 H13 Z" fill="hsl(222,47%,6%)"/>
+          </svg>
+        </div>
+        <span class="title">Extrator WhatsApp</span>
+      </div>
+      <button class="close-btn" id="closeBtn">✕</button>
+    </div>
+    <div class="body">
+      <div class="row">
+        <div class="field">
+          <label>Pasta (opcional)</label>
+          <input id="folder" type="text" placeholder="ex.: Grupo SP" />
+        </div>
+        <div class="field">
+          <label>Limite</label>
+          <input id="limit" type="number" value="200" min="1" max="5000" />
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="startBtn" style="flex:1">▶ Iniciar extração</button>
+      </div>
+      <div class="progress" id="progressBlock">
+        <div class="progress-label" id="progressLabel">Aguardando...</div>
+        <div class="progress-track"><div class="progress-bar" id="progressBar"></div></div>
+      </div>
+      <div class="status" id="extractStatus"></div>
+      <hr class="divider" />
+      <div class="btn-row">
+        <button class="btn btn-primary" id="sendBtn" style="flex:1" disabled>📤 Enviar leads</button>
+        <button class="btn btn-secondary" id="csvBtn" disabled>CSV</button>
+      </div>
+      <div class="status" id="sendStatus"></div>
+    </div>
+  </div>
+`;
+
+let _panelHost   = null;
+let _panelShadow = null;
+let _leads       = [];
+let _running     = false;
+
+function showStatus(shadow, id, text, type) {
+  const el = shadow.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'status' + (text ? (' show ' + type) : '');
+}
+
+function setProgress(shadow, text, pct) {
+  const block = shadow.getElementById('progressBlock');
+  const label = shadow.getElementById('progressLabel');
+  const bar   = shadow.getElementById('progressBar');
+  if (!text) { block.classList.remove('show'); return; }
+  block.classList.add('show');
+  label.textContent = text;
+  if (pct != null) bar.style.width = Math.min(100, pct) + '%';
+}
+
+function initPanel(shadow) {
+  // Carrega dados salvos
+  chrome.storage.local.get(['folder','limit','tenantId','extensionToken','webhookUrl'], data => {
+    if (data.folder) shadow.getElementById('folder').value = data.folder;
+    if (data.limit)  shadow.getElementById('limit').value  = data.limit;
+  });
+
+  // Fechar
+  shadow.getElementById('closeBtn').addEventListener('click', () => {
+    _panelHost.style.display = 'none';
+  });
+
+  // Iniciar extração
+  shadow.getElementById('startBtn').addEventListener('click', async () => {
+    if (_running) return;
+    const folder = shadow.getElementById('folder').value.trim();
+    const limit  = parseInt(shadow.getElementById('limit').value || '200', 10);
+    chrome.storage.local.set({ folder, limit });
+
+    _running = true;
+    _leads   = [];
+    const startBtn = shadow.getElementById('startBtn');
+    const sendBtn  = shadow.getElementById('sendBtn');
+    const csvBtn   = shadow.getElementById('csvBtn');
+    startBtn.disabled = true;
+    startBtn.textContent = '⏳ Extraindo...';
+    sendBtn.disabled = true;
+    csvBtn.disabled  = true;
+    showStatus(shadow, 'extractStatus', '', '');
+    setProgress(shadow, 'Buscando participantes...', 5);
+
+    const result = await extractParticipants(limit, count => {
+      setProgress(shadow, `${count} participantes encontrados...`, Math.min(95, 5 + count));
+    });
+
+    _running = false;
+    startBtn.disabled = false;
+    startBtn.textContent = '▶ Iniciar extração';
+
+    if (!result.ok) {
+      setProgress(shadow, null);
+      showStatus(shadow, 'extractStatus', result.error, 'err');
+      return;
+    }
+
+    _leads = result.leads;
+    const withPhone = _leads.filter(l => l.phone).length;
+    setProgress(shadow, `✅ ${_leads.length} participantes · ${withPhone} com telefone`, 100);
+    showStatus(shadow, 'extractStatus', '', '');
+
+    chrome.storage.local.set({ lastLeads: _leads });
+
+    sendBtn.disabled = withPhone === 0;
+    csvBtn.disabled  = _leads.length === 0;
+  });
+
+  // Enviar para SaaS
+  shadow.getElementById('sendBtn').addEventListener('click', async () => {
+    chrome.storage.local.get(['tenantId','extensionToken','webhookUrl'], async data => {
+      const folder = shadow.getElementById('folder').value.trim();
+      const leads  = _leads.length ? _leads : [];
+      const withPhone = leads.filter(l => l.phone?.trim());
+
+      if (!data.tenantId || !data.extensionToken || !data.webhookUrl) {
+        showStatus(shadow, 'sendStatus', 'Configure Tenant, Token e Webhook no painel LeadFlowAI.', 'err'); return;
+      }
+      if (!withPhone.length) {
+        showStatus(shadow, 'sendStatus', 'Nenhum lead com telefone para enviar.', 'err'); return;
+      }
+
+      showStatus(shadow, 'sendStatus', `Enviando ${withPhone.length} leads...`, 'info');
+
+      try {
+        const res = await fetch(data.webhookUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-tenant-id': data.tenantId,
+            'x-extension-token': data.extensionToken,
+          },
+          body: JSON.stringify({
+            leads: withPhone.map(l => ({ company: l.name || l.phone, phone: l.phone.trim(), folder_name: folder || undefined })),
+            source: 'whatsapp',
+          }),
+        });
+        if (!res.ok) { showStatus(shadow, 'sendStatus', 'Erro: ' + (await res.text() || res.statusText), 'err'); return; }
+        const r = await res.json().catch(() => ({}));
+        showStatus(shadow, 'sendStatus', `✅ ${r.inserted ?? withPhone.length} leads enviados!`, 'ok');
+      } catch {
+        showStatus(shadow, 'sendStatus', 'Erro de rede. Verifique o Webhook.', 'err');
+      }
+    });
+  });
+
+  // Exportar CSV
+  shadow.getElementById('csvBtn').addEventListener('click', () => {
+    const leads = _leads.length ? _leads : [];
+    if (!leads.length) return;
+    const folder = shadow.getElementById('folder').value.trim() || 'whatsapp';
+    const rows = [['name','phone'], ...leads.map(l => [l.name||'', l.phone||''])];
+    const csv  = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(';')).join('\n');
+    const url  = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+    chrome.downloads.download({ url, filename: `whatsapp-${folder}.csv`, saveAs: true });
+  });
+}
+
+function createOrShowPanel() {
+  if (_panelHost) {
+    _panelHost.style.display = _panelHost.style.display === 'none' ? 'block' : 'none';
+    return;
+  }
+
+  _panelHost = document.createElement('div');
+  _panelHost.id = '__leadflow_wa_panel__';
+  _panelHost.style.cssText = 'all:unset;position:fixed;z-index:2147483647;';
+  document.body.appendChild(_panelHost);
+
+  _panelShadow = _panelHost.attachShadow({ mode: 'open' });
+  _panelShadow.innerHTML = `<style>${PANEL_CSS}</style>${PANEL_HTML}`;
+  initPanel(_panelShadow);
+}
+
+/* ══════════════════════════════════════════════════════════
+   Listener de mensagens
+   ══════════════════════════════════════════════════════════ */
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === 'PING')         { sendResponse({ ok: true }); return false; }
+  if (msg.type === 'TOGGLE_PANEL') { createOrShowPanel(); sendResponse({ ok: true }); return false; }
+  if (msg.type === 'EXTRACT_PARTICIPANTS') {
     extractParticipants(msg.targetCount || 5000).then(result => sendResponse(result));
     return true;
   }
