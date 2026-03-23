@@ -6,42 +6,32 @@
     <style>
       body {
         font-family: -apple-system, BlinkMacSystemFont, "Inter", sans-serif;
-        margin: 0; padding: 14px; width: 240px;
-        background: #09090b; color: #e4e4e7;
+        margin: 0; padding: 14px; width: 200px;
+        background: #09090b; color: #71717a; font-size: 11px; text-align: center;
       }
-      .logo { display:flex; align-items:center; gap:9px; margin-bottom:10px; }
+      .logo { display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:8px; }
       .logo-icon {
-        width:30px; height:30px; border-radius:8px; flex-shrink:0;
+        width:24px; height:24px; border-radius:6px; flex-shrink:0;
         background:linear-gradient(135deg,hsl(192,91%,52%),hsl(265,80%,60%));
         display:flex; align-items:center; justify-content:center;
       }
-      .logo-text { font-size:13px; font-weight:700; }
-      .logo-sub  { font-size:10px; color:#52525b; }
-      p { font-size:11px; color:#71717a; margin:0 0 12px; line-height:1.5; }
-      button {
-        width:100%; padding:9px; font-size:12px; font-weight:600;
-        cursor:pointer; border:none; border-radius:8px;
-        background:#22c55e; color:#000; font-family:inherit;
-      }
-      button:hover { background:#4ade80; }
-      .err { font-size:11px; color:#f87171; margin-top:8px; display:none; }
+      .logo-text { font-size:12px; font-weight:700; color:#e4e4e7; }
+      .err { font-size:11px; color:#f87171; margin-top:4px; }
     </style>
   </head>
   <body>
     <div class="logo">
       <div class="logo-icon">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13">
           <path d="M14 2 L6 14 H11 L10 22 L18 10 H13 Z" fill="hsl(222,47%,6%)"/>
         </svg>
       </div>
-      <div>
-        <div class="logo-text">Extrator WhatsApp</div>
-        <div class="logo-sub">LeadFlowAI</div>
-      </div>
+      <span class="logo-text">Extrator WhatsApp</span>
     </div>
-    <p>Abra um grupo no WhatsApp Web e clique abaixo para mostrar o painel de extração diretamente na página.</p>
-    <button id="toggleBtn">Abrir painel no WhatsApp</button>
-    <div class="err" id="err">WhatsApp Web não está aberto. Acesse web.whatsapp.com primeiro.</div>
+    <div id="msg">Abrindo painel...</div>
+    <div class="err" id="err" style="display:none">
+      WhatsApp Web não está aberto.<br>Acesse web.whatsapp.com primeiro.
+    </div>
     <script src="popup.js"></script>
   </body>
 </html>

@@ -116,8 +116,29 @@ function findInfoPanel() {
   return null;
 }
 
+/* ── Clica em "Ver mais participantes" se existir ── */
+async function tryClickVerMais() {
+  const terms = ['ver mais', 'view more', 'show more', 'see more', 'ver todos'];
+  for (const el of document.querySelectorAll('[role="button"], span, div, button')) {
+    if (!isOnRightSide(el)) continue;
+    if (!el.offsetParent) continue; // elemento oculto
+    const txt = (el.textContent || '').trim().toLowerCase();
+    if (terms.some(t => txt === t) || txt.includes('ver mais participante')) {
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      await sleep(1000);
+      return true;
+    }
+  }
+  const btn = document.querySelector('[data-testid="see-all-participants"]');
+  if (btn) { btn.click(); await sleep(1000); return true; }
+  return false;
+}
+
 async function extractParticipants(targetCount, onProgress) {
   await sleep(600);
+  // Clica em "Ver mais participantes" se aparecer
+  await tryClickVerMais();
+
   const panel = findInfoPanel();
 
   if (!panel) {
@@ -166,7 +187,7 @@ const PANEL_CSS = `
   :host { all: initial; }
   * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif; }
   .panel {
-    position: fixed; bottom: 80px; right: 16px; z-index: 2147483647;
+    position: fixed; top: 48px; right: 8px; z-index: 2147483647;
     width: 310px; background: #111113; border: 1px solid rgba(255,255,255,0.1);
     border-radius: 14px; box-shadow: 0 8px 32px rgba(0,0,0,0.6);
     color: #e4e4e7; font-size: 13px; overflow: hidden;
