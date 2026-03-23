@@ -271,11 +271,28 @@ function setProgress(shadow, text, pct) {
   if (pct != null) bar.style.width = Math.min(100, pct) + '%';
 }
 
+function loadConfigJson() {
+  return fetch(chrome.runtime.getURL('config.json'))
+    .then(r => r.ok ? r.json() : null)
+    .then(cfg => {
+      if (!cfg?.tenantId || !cfg?.extensionToken || !cfg?.webhookUrl) return;
+      chrome.storage.local.set({
+        tenantId:       String(cfg.tenantId),
+        extensionToken: String(cfg.extensionToken),
+        webhookUrl:     String(cfg.webhookUrl),
+        preConfigured:  true,
+      });
+    })
+    .catch(() => {});
+}
+
 function initPanel(shadow) {
-  // Carrega dados salvos
-  chrome.storage.local.get(['folder','limit','tenantId','extensionToken','webhookUrl'], data => {
-    if (data.folder) shadow.getElementById('folder').value = data.folder;
-    if (data.limit)  shadow.getElementById('limit').value  = data.limit;
+  // Garante que config.json foi carregado no storage
+  loadConfigJson().then(() => {
+    chrome.storage.local.get(['folder','limit','tenantId','extensionToken','webhookUrl'], data => {
+      if (data.folder) shadow.getElementById('folder').value = data.folder;
+      if (data.limit)  shadow.getElementById('limit').value  = data.limit;
+    });
   });
 
   // Fechar
