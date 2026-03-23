@@ -10,6 +10,8 @@
         --accent: #22c55e; --accent-2: #4ade80; --accent-glow: rgba(34,197,94,0.2);
         --green: #22c55e; --green-dim: rgba(34,197,94,0.12);
         --red: #f87171; --red-dim: rgba(248,113,113,0.12);
+        --yellow: #facc15; --yellow-dim: rgba(250,204,21,0.1);
+        --blue: #60a5fa; --blue-dim: rgba(96,165,250,0.1);
         --text: #e4e4e7; --text-2: #a1a1aa; --text-3: #52525b;
         --radius: 12px; --radius-sm: 8px;
       }
@@ -21,7 +23,6 @@
       }
       .shell { display: flex; width: 100%; min-height: 100vh; }
 
-      /* Sidebar */
       .sidebar {
         width: 220px; flex-shrink: 0; background: var(--bg-2);
         border-right: 1px solid var(--border);
@@ -31,9 +32,8 @@
         display: flex; align-items: center; gap: 10px;
         padding: 18px 8px 14px; border-bottom: 1px solid var(--border); margin-bottom: 12px;
       }
-      .logo-icon { width: 32px; height: 32px; flex-shrink: 0; }
       .logo-text { font-size: 13px; font-weight: 700; color: var(--text); line-height: 1.2; }
-      .logo-sub { font-size: 10px; color: var(--text-3); }
+      .logo-sub  { font-size: 10px; color: var(--text-3); }
       .nav-item {
         display: flex; align-items: center; gap: 9px; padding: 8px 10px;
         border-radius: var(--radius-sm); cursor: pointer; color: var(--text-2);
@@ -44,64 +44,79 @@
       .nav-item.active { background: var(--accent-glow); color: var(--accent); }
       .nav-icon { font-size: 14px; width: 18px; text-align: center; }
 
-      /* Main */
       .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
       .topbar {
-        padding: 16px 24px; border-bottom: 1px solid var(--border);
+        padding: 14px 24px; border-bottom: 1px solid var(--border);
         display: flex; align-items: center; justify-content: space-between;
       }
       .topbar h2 { font-size: 16px; font-weight: 700; }
-      .content { padding: 24px; flex: 1; overflow-y: auto; }
+      .content { padding: 20px 24px; flex: 1; overflow-y: auto; }
 
-      /* Sections */
       .section { display: none; }
       .section.active { display: block; }
 
-      /* Cards */
       .card {
         background: var(--bg-2); border: 1px solid var(--border);
-        border-radius: var(--radius); padding: 20px; margin-bottom: 16px;
+        border-radius: var(--radius); padding: 18px; margin-bottom: 14px;
       }
       .card-title {
-        font-size: 13px; font-weight: 600; color: var(--text);
+        font-size: 12px; font-weight: 700; color: var(--text);
         margin-bottom: 14px; display: flex; align-items: center; gap: 8px;
+        text-transform: uppercase; letter-spacing: .05em;
       }
-      .card-title-icon { font-size: 15px; }
+      .card-title-icon { font-size: 14px; }
 
-      /* Stats */
-      .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+      /* Highlight card para Data de Abertura */
+      .card-highlight {
+        background: var(--bg-2); border: 1px solid rgba(96,165,250,0.3);
+        border-radius: var(--radius); padding: 18px; margin-bottom: 14px;
+        box-shadow: 0 0 0 1px rgba(96,165,250,0.1) inset;
+      }
+      .card-highlight .card-title { color: var(--blue); }
+
+      .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
       .stat-card {
         background: var(--bg-3); border: 1px solid var(--border);
-        border-radius: var(--radius-sm); padding: 14px 16px;
+        border-radius: var(--radius-sm); padding: 12px 14px;
       }
-      .stat-label { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 4px; }
-      .stat-value { font-size: 22px; font-weight: 700; color: var(--text); }
+      .stat-label { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 3px; }
+      .stat-value { font-size: 20px; font-weight: 700; color: var(--text); }
 
-      /* Forms */
-      .field { margin-bottom: 12px; }
-      .field label { display: block; font-size: 11px; font-weight: 600; color: var(--text-2); margin-bottom: 5px; text-transform: uppercase; letter-spacing: .04em; }
-      .field input, .field select {
+      .field { margin-bottom: 10px; }
+      .field label {
+        display: block; font-size: 10px; font-weight: 700; color: var(--text-2);
+        margin-bottom: 4px; text-transform: uppercase; letter-spacing: .05em;
+      }
+      .field input, .field select, .field textarea {
         width: 100%; background: var(--bg-3); border: 1px solid var(--border);
-        border-radius: var(--radius-sm); padding: 8px 10px; color: var(--text);
+        border-radius: var(--radius-sm); padding: 7px 10px; color: var(--text);
         font-size: 12px; outline: none; transition: border .15s; font-family: inherit;
       }
       .field input:focus, .field select:focus { border-color: var(--accent); }
       .field input[readonly] { opacity: .5; cursor: not-allowed; }
       .field select option { background: var(--bg-3); }
+      .field input.date-input { font-family: monospace; letter-spacing: .02em; }
 
-      /* Checkboxes */
-      .checks-row { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
-      .check-item {
+      /* Switches toggle row */
+      .switches-group { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+      .switch-item {
         display: flex; align-items: center; gap: 6px;
-        font-size: 12px; color: var(--text-2); cursor: pointer;
+        background: var(--bg-3); border: 1px solid var(--border);
+        border-radius: var(--radius-sm); padding: 5px 10px;
+        cursor: pointer; user-select: none; transition: all .15s;
+        font-size: 11px; color: var(--text-2);
       }
-      .check-item input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px; cursor: pointer; }
+      .switch-item:hover { border-color: var(--border-bright); color: var(--text); }
+      .switch-item input[type="checkbox"] { display: none; }
+      .switch-item.on { background: var(--accent-glow); border-color: rgba(34,197,94,0.3); color: var(--accent); }
+      .switch-item.on-blue { background: var(--blue-dim); border-color: rgba(96,165,250,0.3); color: var(--blue); }
+      .switch-item.on-yellow { background: var(--yellow-dim); border-color: rgba(250,204,21,0.3); color: var(--yellow); }
+      .switch-item.on-red { background: var(--red-dim); border-color: rgba(248,113,113,0.3); color: var(--red); }
 
-      /* Grid */
-      .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-      .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+      .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+      .grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 10px; }
 
-      /* Buttons */
       .btn {
         display: inline-flex; align-items: center; gap: 6px;
         padding: 8px 14px; border-radius: var(--radius-sm); font-size: 12px;
@@ -118,39 +133,42 @@
       .btn-danger:hover { background: rgba(248,113,113,0.2); }
       .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
 
-      /* Progress */
-      .progress-block { margin-top: 14px; display: none; flex-direction: column; gap: 6px; }
+      .progress-block { margin-top: 12px; display: none; flex-direction: column; gap: 5px; }
       .progress-block.show { display: flex; }
       .progress-label { font-size: 11px; color: var(--text-2); }
       .progress-bar-bg { height: 4px; background: var(--bg-4); border-radius: 99px; overflow: hidden; }
       .progress-bar { height: 100%; background: var(--accent); border-radius: 99px; transition: width .3s; width: 0%; }
 
-      /* Status messages */
       .status-msg { font-size: 11px; padding: 8px 12px; border-radius: var(--radius-sm); margin-top: 10px; display: none; }
       .status-msg.show { display: block; }
-      .status-msg.s-ok { background: var(--green-dim); color: var(--green); border: 1px solid rgba(34,197,94,0.2); }
-      .status-msg.s-err { background: var(--red-dim); color: var(--red); border: 1px solid rgba(248,113,113,0.2); }
-      .status-msg.s-info { background: var(--bg-4); color: var(--text-2); border: 1px solid var(--border-bright); }
+      .status-msg.s-ok   { background: var(--green-dim);  color: var(--green);  border: 1px solid rgba(34,197,94,0.2); }
+      .status-msg.s-err  { background: var(--red-dim);    color: var(--red);    border: 1px solid rgba(248,113,113,0.2); }
+      .status-msg.s-info { background: var(--bg-4);       color: var(--text-2); border: 1px solid var(--border-bright); }
 
-      /* Table */
       .table-wrap { overflow-x: auto; }
       table { width: 100%; border-collapse: collapse; font-size: 12px; }
       th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); }
-      th { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); font-weight: 600; background: var(--bg-3); }
+      th { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); font-weight: 700; background: var(--bg-3); }
       tr:hover td { background: rgba(255,255,255,0.02); }
       .chip { display: inline-block; padding: 2px 7px; border-radius: 99px; font-size: 10px; font-weight: 600; }
-      .chip-green { background: var(--green-dim); color: var(--green); }
-      .chip-gray  { background: var(--bg-4); color: var(--text-3); }
+      .chip-green  { background: var(--green-dim);  color: var(--green); }
+      .chip-gray   { background: var(--bg-4);        color: var(--text-3); }
+      .chip-blue   { background: var(--blue-dim);    color: var(--blue); }
 
       #summary { font-size: 11px; color: var(--text-3); margin-bottom: 12px; }
-      .hint { font-size: 11px; color: var(--text-3); margin-bottom: 12px; }
+      .hint { font-size: 11px; color: var(--text-3); margin-bottom: 10px; line-height: 1.5; }
+      hr.divider { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
 
-      .divider { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+      .badge-new {
+        display: inline-block; background: var(--blue-dim); color: var(--blue);
+        border: 1px solid rgba(96,165,250,0.3); border-radius: 99px;
+        font-size: 9px; font-weight: 700; padding: 1px 6px; margin-left: 6px;
+        text-transform: uppercase; letter-spacing: .04em; vertical-align: middle;
+      }
     </style>
   </head>
   <body>
     <div class="shell">
-      <!-- Sidebar -->
       <aside class="sidebar">
         <div class="logo">
           <div style="width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,hsl(192,91%,52%),hsl(265,80%,60%));display:flex;align-items:center;justify-content:center;flex-shrink:0;">
@@ -161,18 +179,11 @@
             <div class="logo-sub">LeadFlowAI Extractor</div>
           </div>
         </div>
-        <button class="nav-item active" data-section="capture">
-          <span class="nav-icon">🔍</span> Extração
-        </button>
-        <button class="nav-item" data-section="dashboard">
-          <span class="nav-icon">📊</span> Resultados
-        </button>
-        <button class="nav-item" data-section="config">
-          <span class="nav-icon">⚙️</span> Configuração
-        </button>
+        <button class="nav-item active" data-section="capture"><span class="nav-icon">🔍</span> Extração</button>
+        <button class="nav-item" data-section="dashboard"><span class="nav-icon">📊</span> Resultados</button>
+        <button class="nav-item" data-section="config"><span class="nav-icon">⚙️</span> Configuração</button>
       </aside>
 
-      <!-- Main -->
       <div class="main">
         <div class="topbar">
           <h2 id="topbarTitle">Extração de Leads via CNPJ</h2>
@@ -180,15 +191,16 @@
 
         <div class="content">
 
-          <!-- ── Extração ── -->
+          <!-- ══ EXTRAÇÃO ══ -->
           <div id="section-capture" class="section active">
+
             <div class="stats-grid">
               <div class="stat-card">
                 <div class="stat-label">Total Disponível</div>
                 <div class="stat-value" id="stat-total">—</div>
               </div>
               <div class="stat-card">
-                <div class="stat-label">Extraídos</div>
+                <div class="stat-label">Encontradas</div>
                 <div class="stat-value" id="stat-extracted">—</div>
               </div>
               <div class="stat-card">
@@ -201,21 +213,34 @@
               </div>
             </div>
 
-            <div class="card">
-              <div class="card-title"><span class="card-title-icon">🔍</span> Filtros de Busca</div>
-
+            <!-- ── DATA DE ABERTURA (destaque) ── -->
+            <div class="card-highlight">
+              <div class="card-title"><span class="card-title-icon">📅</span> Data de Abertura <span class="badge-new">CNPJs frescos</span></div>
+              <div class="hint">Filtre empresas abertas em um período específico. Ideal para capturar CNPJs recém-abertos (leads frescos).</div>
               <div class="grid-2">
                 <div class="field">
-                  <label>Busca Textual (Razão / Fantasia)</label>
-                  <input id="termo" type="text" placeholder="ex.: academia, farmácia..." />
+                  <label>A partir de (dd/mm/aaaa)</label>
+                  <input id="dataAberturaInicio" type="text" class="date-input" placeholder="ex.: 01/01/2025" maxlength="10" />
                 </div>
                 <div class="field">
-                  <label>CNAE (código ou nome)</label>
-                  <input id="cnae" type="text" placeholder="ex.: 8630-5/04 ou medicina" />
+                  <label>Até (dd/mm/aaaa)</label>
+                  <input id="dataAberturaFim" type="text" class="date-input" placeholder="ex.: 31/12/2025" maxlength="10" />
                 </div>
               </div>
+              <!-- Atalhos rápidos -->
+              <div class="btn-row" style="margin-top:6px;">
+                <button class="btn btn-secondary" style="font-size:11px;padding:5px 10px;" onclick="setDateRange(7)">Últimos 7 dias</button>
+                <button class="btn btn-secondary" style="font-size:11px;padding:5px 10px;" onclick="setDateRange(30)">Último mês</button>
+                <button class="btn btn-secondary" style="font-size:11px;padding:5px 10px;" onclick="setDateRange(90)">Últimos 3 meses</button>
+                <button class="btn btn-secondary" style="font-size:11px;padding:5px 10px;" onclick="setDateRange(365)">Último ano</button>
+                <button class="btn btn-secondary" style="font-size:11px;padding:5px 10px;" onclick="clearDates()">Limpar datas</button>
+              </div>
+            </div>
 
-              <div class="grid-3">
+            <!-- ── LOCALIZAÇÃO ── -->
+            <div class="card">
+              <div class="card-title"><span class="card-title-icon">📍</span> Localização</div>
+              <div class="grid-4">
                 <div class="field">
                   <label>Estado (UF)</label>
                   <select id="uf">
@@ -250,66 +275,165 @@
                   </select>
                 </div>
                 <div class="field">
+                  <label>Município</label>
+                  <input id="municipio" type="text" placeholder="ex.: Curitiba" />
+                </div>
+                <div class="field">
+                  <label>Bairro</label>
+                  <input id="bairro" type="text" placeholder="ex.: Centro" />
+                </div>
+                <div class="field">
+                  <label>CEP (8 dígitos)</label>
+                  <input id="cep" type="text" placeholder="ex.: 80010000" maxlength="8" />
+                </div>
+              </div>
+              <div class="grid-2">
+                <div class="field">
+                  <label>DDD</label>
+                  <input id="ddd" type="text" placeholder="ex.: 41" maxlength="2" />
+                </div>
+                <div class="field">
+                  <label>Telefone (10-11 dígitos)</label>
+                  <input id="telefone" type="text" placeholder="ex.: 41999999999" maxlength="11" />
+                </div>
+              </div>
+            </div>
+
+            <!-- ── EMPRESA ── -->
+            <div class="card">
+              <div class="card-title"><span class="card-title-icon">🏢</span> Empresa</div>
+              <div class="grid-2">
+                <div class="field">
+                  <label>Busca Textual (razão / fantasia / sócio)</label>
+                  <input id="termo" type="text" placeholder="ex.: academia, clínica, restaurante..." />
+                </div>
+                <div class="field">
+                  <label>CNAE (código ou nome da atividade)</label>
+                  <input id="cnae" type="text" placeholder="ex.: 8630-5/04 ou medicina" />
+                </div>
+              </div>
+              <div class="grid-3">
+                <div class="field">
                   <label>Situação Cadastral</label>
                   <select id="situacao">
                     <option value="ativa">Ativa</option>
                     <option value="">Todas</option>
                     <option value="baixada">Baixada</option>
                     <option value="inapta">Inapta</option>
+                    <option value="nula">Nula</option>
                     <option value="suspensa">Suspensa</option>
                   </select>
                 </div>
                 <div class="field">
-                  <label>DDD</label>
-                  <input id="ddd" type="text" maxlength="2" placeholder="ex.: 11" />
+                  <label>Porte da Empresa</label>
+                  <select id="porte">
+                    <option value="">Todos</option>
+                    <option value="01">Micro Empresa</option>
+                    <option value="03">Pequeno Porte</option>
+                    <option value="05">Demais</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Natureza Jurídica</label>
+                  <input id="naturezaJuridica" type="text" placeholder="ex.: LTDA, MEI, SA" />
                 </div>
               </div>
+              <div class="grid-2">
+                <div class="field">
+                  <label>Capital Social Mínimo (R$)</label>
+                  <input id="capitalMin" type="number" min="0" placeholder="ex.: 1000" />
+                </div>
+                <div class="field">
+                  <label>Capital Social Máximo (R$)</label>
+                  <input id="capitalMax" type="number" min="0" placeholder="ex.: 100000" />
+                </div>
+              </div>
+            </div>
 
-              <div class="checks-row">
-                <label class="check-item">
-                  <input type="checkbox" id="comTelefone" checked />
-                  Com telefone
+            <!-- ── FILTROS / SWITCHES ── -->
+            <div class="card">
+              <div class="card-title"><span class="card-title-icon">🔧</span> Filtros Avançados</div>
+
+              <div style="font-size:10px;color:var(--text-3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em;">Contato</div>
+              <div class="switches-group" id="switchContato">
+                <label class="switch-item" data-key="comTelefone">
+                  <input type="checkbox" id="comTelefone" checked /> 📱 Com telefone
                 </label>
-                <label class="check-item">
-                  <input type="checkbox" id="comEmail" />
-                  Com e-mail
+                <label class="switch-item on" data-key="somenteFixo">
+                  <input type="checkbox" id="somenteFixo" /> 📞 Somente fixo
                 </label>
-                <label class="check-item">
-                  <input type="checkbox" id="somenteMEI" />
-                  Somente MEI
+                <label class="switch-item" data-key="somenteCelular">
+                  <input type="checkbox" id="somenteCelular" /> 📲 Somente celular
                 </label>
-                <label class="check-item">
-                  <input type="checkbox" id="excluirMEI" />
-                  Excluir MEI
-                </label>
-                <label class="check-item">
-                  <input type="checkbox" id="somenteMatriz" />
-                  Somente Matriz
+                <label class="switch-item" data-key="comEmail">
+                  <input type="checkbox" id="comEmail" /> ✉️ Com e-mail
                 </label>
               </div>
 
               <hr class="divider" />
 
+              <div style="font-size:10px;color:var(--text-3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em;">Tipo de Empresa</div>
+              <div class="switches-group">
+                <label class="switch-item" data-key="somenteMEI">
+                  <input type="checkbox" id="somenteMEI" /> Somente MEI
+                </label>
+                <label class="switch-item" data-key="excluirMEI">
+                  <input type="checkbox" id="excluirMEI" /> Excluir MEI
+                </label>
+                <label class="switch-item" data-key="somenteMatriz">
+                  <input type="checkbox" id="somenteMatriz" /> Somente Matriz
+                </label>
+                <label class="switch-item" data-key="somenteFilial">
+                  <input type="checkbox" id="somenteFilial" /> Somente Filial
+                </label>
+              </div>
+
+              <hr class="divider" />
+
+              <div style="font-size:10px;color:var(--text-3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em;">Regime Tributário</div>
+              <div class="switches-group">
+                <label class="switch-item" data-key="empresasSimples">
+                  <input type="checkbox" id="empresasSimples" /> Empresas do Simples
+                </label>
+                <label class="switch-item" data-key="excluirSimples">
+                  <input type="checkbox" id="excluirSimples" /> Excluir do Simples
+                </label>
+              </div>
+
+              <hr class="divider" />
+
+              <div style="font-size:10px;color:var(--text-3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em;">Exclusões</div>
+              <div class="switches-group">
+                <label class="switch-item" data-key="excluirVisualizadas">
+                  <input type="checkbox" id="excluirVisualizadas" /> Excluir já visualizadas
+                </label>
+                <label class="switch-item" data-key="excluirContab">
+                  <input type="checkbox" id="excluirContab" /> Excluir e-mail "contab"
+                </label>
+              </div>
+            </div>
+
+            <!-- ── DESTINO ── -->
+            <div class="card">
+              <div class="card-title"><span class="card-title-icon">🎯</span> Extração</div>
               <div class="grid-2">
                 <div class="field">
                   <label>Quantidade de leads</label>
-                  <input id="limit" type="number" min="1" max="2000" value="100" />
+                  <input id="limit" type="number" min="1" max="5000" value="50" />
                 </div>
                 <div class="field">
                   <label>Pasta no LeadFlowAI (opcional)</label>
-                  <input id="folder" type="text" placeholder="ex.: CNPJ SP Academias" />
+                  <input id="folder" type="text" placeholder="ex.: CNPJ PR Academias Jan/25" />
                 </div>
               </div>
-
               <p class="hint">
-                💡 A extensão consulta a API da Casa dos Dados e coleta empresas conforme os filtros. Nenhuma aba do navegador é aberta.
+                💡 Fase 1: coleta a lista de empresas paginando nos resultados. Fase 2: entra em cada empresa para extrair telefone, WhatsApp e e-mail.
+                Certifique-se de estar <strong>logado</strong> em portal.casadosdados.com.br.
               </p>
-
               <div class="btn-row">
                 <button class="btn btn-primary" id="startCapture">▶ Iniciar extração</button>
                 <button class="btn btn-danger" id="stopCapture" style="display:none">⏹ Parar</button>
               </div>
-
               <div id="progressBlock" class="progress-block">
                 <div class="progress-label" id="captureProgress">Aguardando...</div>
                 <div class="progress-bar-bg"><div class="progress-bar" id="progressBar"></div></div>
@@ -317,9 +441,9 @@
               <div id="captureStatus" class="status-msg"></div>
             </div>
 
+            <!-- ── ENVIO ── -->
             <div class="card">
               <div class="card-title"><span class="card-title-icon">📤</span> Enviar para LeadFlowAI</div>
-              <p class="hint">Envia os leads extraídos com telefone para o CRM.</p>
               <div class="btn-row">
                 <button class="btn btn-primary" id="sendToSaaS">Enviar leads com telefone</button>
                 <button class="btn btn-secondary" id="exportCsv">Exportar CSV</button>
@@ -328,7 +452,7 @@
             </div>
           </div>
 
-          <!-- ── Resultados ── -->
+          <!-- ══ RESULTADOS ══ -->
           <div id="section-dashboard" class="section">
             <div class="card">
               <div class="card-title"><span class="card-title-icon">📊</span> Histórico de Extrações</div>
@@ -337,9 +461,9 @@
                 <table>
                   <thead>
                     <tr>
-                      <th>Busca</th>
+                      <th>Busca / Período</th>
                       <th>UF</th>
-                      <th>Extraídos</th>
+                      <th>Coletadas / Detalhadas</th>
                       <th>Com Telefone</th>
                       <th>Com E-mail</th>
                     </tr>
@@ -350,7 +474,7 @@
             </div>
           </div>
 
-          <!-- ── Configuração ── -->
+          <!-- ══ CONFIGURAÇÃO ══ -->
           <div id="section-config" class="section">
             <div class="card">
               <div class="card-title"><span class="card-title-icon">⚙️</span> Credenciais LeadFlowAI</div>
@@ -367,7 +491,7 @@
                 <input id="webhookUrl" type="text" placeholder="https://SEU_WORKER/api/tools/cnpj/push-leads" />
               </div>
               <p class="hint">
-                ⚠️ A extensão abrirá o <strong>portal.casadosdados.com.br</strong> em segundo plano. Certifique-se de estar <strong>logado</strong> no site antes de iniciar a extração.
+                ⚠️ A extensão abre <strong>portal.casadosdados.com.br</strong> em segundo plano. Certifique-se de estar <strong>logado</strong> no site antes de iniciar.
               </p>
               <div class="btn-row">
                 <button class="btn btn-primary" id="saveConfig">Salvar configuração</button>
@@ -379,6 +503,49 @@
         </div>
       </div>
     </div>
+
+    <script>
+      /* ── Atalhos de data ── */
+      function padDate(n) { return String(n).padStart(2, '0'); }
+      function fmtDate(d) { return `${padDate(d.getDate())}/${padDate(d.getMonth()+1)}/${d.getFullYear()}`; }
+
+      function setDateRange(days) {
+        const today = new Date();
+        const from  = new Date();
+        from.setDate(today.getDate() - days);
+        document.getElementById('dataAberturaInicio').value = fmtDate(from);
+        document.getElementById('dataAberturaFim').value    = fmtDate(today);
+      }
+
+      function clearDates() {
+        document.getElementById('dataAberturaInicio').value = '';
+        document.getElementById('dataAberturaFim').value    = '';
+      }
+
+      /* ── Auto-formata data ao digitar ── */
+      ['dataAberturaInicio','dataAberturaFim'].forEach(id => {
+        document.getElementById(id).addEventListener('input', function () {
+          let v = this.value.replace(/\D/g, '');
+          if (v.length > 2) v = v.slice(0,2) + '/' + v.slice(2);
+          if (v.length > 5) v = v.slice(0,5) + '/' + v.slice(5,9);
+          this.value = v;
+        });
+      });
+
+      /* ── Switches visuais ── */
+      document.querySelectorAll('.switch-item').forEach(label => {
+        const cb = label.querySelector('input[type="checkbox"]');
+        function update() {
+          label.classList.toggle('on', cb.checked);
+        }
+        update();
+        label.addEventListener('click', e => {
+          if (e.target !== cb) cb.checked = !cb.checked;
+          update();
+        });
+        cb.addEventListener('change', update);
+      });
+    </script>
     <script src="dashboard.js"></script>
   </body>
 </html>

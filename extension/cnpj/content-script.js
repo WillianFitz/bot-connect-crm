@@ -40,15 +40,17 @@ function checkLogin() {
 
 /* ── Seleciona item de taginput/autocomplete ── */
 async function selectTagInputOption(placeholder, value) {
-  const input = document.querySelector(`input[placeholder="${placeholder}"]`);
+  if (!value) return false;
+  const input = document.querySelector(`input[placeholder="${placeholder}"]`)
+             || document.querySelector(`input[placeholder*="${placeholder}"]`);
   if (!input) return false;
 
   input.focus();
   setNativeValue(input, value);
-  await sleep(700);
+  await sleep(900);
 
   // Espera dropdown aparecer
-  const dropdowns = document.querySelectorAll('.dropdown-item[role="option"]');
+  const dropdowns = document.querySelectorAll('.dropdown-item[role="option"], .o-drop__item, li[role="option"]');
   for (const item of dropdowns) {
     const txt = item.textContent.trim();
     if (txt.startsWith(value + ' -') || txt.startsWith(value + ' ') || txt === value || txt.toUpperCase().startsWith(value.toUpperCase())) {
@@ -63,8 +65,110 @@ async function selectTagInputOption(placeholder, value) {
   return false;
 }
 
+/* ── Preenche campo de texto por placeholder (parcial) ── */
+async function fillInputByPlaceholder(placeholder, value) {
+  if (!value) return false;
+  const inputs = document.querySelectorAll('input[type="text"], input:not([type])');
+  for (const inp of inputs) {
+    const ph = (inp.placeholder || '').toLowerCase();
+    if (ph.includes(placeholder.toLowerCase())) {
+      inp.focus();
+      setNativeValue(inp, value);
+      await sleep(300);
+      return true;
+    }
+  }
+  return false;
+}
+
+/* ── Preenche campo numérico por label próximo ── */
+async function fillNumberInputNearLabel(labelKeyword, value) {
+  if (!value) return false;
+  const labels = Array.from(document.querySelectorAll('label, .label, .field-label'));
+  for (const lbl of labels) {
+    if (!lbl.textContent.toLowerCase().includes(labelKeyword.toLowerCase())) continue;
+    // Procura input dentro ou após o label
+    const parent = lbl.closest('.field, .b-field, .o-field') || lbl.parentElement;
+    if (!parent) continue;
+    const inp = parent.querySelector('input[type="number"], input[type="text"]');
+    if (inp) {
+      inp.focus();
+      setNativeValue(inp, String(value));
+      await sleep(300);
+      return true;
+    }
+  }
+  return false;
+}
+
+/* ── Preenche data de abertura (inputs de data no formulário) ── */
+async function fillDateRange(inicio, fim) {
+  // Procura label com "abertura" e os dois inputs associados
+  const allLabels = Array.from(document.querySelectorAll('label, .label, span, p, div'));
+  let dateContainer = null;
+  for (const el of allLabels) {
+    if (el.children.length > 0) continue; // pula containers
+    if (el.textContent.toLowerCase().includes('abertura') || el.textContent.toLowerCase().includes('data de')) {
+      dateContainer = el.closest('.field, .b-field, .o-field, .column, .columns, .card, .box, section, form') || el.parentElement?.parentElement;
+      if (dateContainer) break;
+    }
+  }
+
+  // Estratégia 1: inputs com placeholder "dd/mm/aaaa" ou "Data"
+  const dateInputs = Array.from(document.querySelectorAll('input'))
+    .filter(inp => {
+      const ph = (inp.placeholder || '').toLowerCase();
+      return ph.includes('dd/mm') || ph.includes('data') || ph.includes('aaaa') || inp.type === 'date';
+    });
+
+  if (dateInputs.length >= 2) {
+    if (inicio) {
+      dateInputs[0].focus();
+      // Converte dd/mm/yyyy → yyyy-mm-dd se o input for type=date
+      const val = dateInputs[0].type === 'date' ? ddmmToIso(inicio) : inicio;
+      setNativeValue(dateInputs[0], val);
+      await sleep(400);
+    }
+    if (fim) {
+      dateInputs[1].focus();
+      const val = dateInputs[1].type === 'date' ? ddmmToIso(fim) : fim;
+      setNativeValue(dateInputs[1], val);
+      await sleep(400);
+    }
+    return true;
+  }
+
+  // Estratégia 2: dentro do container encontrado pelo label
+  if (dateContainer) {
+    const inps = Array.from(dateContainer.querySelectorAll('input'));
+    if (inps.length >= 2) {
+      if (inicio) { setNativeValue(inps[0], ddmmToIso(inicio) || inicio); await sleep(400); }
+      if (fim)    { setNativeValue(inps[1], ddmmToIso(fim)    || fim);    await sleep(400); }
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/* ── Converte dd/mm/yyyy → yyyy-mm-dd ── */
+function ddmmToIso(ddmm) {
+  if (!ddmm) return '';
+  const parts = ddmm.split('/');
+  if (parts.length === 3) return `${parts[2]}-${parts[1]}-${parts[0]}`;
+  return ddmm;
+}
+
 async function fillAndSearch(filters) {
-  const { uf, situacao, termo, comTelefone, comEmail, somenteMEI, excluirMEI, somenteMatriz } = filters;
+  const {
+    uf, situacao, termo, cnae, ddd,
+    dataAberturaInicio, dataAberturaFim,
+    municipio, bairro, cep, telefone,
+    porte, naturezaJuridica, capitalMin, capitalMax,
+    comTelefone, comEmail, somenteMEI, excluirMEI, somenteMatriz,
+    somenteFixo, somenteCelular, empresasSimples, excluirSimples,
+    excluirVisualizadas, excluirContab, somenteFilial
+  } = filters;
 
   await sleep(2000); // aguarda hidratação Nuxt
 
@@ -89,22 +193,133 @@ async function fillAndSearch(filters) {
   });
   await sleep(200);
   // Marca a desejada (ou "ativa" por padrão)
-  const sitValue = situacao || 'ativa';
-  const sitCb = document.querySelector(`input[type="checkbox"][value="${sitValue}"]`);
-  if (sitCb && !sitCb.checked) simulateClick(sitCb);
-  await sleep(200);
+  if (situacao) {
+    const sitCb = document.querySelector(`input[type="checkbox"][value="${situacao}"]`);
+    if (sitCb && !sitCb.checked) simulateClick(sitCb);
+    await sleep(200);
+  } else {
+    const sitCb = document.querySelector('input[type="checkbox"][value="ativa"]');
+    if (sitCb && !sitCb.checked) simulateClick(sitCb);
+    await sleep(200);
+  }
 
   /* ── Estado (UF) ── */
   if (uf) {
     await selectTagInputOption('Selecione o estado', uf);
+    await sleep(300);
   }
 
+  /* ── Município ── */
+  if (municipio) {
+    await selectTagInputOption('Selecione o município', municipio)
+      || await selectTagInputOption('município', municipio)
+      || await fillInputByPlaceholder('município', municipio);
+    await sleep(300);
+  }
+
+  /* ── Bairro ── */
+  if (bairro) {
+    const filled = await selectTagInputOption('Selecione o bairro', bairro)
+                || await fillInputByPlaceholder('bairro', bairro);
+    if (!filled) {
+      const inp = Array.from(document.querySelectorAll('input')).find(i =>
+        (i.placeholder || '').toLowerCase().includes('bairro'));
+      if (inp) {
+        inp.focus();
+        setNativeValue(inp, bairro);
+        await sleep(500);
+        inp.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter', keyCode: 13 }));
+        await sleep(300);
+      }
+    }
+  }
+
+  /* ── CEP ── */
+  if (cep) {
+    const inp = Array.from(document.querySelectorAll('input')).find(i =>
+      (i.placeholder || '').toLowerCase().includes('cep') ||
+      (i.maxLength === 8 && /^\d*$/.test(i.value)));
+    if (inp) { inp.focus(); setNativeValue(inp, cep); await sleep(300); }
+  }
+
+  /* ── DDD ── */
+  if (ddd) {
+    const inp = Array.from(document.querySelectorAll('input')).find(i =>
+      (i.placeholder || '').toLowerCase().includes('ddd') ||
+      (i.maxLength === 2 && (i.placeholder || '').match(/^\d/)));
+    if (inp) { inp.focus(); setNativeValue(inp, ddd); await sleep(300); }
+  }
+
+  /* ── Telefone ── */
+  if (telefone) {
+    await fillInputByPlaceholder('telefone', telefone);
+    await sleep(300);
+  }
+
+  /* ── Data de Abertura ── */
+  if (dataAberturaInicio || dataAberturaFim) {
+    await fillDateRange(dataAberturaInicio, dataAberturaFim);
+    await sleep(300);
+  }
+
+  /* ── CNAE ── */
+  if (cnae) {
+    const filled = await selectTagInputOption('Selecione o CNAE', cnae)
+                || await selectTagInputOption('CNAE', cnae)
+                || await fillInputByPlaceholder('cnae', cnae)
+                || await fillInputByPlaceholder('atividade', cnae);
+    if (!filled) {
+      const inp = Array.from(document.querySelectorAll('input')).find(i =>
+        (i.placeholder || '').toLowerCase().includes('cnae') ||
+        (i.placeholder || '').toLowerCase().includes('atividade'));
+      if (inp) {
+        inp.focus();
+        setNativeValue(inp, cnae);
+        await sleep(700);
+        inp.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter', keyCode: 13 }));
+        await sleep(300);
+      }
+    }
+  }
+
+  /* ── Porte ── */
+  if (porte) {
+    const sels = document.querySelectorAll('select');
+    for (const sel of sels) {
+      const opts = Array.from(sel.options);
+      if (opts.some(o => o.value === '01' || o.text.toLowerCase().includes('micro') || o.text.toLowerCase().includes('porte'))) {
+        setNativeValue(sel, porte);
+        await sleep(300);
+        break;
+      }
+    }
+  }
+
+  /* ── Natureza Jurídica ── */
+  if (naturezaJuridica) {
+    await selectTagInputOption('Selecione a natureza', naturezaJuridica)
+      || await selectTagInputOption('natureza', naturezaJuridica)
+      || await fillInputByPlaceholder('natureza', naturezaJuridica);
+    await sleep(300);
+  }
+
+  /* ── Capital Social ── */
+  if (capitalMin) await fillNumberInputNearLabel('mínimo', capitalMin);
+  if (capitalMax) await fillNumberInputNearLabel('máximo', capitalMax);
+
   /* ── Switches ── */
-  if (comTelefone)   await toggleSwitch('telefone',  true);
-  if (comEmail)      await toggleSwitch('e-mail',    true);
-  if (somenteMEI)    await toggleSwitch('Somente MEI', true);
-  if (excluirMEI)    await toggleSwitch('Excluir MEI', true);
-  if (somenteMatriz) await toggleSwitch('matriz',    true);
+  if (comTelefone)        await toggleSwitch('telefone',       true);
+  if (somenteFixo)        await toggleSwitch('fixo',           true);
+  if (somenteCelular)     await toggleSwitch('celular',        true);
+  if (comEmail)           await toggleSwitch('e-mail',         true);
+  if (somenteMEI)         await toggleSwitch('Somente MEI',    true);
+  if (excluirMEI)         await toggleSwitch('Excluir MEI',    true);
+  if (somenteMatriz)      await toggleSwitch('matriz',         true);
+  if (somenteFilial)      await toggleSwitch('filial',         true);
+  if (empresasSimples)    await toggleSwitch('Simples',        true);
+  if (excluirSimples)     await toggleSwitch('Excluir Simples', true);
+  if (excluirVisualizadas) await toggleSwitch('visualizadas',  true);
+  if (excluirContab)      await toggleSwitch('contab',         true);
 
   /* ── Limite por página → 100 ── */
   const selects = document.querySelectorAll('select');
@@ -117,7 +332,6 @@ async function fillAndSearch(filters) {
   await sleep(300);
 
   /* ── Clica em Pesquisar ── */
-  // Tenta múltiplas estratégias
   let clicked = false;
 
   // Estratégia 1: <a> com texto "Pesquisar"
@@ -138,15 +352,18 @@ async function fillAndSearch(filters) {
 }
 
 async function toggleSwitch(labelKeyword, enable) {
-  const labels = Array.from(document.querySelectorAll('label.control-label'));
+  const labels = Array.from(document.querySelectorAll('label.control-label, label, .label'));
   for (const label of labels) {
-    if (label.textContent.toLowerCase().includes(labelKeyword.toLowerCase())) {
-      const input = document.getElementById(label.getAttribute('for'));
-      if (!input) continue;
-      const isChecked = input.getAttribute('aria-checked') === 'true' || input.checked;
-      if (enable !== isChecked) { simulateClick(input); await sleep(200); }
-      break;
-    }
+    if (!label.textContent.toLowerCase().includes(labelKeyword.toLowerCase())) continue;
+    const forId = label.getAttribute('for');
+    const input = forId
+      ? document.getElementById(forId)
+      : label.querySelector('input[type="checkbox"], input[role="switch"]')
+        || label.nextElementSibling?.querySelector('input');
+    if (!input) continue;
+    const isChecked = input.getAttribute('aria-checked') === 'true' || input.checked;
+    if (enable !== isChecked) { simulateClick(input); await sleep(200); }
+    break;
   }
 }
 
@@ -202,7 +419,6 @@ function getResultEntries() {
       }
     }
     if (!name) {
-      // Tenta extrair nome do texto geral depois do CNPJ
       const afterCnpj = text.replace(cnpjMatch[1], '').trim();
       name = afterCnpj.split('\n')[0].trim().slice(0, 80);
     }
@@ -228,7 +444,6 @@ function getResultEntries() {
 
 /* ── Info de paginação ── */
 function getPageInfo() {
-  // Total de resultados
   const bodyText = document.body.innerText;
   const totalMatch = bodyText.match(/(\d[\d\.,]*)\s*resultado[s]?/i) ||
                      bodyText.match(/Encontrado[s]?\s+(\d[\d\.,]*)/i);
@@ -311,8 +526,18 @@ function extractCompanyDetails() {
   const sitMatch = text.match(/\b(Ativa|Baixada|Inapta|Nula|Suspensa)\b/i);
   const situacao = sitMatch ? sitMatch[1] : '';
 
+  /* ── Data de Abertura ── */
+  const dataMatch = text.match(/(?:Abertura|Fundação)[:\s]+(\d{2}\/\d{2}\/\d{4})/i)
+                 || text.match(/(\d{2}\/\d{2}\/\d{4})(?:\s*[-–]\s*(?:Abertura|Fundação))?/i);
+  const dataAbertura = dataMatch ? dataMatch[1] : '';
+
   /* ── Monta notes ── */
-  const notes = [cnae, cep ? `CEP: ${cep}` : '', situacao].filter(Boolean).join(' | ');
+  const notes = [
+    cnae,
+    cep ? `CEP: ${cep}` : '',
+    situacao,
+    dataAbertura ? `Abertura: ${dataAbertura}` : ''
+  ].filter(Boolean).join(' | ');
 
   return { phone, email, name, notes };
 }

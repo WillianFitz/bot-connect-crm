@@ -376,32 +376,57 @@ document.addEventListener('DOMContentLoaded', () => {
         setStatus('captureStatus', 'Configure Tenant, Token e Webhook (aba Configuração).', 'err'); return;
       }
 
-      const uf            = document.getElementById('uf').value;
-      const situacao      = document.getElementById('situacao').value;
-      const termo         = document.getElementById('termo').value.trim();
-      const cnae          = document.getElementById('cnae').value.trim();
-      const ddd           = document.getElementById('ddd').value.trim();
-      const comTelefone   = document.getElementById('comTelefone').checked;
-      const comEmail      = document.getElementById('comEmail').checked;
-      const somenteMEI    = document.getElementById('somenteMEI').checked;
-      const excluirMEI    = document.getElementById('excluirMEI').checked;
-      const somenteMatriz = document.getElementById('somenteMatriz').checked;
+      const uf                 = document.getElementById('uf').value;
+      const situacao           = document.getElementById('situacao').value;
+      const termo              = document.getElementById('termo').value.trim();
+      const cnae               = document.getElementById('cnae').value.trim();
+      const ddd                = document.getElementById('ddd').value.trim();
+      const municipio          = document.getElementById('municipio').value.trim();
+      const bairro             = document.getElementById('bairro').value.trim();
+      const cep                = document.getElementById('cep').value.trim();
+      const telefone           = document.getElementById('telefone').value.trim();
+      const dataAberturaInicio = document.getElementById('dataAberturaInicio').value.trim();
+      const dataAberturaFim    = document.getElementById('dataAberturaFim').value.trim();
+      const porte              = document.getElementById('porte').value;
+      const naturezaJuridica   = document.getElementById('naturezaJuridica').value.trim();
+      const capitalMin         = document.getElementById('capitalMin').value.trim();
+      const capitalMax         = document.getElementById('capitalMax').value.trim();
+      const comTelefone        = document.getElementById('comTelefone').checked;
+      const somenteFixo        = document.getElementById('somenteFixo').checked;
+      const somenteCelular     = document.getElementById('somenteCelular').checked;
+      const comEmail           = document.getElementById('comEmail').checked;
+      const somenteMEI         = document.getElementById('somenteMEI').checked;
+      const excluirMEI         = document.getElementById('excluirMEI').checked;
+      const somenteMatriz      = document.getElementById('somenteMatriz').checked;
+      const somenteFilial      = document.getElementById('somenteFilial').checked;
+      const empresasSimples    = document.getElementById('empresasSimples').checked;
+      const excluirSimples     = document.getElementById('excluirSimples').checked;
+      const excluirVisualizadas = document.getElementById('excluirVisualizadas').checked;
+      const excluirContab      = document.getElementById('excluirContab').checked;
 
-      if (!uf && !termo && !cnae) {
-        setStatus('captureStatus', 'Informe pelo menos um filtro: UF, termo ou CNAE.', 'err'); return;
+      if (!uf && !termo && !cnae && !municipio && !dataAberturaInicio) {
+        setStatus('captureStatus', 'Informe pelo menos um filtro: UF, termo, CNAE, município ou data de abertura.', 'err'); return;
       }
 
       _stopped   = false;
       _companies = [];
       _leads     = [];
-      _searchKey = getSearchKey(uf, termo, situacao);
+      _searchKey = getSearchKey(uf, termo || municipio || dataAberturaInicio, situacao);
 
       disableStartButton();
       setStatus('captureStatus', '', 'info');
       setProgress('Abrindo Casa dos Dados...', 2);
       updateStats([], [], null);
 
-      const filters = { uf, situacao, termo, cnae, ddd, comTelefone, comEmail, somenteMEI, excluirMEI, somenteMatriz };
+      const filters = {
+        uf, situacao, termo, cnae, ddd,
+        municipio, bairro, cep, telefone,
+        dataAberturaInicio, dataAberturaFim,
+        porte, naturezaJuridica, capitalMin, capitalMax,
+        comTelefone, somenteFixo, somenteCelular, comEmail,
+        somenteMEI, excluirMEI, somenteMatriz, somenteFilial,
+        empresasSimples, excluirSimples, excluirVisualizadas, excluirContab,
+      };
 
       chrome.windows.create({ url: 'about:blank', focused: false, width: 1280, height: 900 }, win => {
         if (win?.id) chrome.windows.update(win.id, { state: 'minimized' });
