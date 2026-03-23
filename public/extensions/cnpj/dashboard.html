@@ -229,11 +229,11 @@
               </div>
               <!-- Atalhos rápidos -->
               <div class="btn-row" style="margin-top:6px;">
-                <button class="btn btn-secondary" style="font-size:11px;padding:5px 10px;" onclick="setDateRange(7)">Últimos 7 dias</button>
-                <button class="btn btn-secondary" style="font-size:11px;padding:5px 10px;" onclick="setDateRange(30)">Último mês</button>
-                <button class="btn btn-secondary" style="font-size:11px;padding:5px 10px;" onclick="setDateRange(90)">Últimos 3 meses</button>
-                <button class="btn btn-secondary" style="font-size:11px;padding:5px 10px;" onclick="setDateRange(365)">Último ano</button>
-                <button class="btn btn-secondary" style="font-size:11px;padding:5px 10px;" onclick="clearDates()">Limpar datas</button>
+                <button class="btn btn-secondary" style="font-size:11px;padding:5px 10px;" id="dateRange7">Últimos 7 dias</button>
+                <button class="btn btn-secondary" style="font-size:11px;padding:5px 10px;" id="dateRange30">Último mês</button>
+                <button class="btn btn-secondary" style="font-size:11px;padding:5px 10px;" id="dateRange90">Últimos 3 meses</button>
+                <button class="btn btn-secondary" style="font-size:11px;padding:5px 10px;" id="dateRange365">Último ano</button>
+                <button class="btn btn-secondary" style="font-size:11px;padding:5px 10px;" id="clearDatesBtn">Limpar datas</button>
               </div>
             </div>
 
@@ -504,48 +504,6 @@
       </div>
     </div>
 
-    <script>
-      /* ── Atalhos de data ── */
-      function padDate(n) { return String(n).padStart(2, '0'); }
-      function fmtDate(d) { return `${padDate(d.getDate())}/${padDate(d.getMonth()+1)}/${d.getFullYear()}`; }
-
-      function setDateRange(days) {
-        const today = new Date();
-        const from  = new Date();
-        from.setDate(today.getDate() - days);
-        document.getElementById('dataAberturaInicio').value = fmtDate(from);
-        document.getElementById('dataAberturaFim').value    = fmtDate(today);
-      }
-
-      function clearDates() {
-        document.getElementById('dataAberturaInicio').value = '';
-        document.getElementById('dataAberturaFim').value    = '';
-      }
-
-      /* ── Auto-formata data ao digitar ── */
-      ['dataAberturaInicio','dataAberturaFim'].forEach(id => {
-        document.getElementById(id).addEventListener('input', function () {
-          let v = this.value.replace(/\D/g, '');
-          if (v.length > 2) v = v.slice(0,2) + '/' + v.slice(2);
-          if (v.length > 5) v = v.slice(0,5) + '/' + v.slice(5,9);
-          this.value = v;
-        });
-      });
-
-      /* ── Switches visuais ── */
-      document.querySelectorAll('.switch-item').forEach(label => {
-        const cb = label.querySelector('input[type="checkbox"]');
-        function update() {
-          label.classList.toggle('on', cb.checked);
-        }
-        update();
-        label.addEventListener('click', e => {
-          if (e.target !== cb) cb.checked = !cb.checked;
-          update();
-        });
-        cb.addEventListener('change', update);
-      });
-    </script>
     <script src="dashboard.js"></script>
   </body>
 </html>

@@ -316,6 +316,23 @@ function renderSearchesTable(searches) {
     `${entries.length} busca(s) · ${totalL} empresas detalhadas · ${totalP} com telefone`;
 }
 
+/* ── Helpers de data ── */
+function padDate(n) { return String(n).padStart(2, '0'); }
+function fmtDate(d) { return `${padDate(d.getDate())}/${padDate(d.getMonth()+1)}/${d.getFullYear()}`; }
+
+function setDateRange(days) {
+  const today = new Date();
+  const from  = new Date();
+  from.setDate(today.getDate() - days);
+  document.getElementById('dataAberturaInicio').value = fmtDate(from);
+  document.getElementById('dataAberturaFim').value    = fmtDate(today);
+}
+
+function clearDates() {
+  document.getElementById('dataAberturaInicio').value = '';
+  document.getElementById('dataAberturaFim').value    = '';
+}
+
 /* ══════════════════════════════════════════════════════════
    INIT
    ══════════════════════════════════════════════════════════ */
@@ -332,6 +349,31 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       }).catch(() => {});
   }
+
+  /* ── Atalhos de data ── */
+  document.getElementById('dateRange7').addEventListener('click',   () => setDateRange(7));
+  document.getElementById('dateRange30').addEventListener('click',  () => setDateRange(30));
+  document.getElementById('dateRange90').addEventListener('click',  () => setDateRange(90));
+  document.getElementById('dateRange365').addEventListener('click', () => setDateRange(365));
+  document.getElementById('clearDatesBtn').addEventListener('click', () => clearDates());
+
+  /* ── Auto-formata data ao digitar ── */
+  ['dataAberturaInicio','dataAberturaFim'].forEach(id => {
+    document.getElementById(id).addEventListener('input', function () {
+      let v = this.value.replace(/\D/g, '');
+      if (v.length > 2) v = v.slice(0,2) + '/' + v.slice(2);
+      if (v.length > 5) v = v.slice(0,5) + '/' + v.slice(5,9);
+      this.value = v;
+    });
+  });
+
+  /* ── Switches visuais (fix: label já togla o cb, não toglar de novo) ── */
+  document.querySelectorAll('.switch-item').forEach(label => {
+    const cb = label.querySelector('input[type="checkbox"]');
+    function update() { label.classList.toggle('on', cb.checked); }
+    update();
+    cb.addEventListener('change', update);
+  });
 
   document.querySelectorAll('.nav-item').forEach(btn => {
     btn.addEventListener('click', () => {
