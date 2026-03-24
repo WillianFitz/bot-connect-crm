@@ -179,25 +179,64 @@ export function AppSidebar() {
       </SidebarContent>
       <SidebarFooter className="p-4 space-y-2">
         {!collapsed && (
-          <div className="rounded-lg border border-border/50 bg-secondary/50 p-3">
-            <div className="flex items-center justify-between mb-1">
-              <p className="text-[11px] text-muted-foreground">
-                Plano {PLAN_LABELS[plan] ?? "Starter"}
-              </p>
-              <p className="text-[11px] text-muted-foreground">
-                {leadsCount.toLocaleString("pt-BR")}
-                {leadsLimit !== Infinity ? ` / ${leadsLimit.toLocaleString("pt-BR")}` : ""} leads
-              </p>
+          <div className="rounded-lg border border-border/40 bg-gradient-to-br from-secondary/80 to-secondary/40 p-3 space-y-2.5">
+            {/* Plano badge */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full border ${
+                  plan === "pro"
+                    ? "bg-amber-500/20 border-amber-400/50 text-amber-300"
+                    : plan === "plus"
+                    ? "bg-blue-500/20 border-blue-400/50 text-blue-300"
+                    : "bg-slate-500/20 border-slate-400/50 text-slate-300"
+                }`}>
+                  {plan === "pro" ? "👑" : plan === "plus" ? "⚡" : "🆓"} {PLAN_LABELS[plan] ?? "Starter"}
+                </span>
+              </div>
+              <span className="text-[10px] text-muted-foreground">
+                {leadsLimit === Infinity ? "∞ leads" : `até ${leadsLimit.toLocaleString("pt-BR")}`}
+              </span>
             </div>
-            <div className="h-1.5 rounded-full bg-muted">
-              <div
-                className="h-1.5 rounded-full bg-primary"
-                style={{
-                  width: leadsLimit === Infinity
-                    ? "30%"
-                    : `${Math.min(100, (leadsCount / leadsLimit) * 100)}%`,
-                }}
-              />
+
+            {/* Contador de leads */}
+            <div className="space-y-1.5">
+              <div className="flex items-baseline justify-between">
+                <span className="text-xl font-bold text-foreground leading-none">
+                  {leadsCount.toLocaleString("pt-BR")}
+                </span>
+                {leadsLimit !== Infinity && (
+                  <span className="text-[10px] text-muted-foreground">
+                    / {leadsLimit.toLocaleString("pt-BR")} leads
+                  </span>
+                )}
+                {leadsLimit === Infinity && (
+                  <span className="text-[10px] text-muted-foreground">leads</span>
+                )}
+              </div>
+
+              {/* Barra proporcional */}
+              <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                <div
+                  className={`h-1.5 rounded-full transition-all ${
+                    leadsLimit !== Infinity && leadsCount / leadsLimit > 0.9
+                      ? "bg-destructive"
+                      : leadsLimit !== Infinity && leadsCount / leadsLimit > 0.7
+                      ? "bg-amber-500"
+                      : "bg-primary"
+                  }`}
+                  style={{
+                    width: leadsLimit === Infinity
+                      ? "0%"
+                      : `${Math.min(100, (leadsCount / leadsLimit) * 100)}%`,
+                  }}
+                />
+              </div>
+
+              {leadsLimit !== Infinity && leadsCount / leadsLimit > 0.8 && (
+                <p className="text-[10px] text-amber-400">
+                  ⚠️ Quase no limite — considere fazer upgrade
+                </p>
+              )}
             </div>
           </div>
         )}
