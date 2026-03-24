@@ -4,6 +4,7 @@ import {
   Bot,
   MessageCircle,
   CalendarClock,
+  CreditCard,
   Loader2,
   Upload,
   Trash2,
@@ -1562,6 +1563,36 @@ const DEFAULT_TOKEN_VISUALS: TokenVisual[] = [
   },
 ];
 
+const COBRANCA_TOKEN_VISUALS: TokenVisual[] = [
+  {
+    token: "{{link_pagamento}}",
+    label: "Link de Pagamento",
+    emoji: "💳",
+    chipClass:
+      "bg-amber-500/20 border-amber-400/60 text-amber-300 hover:bg-amber-500/30",
+    badgeClass:
+      "bg-amber-500/20 border-amber-400/60 text-amber-300",
+  },
+  {
+    token: "{{numero_humano}}",
+    label: "Falar com Humano",
+    emoji: "👤",
+    chipClass:
+      "bg-blue-500/20 border-blue-400/60 text-blue-300 hover:bg-blue-500/30",
+    badgeClass:
+      "bg-blue-500/20 border-blue-400/60 text-blue-300",
+  },
+  {
+    token: "{{grupo_humano}}",
+    label: "Grupo Humano",
+    emoji: "👥",
+    chipClass:
+      "bg-cyan-500/20 border-cyan-400/60 text-cyan-300 hover:bg-cyan-500/30",
+    badgeClass:
+      "bg-cyan-500/20 border-cyan-400/60 text-cyan-300",
+  },
+];
+
 // Placeholder media visuals shown when no media is uploaded yet
 const PLACEHOLDER_MEDIA_VISUALS = [
   {
@@ -2535,101 +2566,291 @@ export default function Agents() {
     );
   };
 
-  const renderCobranca = () => (
-    <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
-          <CalendarClock className="h-5 w-5 text-primary" />
+  const renderCobranca = () => {
+    const rawMediaList = mediaQuery.data ?? [];
+    const charCount = forms?.cobranca.base_prompt.length ?? 0;
+    const mediaVisuals = rawMediaList.map(buildMediaVisual);
+    const allVisuals: TokenVisual[] = [...COBRANCA_TOKEN_VISUALS, ...mediaVisuals];
+
+    return (
+      <div className="space-y-6">
+        {/* Header */}
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-500/10">
+            <CreditCard className="h-5 w-5 text-amber-400" />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">Agente de Cobrança</h2>
+            <p className="text-xs text-muted-foreground">
+              Aborda clientes com pagamentos pendentes de forma educada e envia o link de pagamento.
+            </p>
+          </div>
         </div>
-        <div>
-          <h2 className="text-sm font-semibold text-foreground">
-            Agente de Cobrança
-          </h2>
-          <p className="text-xs text-muted-foreground">
-            Aborda clientes com pagamentos pendentes de forma educada e envia o link de pagamento.
+
+        {/* Ferramentas */}
+        <div className="rounded-xl border border-border/50 bg-card/40 p-4 space-y-3">
+          <h3 className="text-xs font-semibold text-foreground">Minhas Ferramentas</h3>
+          <p className="text-[11px] text-muted-foreground">
+            Arraste qualquer botão abaixo para o local correto no prompt.
           </p>
-        </div>
-      </div>
 
-      <div className="space-y-3">
-        <Label className="text-xs text-muted-foreground">
-          Prompt do agente de cobrança
-        </Label>
-        <Textarea
-          className="min-h-[200px] bg-secondary border-border/50 text-xs leading-relaxed"
-          placeholder={COBRANCA_PROMPT_PLACEHOLDER}
-          value={current.base_prompt || COBRANCA_PROMPT_DEFAULT}
-          onChange={(e) =>
-            updateField("cobranca", { base_prompt: e.target.value })
-          }
-        />
-      </div>
+          <div className="space-y-2">
+            <p className="text-[10px] text-muted-foreground/70 uppercase tracking-widest font-semibold">
+              Ações padrão
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {COBRANCA_TOKEN_VISUALS.map((v) => (
+                <ToolChip key={v.token} visual={v} />
+              ))}
+            </div>
+          </div>
 
-      <div className="space-y-4 rounded-xl border border-border/50 bg-card/40 p-4">
-        <h3 className="text-xs font-semibold text-foreground">
-          Itens padrões (tokens para o prompt)
-        </h3>
-        <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">💳 Link de pagamento</Label>
-            <Input
-              className="h-8 bg-secondary border-border/50 text-xs"
-              placeholder="https://pix.meusite.com/pagamento"
-              value={current.agenda_link}
-              onChange={(e) =>
-                updateField("cobranca", { agenda_link: e.target.value })
-              }
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">
-              👤 Número falar com humano
-            </Label>
-            <Input
-              className="h-8 bg-secondary border-border/50 text-xs"
-              placeholder="5511999999999"
-              value={current.human_number}
-              onChange={(e) =>
-                updateField("cobranca", { human_number: e.target.value })
-              }
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">
-              👥 Grupo falar com humano
-            </Label>
-            <Input
-              className="h-8 bg-secondary border-border/50 text-xs"
-              placeholder="1234567890-123456@g.us"
-              value={current.human_group_id}
-              onChange={(e) =>
-                updateField("cobranca", { human_group_id: e.target.value })
-              }
-            />
+          <div className="space-y-2">
+            <p className="text-[10px] text-muted-foreground/70 uppercase tracking-widest font-semibold">
+              Mídias (QR Code PIX, comprovante, etc.)
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {PLACEHOLDER_MEDIA_VISUALS.map((p) => {
+                const uploaded = mediaVisuals.filter((v) =>
+                  p.mediaType === "video" ? v.label.startsWith("Enviar Vídeo") :
+                  p.mediaType === "image" ? v.label.startsWith("Enviar Imagem") :
+                  v.label.startsWith("Enviar Áudio")
+                );
+                if (uploaded.length > 0) {
+                  return uploaded.map((v) => <ToolChip key={v.token} visual={v} />);
+                }
+                return (
+                  <button
+                    key={p.mediaType}
+                    type="button"
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium opacity-50 ${p.chipClass}`}
+                    onClick={() =>
+                      toast({
+                        title: `Nenhum ${p.label.toLowerCase()} enviado ainda`,
+                        description: `Suba um arquivo na seção "Mídias" abaixo para liberar este botão.`,
+                        variant: "destructive",
+                      })
+                    }
+                  >
+                    <span>{p.emoji}</span>
+                    <span>{p.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {rawMediaList.length === 0 && (
+              <p className="text-[11px] text-amber-400/80 flex items-center gap-1.5">
+                <span>⚠️</span>
+                Envie seus arquivos na seção <strong>Mídias</strong> abaixo para liberar os botões.
+              </p>
+            )}
           </div>
         </div>
-      </div>
 
-      <div className="flex items-center justify-between gap-2">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 text-xs gap-1.5 text-muted-foreground hover:text-destructive"
-          onClick={() => clearMemoryMutation.mutate("cobranca")}
-          disabled={clearMemoryMutation.isPending}
-        >
-          🧹 Limpar memória da cobrança
-        </Button>
-        <Button
-          size="sm"
-          onClick={() => saveMutation.mutate(forms.cobranca)}
-          disabled={saveMutation.isPending}
-        >
-          {saveMutation.isPending ? "Salvando..." : "Salvar"}
-        </Button>
+        {/* Editor de Prompt */}
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Label className="text-xs text-muted-foreground font-semibold">Prompt do agente de cobrança</Label>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs gap-1.5 text-muted-foreground hover:text-destructive"
+              onClick={() => clearMemoryMutation.mutate("cobranca")}
+              disabled={clearMemoryMutation.isPending}
+            >
+              🧹 Limpar memória da cobrança
+            </Button>
+          </div>
+
+          <RichPromptEditor
+            value={current.base_prompt || COBRANCA_PROMPT_DEFAULT}
+            onChange={(v) => updateField("cobranca", { base_prompt: v })}
+            visuals={allVisuals}
+            placeholder={COBRANCA_PROMPT_PLACEHOLDER}
+          />
+
+          <div className="flex items-center justify-between">
+            <span className={`text-[11px] ${charCount > 8000 ? "text-destructive" : "text-muted-foreground"}`}>
+              {charCount}/8000 caracteres
+            </span>
+            <div className="flex gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => updateField("cobranca", { base_prompt: "" })}
+              >
+                Limpar
+              </Button>
+              <Button
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => saveMutation.mutate(forms!.cobranca)}
+                disabled={saveMutation.isPending || charCount > 8000}
+              >
+                {saveMutation.isPending ? "Salvando..." : "Salvar"}
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        {/* Itens padrões */}
+        <div className="space-y-4 rounded-xl border border-border/50 bg-card/40 p-4">
+          <h3 className="text-xs font-semibold text-foreground">Itens padrões (tokens para o prompt)</h3>
+          <p className="text-[11px] text-muted-foreground">
+            Configure os valores dos tokens. Arraste os botões da seção "Minhas Ferramentas" para inserir no prompt.
+          </p>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">💳 Link de pagamento</Label>
+              <div className="flex gap-2">
+                <Input
+                  className="h-8 bg-secondary border-border/50 text-xs flex-1"
+                  placeholder="https://pix.meusite.com/pagamento"
+                  value={current.agenda_link}
+                  onChange={(e) => updateField("cobranca", { agenda_link: e.target.value })}
+                />
+                <Button size="sm" className="h-8 text-xs shrink-0" onClick={() => saveMutation.mutate(forms!.cobranca)} disabled={saveMutation.isPending}>
+                  Salvar
+                </Button>
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">👤 Número falar com humano</Label>
+              <div className="flex gap-2">
+                <Input
+                  className="h-8 bg-secondary border-border/50 text-xs flex-1"
+                  placeholder="5511999999999"
+                  value={current.human_number}
+                  onChange={(e) => updateField("cobranca", { human_number: e.target.value })}
+                />
+                <Button size="sm" className="h-8 text-xs shrink-0" onClick={() => saveMutation.mutate(forms!.cobranca)} disabled={saveMutation.isPending}>
+                  Salvar
+                </Button>
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">👥 Grupo falar com humano</Label>
+              <div className="flex gap-2">
+                <Input
+                  className="h-8 bg-secondary border-border/50 text-xs flex-1"
+                  placeholder="1234567890-123456@g.us"
+                  value={current.human_group_id}
+                  onChange={(e) => updateField("cobranca", { human_group_id: e.target.value })}
+                />
+                <Button size="sm" className="h-8 text-xs shrink-0" onClick={() => saveMutation.mutate(forms!.cobranca)} disabled={saveMutation.isPending}>
+                  Salvar
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Mídias do agente */}
+        <div className="space-y-4 rounded-xl border border-border/50 bg-card/40 p-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold text-foreground flex items-center gap-2">
+              <Upload className="h-4 w-4 text-primary" />
+              Mídias do agente
+            </h3>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs gap-1"
+              onClick={() => queryClient.invalidateQueries({ queryKey: ["agent-media"] })}
+            >
+              <RefreshCw className="h-3 w-3" /> Atualizar
+            </Button>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Faça upload de imagens (ex.: QR Code do PIX), áudios ou vídeos para arrastar e usar no prompt de cobrança.
+          </p>
+
+          <div className="space-y-3 rounded-lg border border-dashed border-border/60 bg-background/30 p-4">
+            <p className="text-xs font-semibold text-foreground">Nova mídia</p>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              <div className="space-y-1">
+                <Label className="text-[11px] text-muted-foreground">Arquivo</Label>
+                <input
+                  id="media-file-input-cobranca"
+                  type="file"
+                  accept="image/*,video/*,audio/*"
+                  className="w-full text-xs file:mr-2 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-primary/10 file:text-primary hover:file:bg-primary/20 cursor-pointer"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0] ?? null;
+                    setMediaFile(f);
+                    if (f && !mediaName) {
+                      const auto = f.name.split(".")[0]!
+                        .toLowerCase()
+                        .replace(/[^a-z0-9_\-]/g, "_")
+                        .replace(/_+/g, "_")
+                        .slice(0, 40);
+                      setMediaName(auto);
+                    }
+                  }}
+                />
+                <p className="text-[10px] text-muted-foreground">Imagem, vídeo ou áudio · máx. 50 MB</p>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[11px] text-muted-foreground">ID do token</Label>
+                <Input
+                  className="h-8 bg-secondary border-border/50 text-xs font-mono"
+                  placeholder="ex.: qrcode_pix"
+                  value={mediaName}
+                  onChange={(e) => setMediaName(e.target.value.toLowerCase().replace(/[^a-z0-9_\-]/g, ""))}
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Token no prompt: <span className="font-mono text-primary/80">{"{{media:" + (mediaName || "id") + "}}"}</span>
+                </p>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              className="h-8 text-xs gap-2"
+              onClick={handleUploadMedia}
+              disabled={!mediaFile || !mediaName.trim() || isUploadingMedia}
+            >
+              <Upload className="h-3.5 w-3.5" />
+              {isUploadingMedia ? "Enviando..." : "Fazer Upload"}
+            </Button>
+          </div>
+
+          {rawMediaList.length > 0 ? (
+            <div className="space-y-2">
+              {rawMediaList.map((m: AgentMedia) => (
+                <div key={m.id} className="group flex items-center justify-between rounded-lg border border-border/50 bg-background/30 px-3 py-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-base shrink-0">
+                      {m.media_type.startsWith("video/") ? "🎥" :
+                       m.media_type.startsWith("audio/") ? "🎵" :
+                       m.media_type.startsWith("image/") ? "🖼️" : "📎"}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium truncate">{m.file_name}</p>
+                      <p className="text-[10px] text-muted-foreground font-mono truncate">{"{{media:" + m.media_id + "}}"}</p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                    onClick={() => deleteMediaMutation.mutate(m.id)}
+                    disabled={deleteMediaMutation.isPending}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-center text-xs text-muted-foreground py-4">
+              Nenhuma mídia cadastrada ainda
+            </p>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="space-y-6 animate-slide-in w-full">

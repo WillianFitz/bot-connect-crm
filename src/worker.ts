@@ -4421,6 +4421,7 @@ function resolvePromptDefaults(
   const resolved = prompt
     .replace(/\{\{agenda\}\}/g, agentRow.agenda_link || "[link da agenda não configurado]")
     .replace(/\{\{link_agendamento\}\}/g, bookingUrl || agentRow.agenda_link || "[link da agenda não configurado]")
+    .replace(/\{\{link_pagamento\}\}/g, agentRow.agenda_link || "[link de pagamento não configurado]")
     .replace(/\{\{numero_humano\}\}/g, agentRow.human_number || "[número humano não configurado]")
     .replace(/\{\{grupo_humano\}\}/g, agentRow.human_group_id || "[grupo não configurado]")
     .replace(/\{\{contact_name\}\}/g, name || "desconhecido");
