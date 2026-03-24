@@ -405,6 +405,8 @@ export const api = {
         username: string;
         document: string;
         created_at: string;
+        plan: string;
+        blocked: number;
       }>
     >("/admin/users", {
       method: "GET",
@@ -417,6 +419,24 @@ export const api = {
     return request<{ ok: true }>(`/admin/users?id=${id}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${adminToken}` },
+    });
+  },
+
+  adminSetPlan: (payload: { tenant_id: string; plan: string }) => {
+    const adminToken = typeof localStorage !== "undefined" ? localStorage.getItem("admin_token") || "" : "";
+    return request<{ ok: true }>("/admin/set-plan", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify(payload),
+    });
+  },
+
+  adminToggleBlock: (payload: { tenant_id: string; blocked: boolean }) => {
+    const adminToken = typeof localStorage !== "undefined" ? localStorage.getItem("admin_token") || "" : "";
+    return request<{ ok: true }>("/admin/toggle-block", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify(payload),
     });
   },
 

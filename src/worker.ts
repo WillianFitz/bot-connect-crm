@@ -334,7 +334,8 @@ async function handleAdminListUsers(request: Request, env: Env): Promise<Respons
   }
 
   const res = await env.DB.prepare(
-    `SELECT u.id, u.tenant_id, t.name as tenant_name, u.username, u.document, u.created_at
+    `SELECT u.id, u.tenant_id, t.name as tenant_name, u.username, u.document, u.created_at,
+            COALESCE(t.plan, 'starter') as plan, COALESCE(t.blocked, 0) as blocked
      FROM users u
      JOIN tenants t ON t.id = u.tenant_id
      ORDER BY t.name ASC, u.username ASC`,
@@ -352,6 +353,42 @@ async function handleAdminDeleteUser(request: Request, env: Env, url: URL): Prom
   if (!id) return json({ error: "ID obrigatório" }, { status: 400 });
 
   await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(id).run();
+  return json({ ok: true });
+}
+
+async function handleAdminSetPlan(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) {
+    return json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const body = await readBody<{ tenant_id: string; plan: string }>(request);
+  if (!body.tenant_id || !body.plan) {
+    return json({ error: "tenant_id e plan são obrigatórios" }, { status: 400 });
+  }
+  const validPlans = ["starter", "plus", "pro"];
+  if (!validPlans.includes(body.plan)) {
+    return json({ error: "Plano inválido" }, { status: 400 });
+  }
+
+  await env.DB.prepare("UPDATE tenants SET plan = ? WHERE id = ?")
+    .bind(body.plan, body.tenant_id)
+    .run();
+  return json({ ok: true });
+}
+
+async function handleAdminToggleBlock(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) {
+    return json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const body = await readBody<{ tenant_id: string; blocked: boolean }>(request);
+  if (!body.tenant_id || body.blocked === undefined) {
+    return json({ error: "tenant_id e blocked são obrigatórios" }, { status: 400 });
+  }
+
+  await env.DB.prepare("UPDATE tenants SET blocked = ? WHERE id = ?")
+    .bind(body.blocked ? 1 : 0, body.tenant_id)
+    .run();
   return json({ ok: true });
 }
 
@@ -408,6 +445,16 @@ async function handleClientLogin(request: Request, env: Env): Promise<Response> 
   const ok = await verifyPassword(body.password, row.password_hash);
   if (!ok) {
     return invalidCreds();
+  }
+
+  // Check if tenant is blocked
+  const tenantRow = await env.DB.prepare(
+    "SELECT blocked FROM tenants WHERE id = ? LIMIT 1",
+  )
+    .bind(row.tenant_id)
+    .first<{ blocked: number }>();
+  if (tenantRow?.blocked) {
+    return json({ error: "Conta suspensa. Entre em contato com o suporte." }, { status: 403 });
   }
 
   await env.DB.prepare("DELETE FROM login_attempts WHERE key = ?").bind(rateKey).run();
@@ -5362,6 +5409,10 @@ export default {
         response = await handleAdminListUsers(request, env);
       } else if (pathname === "/api/admin/users" && method === "DELETE") {
         response = await handleAdminDeleteUser(request, env, urlForRouting);
+      } else if (pathname === "/api/admin/set-plan" && method === "POST") {
+        response = await handleAdminSetPlan(request, env);
+      } else if (pathname === "/api/admin/toggle-block" && method === "POST") {
+        response = await handleAdminToggleBlock(request, env);
       } else if (pathname === "/api/auth/login" && method === "POST") {
         response = await handleClientLogin(request, env);
       } else if (pathname === "/api/dashboard/stats" && method === "GET") {
