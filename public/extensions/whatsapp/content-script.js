@@ -37,7 +37,7 @@ function normalizePhone(text) {
     if (num.length >= 10 && num.length <= 11) num = '+55' + num;
     else if (num.length >= 12) num = '+' + num;
   }
-  return num;
+  return num.replace(/^\+/, '');
 }
 
 /* ── Extrai leads de uma lista de elementos ── */
