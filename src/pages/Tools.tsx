@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Instagram, MapPin, FileText, MessageCircle, Download } from "lucide-react";
+import { Loader2, Instagram, MapPin, FileText, MessageCircle, Download, Lock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 function StatusBadge({ status }: { status: string }) {
@@ -87,6 +87,26 @@ const CNPJ_EXTENSION_FILES = [
   "icon128.png",
 ];
 
+const PLAN_RANK: Record<string, number> = { starter: 0, plus: 1, pro: 2 };
+
+function LockedContent({ minPlan }: { minPlan: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-border/50 bg-card p-16 text-center">
+      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-secondary">
+        <Lock className="h-6 w-6 text-muted-foreground" />
+      </div>
+      <div>
+        <p className="text-sm font-medium text-foreground">
+          Disponível no plano {minPlan === "plus" ? "Plus" : "Pro"}
+        </p>
+        <p className="text-xs text-muted-foreground mt-1">
+          Faça upgrade do seu plano para usar este extrator.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function Tools() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -123,6 +143,14 @@ export default function Tools() {
     queryKey: ["cnpjConfig"],
     queryFn: () => api.getCnpjConfig(),
   });
+
+  const { data: planData } = useQuery({
+    queryKey: ["tenant-plan"],
+    queryFn: () => api.getTenantPlan(),
+    staleTime: 5 * 60_000,
+  });
+  const planRank = PLAN_RANK[planData?.plan ?? "starter"] ?? 0;
+  const hasPlus = planRank >= PLAN_RANK.plus;
 
   async function handleDownloadExtension() {
     const tid = tenantId || (typeof window !== "undefined" && window.localStorage.getItem("tenant_id"));
@@ -329,17 +357,20 @@ export default function Tools() {
 
       <Tabs defaultValue="instagram" className="space-y-4">
         <TabsList>
-          <TabsTrigger value="instagram" className="flex items-center gap-2">
+          <TabsTrigger value="instagram" className="flex items-center gap-2" disabled={!hasPlus}>
             <Instagram className="h-4 w-4" />
             Extrator Instagram
+            {!hasPlus && <Lock className="h-3 w-3 ml-0.5 opacity-60" />}
           </TabsTrigger>
-          <TabsTrigger value="maps" className="flex items-center gap-2">
+          <TabsTrigger value="maps" className="flex items-center gap-2" disabled={!hasPlus}>
             <MapPin className="h-4 w-4" />
             Extrator Google Maps
+            {!hasPlus && <Lock className="h-3 w-3 ml-0.5 opacity-60" />}
           </TabsTrigger>
-          <TabsTrigger value="cnpj" className="flex items-center gap-2">
+          <TabsTrigger value="cnpj" className="flex items-center gap-2" disabled={!hasPlus}>
             <FileText className="h-4 w-4" />
             Extrator CNPJ
+            {!hasPlus && <Lock className="h-3 w-3 ml-0.5 opacity-60" />}
           </TabsTrigger>
           <TabsTrigger value="whatsapp-groups" className="flex items-center gap-2">
             <MessageCircle className="h-4 w-4" />
@@ -348,7 +379,7 @@ export default function Tools() {
         </TabsList>
 
         <TabsContent value="instagram">
-          <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3 w-full">
+          {!hasPlus ? <LockedContent minPlan="plus" /> : <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3 w-full">
             <Card>
               <CardHeader>
                 <CardTitle>Conexão Instagram</CardTitle>
@@ -539,11 +570,11 @@ export default function Tools() {
                 )}
               </CardContent>
             </Card>
-          </div>
+          </div>}
         </TabsContent>
 
         <TabsContent value="maps">
-          <div className="grid gap-6 md:grid-cols-2 w-full">
+          {!hasPlus ? <LockedContent minPlan="plus" /> : <div className="grid gap-6 md:grid-cols-2 w-full">
             <Card>
               <CardHeader>
                 <CardTitle>Extrator Google Maps</CardTitle>
@@ -670,11 +701,11 @@ export default function Tools() {
                 </div>
               </CardContent>
             </Card>
-          </div>
+          </div>}
         </TabsContent>
 
         <TabsContent value="cnpj">
-          <div className="grid gap-6 md:grid-cols-2 w-full">
+          {!hasPlus ? <LockedContent minPlan="plus" /> : <div className="grid gap-6 md:grid-cols-2 w-full">
             <Card>
               <CardHeader>
                 <CardTitle>Extrator CNPJ</CardTitle>
@@ -792,7 +823,7 @@ export default function Tools() {
                 </div>
               </CardContent>
             </Card>
-          </div>
+          </div>}
         </TabsContent>
 
         <TabsContent value="whatsapp-groups">

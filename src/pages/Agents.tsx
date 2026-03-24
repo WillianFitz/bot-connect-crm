@@ -11,6 +11,7 @@ import {
   ChevronDown,
   ChevronUp,
   Sparkles,
+  Lock,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -1861,11 +1862,20 @@ function ToolChip({ visual }: { visual: TokenVisual }) {
 const AGENDAMENTO_PROMPT_PLACEHOLDER =
   "Insira o prompt base do seu agente de agendamento.\nEx: como identificar intenção de reunião, como sugerir horários, como usar o link da agenda etc.";
 
+const PLAN_RANK: Record<string, number> = { starter: 0, plus: 1, pro: 2 };
+
 export default function Agents() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<AgentId>("disparo");
+  const [activeTab, setActiveTab] = useState<AgentId>("atendimento");
   const [forms, setForms] = useState<Record<AgentId, AgentFormState> | null>(null);
+
+  const { data: planData } = useQuery({
+    queryKey: ["tenant-plan"],
+    queryFn: () => api.getTenantPlan(),
+    staleTime: 5 * 60_000,
+  });
+  const hasPlus = (PLAN_RANK[planData?.plan ?? "starter"] ?? 0) >= PLAN_RANK.plus;
 
   // Media upload state
   const [mediaFile, setMediaFile] = useState<File | null>(null);
@@ -2613,14 +2623,44 @@ export default function Agents() {
         className="space-y-4"
       >
         <TabsList className="bg-secondary border border-border/50">
-          <TabsTrigger value="disparo">Agente de Disparo</TabsTrigger>
+          <TabsTrigger value="disparo" disabled={!hasPlus} className="flex items-center gap-1.5">
+            Agente de Disparo
+            {!hasPlus && <Lock className="h-3 w-3 opacity-60" />}
+          </TabsTrigger>
           <TabsTrigger value="atendimento">Agente de Atendimento</TabsTrigger>
-          <TabsTrigger value="agendamento">Agente de Agendamento</TabsTrigger>
+          <TabsTrigger value="agendamento" disabled={!hasPlus} className="flex items-center gap-1.5">
+            Agente de Agendamento
+            {!hasPlus && <Lock className="h-3 w-3 opacity-60" />}
+          </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="disparo">{renderDisparo()}</TabsContent>
+        <TabsContent value="disparo">
+          {!hasPlus ? (
+            <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-border/50 bg-card p-16 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-secondary">
+                <Lock className="h-6 w-6 text-muted-foreground" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-foreground">Disponível no plano Plus</p>
+                <p className="text-xs text-muted-foreground mt-1">Faça upgrade para usar o Agente de Disparo.</p>
+              </div>
+            </div>
+          ) : renderDisparo()}
+        </TabsContent>
         <TabsContent value="atendimento">{renderAtendimento()}</TabsContent>
-        <TabsContent value="agendamento">{renderAgendamento()}</TabsContent>
+        <TabsContent value="agendamento">
+          {!hasPlus ? (
+            <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-border/50 bg-card p-16 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-secondary">
+                <Lock className="h-6 w-6 text-muted-foreground" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-foreground">Disponível no plano Plus</p>
+                <p className="text-xs text-muted-foreground mt-1">Faça upgrade para usar o Agente de Agendamento.</p>
+              </div>
+            </div>
+          ) : renderAgendamento()}
+        </TabsContent>
       </Tabs>
     </div>
   );
