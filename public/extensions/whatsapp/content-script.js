@@ -350,6 +350,7 @@ async function extractParticipants(targetCount, onProgress) {
     const items = findItems(screen, skipSide);
     const newLeads = extractFromItems(items);
     for (const lead of newLeads) {
+      if (leads.length >= targetCount) break;
       const key = lead.phone || lead.name;
       if (!key || seen.has(key)) continue;
       seen.add(key); leads.push(lead);
