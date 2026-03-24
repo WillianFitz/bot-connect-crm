@@ -126,7 +126,7 @@ const PLAN_LABELS: Record<string, string> = {
 };
 
 const PLAN_LIMITS: Record<string, number> = {
-  starter: 500,
+  starter: 100,
   plus: 2000,
   pro: Infinity,
 };

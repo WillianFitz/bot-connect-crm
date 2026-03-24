@@ -836,16 +836,18 @@ const PLANS = [
   {
     id: "starter",
     name: "Starter",
-    price: "R$ 69,90/mês",
+    price: "Grátis",
+    trial: null,
     icon: Zap,
     color: "text-slate-400",
     bg: "bg-slate-500/10 border-slate-500/30",
-    features: ["500 leads", "Agente de Atendimento", "Extrator WhatsApp", "1 conexão"],
+    features: ["100 leads", "Agente de Atendimento", "Extrator WhatsApp", "1 conexão"],
   },
   {
     id: "plus",
     name: "Plus",
     price: "R$ 99,90/mês",
+    trial: "7 dias grátis",
     icon: Shield,
     color: "text-blue-400",
     bg: "bg-blue-500/10 border-blue-500/30",
@@ -856,6 +858,7 @@ const PLANS = [
     id: "pro",
     name: "Pro",
     price: "R$ 129,90/mês",
+    trial: "7 dias grátis",
     icon: Crown,
     color: "text-amber-400",
     bg: "bg-amber-500/10 border-amber-500/30",
@@ -983,7 +986,12 @@ function SubscriptionTab() {
                 )}
               </div>
 
-              <p className={`text-2xl font-bold ${plan.color}`}>{plan.price}</p>
+              <div>
+                <p className={`text-2xl font-bold ${plan.color}`}>{plan.price}</p>
+                {plan.trial && (
+                  <p className="text-[11px] text-emerald-400 font-medium mt-0.5">✓ {plan.trial}</p>
+                )}
+              </div>
 
               <ul className="space-y-1.5">
                 {plan.features.map((f) => (
@@ -998,21 +1006,9 @@ function SubscriptionTab() {
                 <Button variant="outline" size="sm" className="w-full text-xs" disabled>
                   Plano atual
                 </Button>
-              ) : plan.id === "starter" && !isCurrent ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="w-full text-xs gap-2"
-                  onClick={() => handleCheckout("starter")}
-                  disabled={!!loadingPlan}
-                >
-                  {loadingPlan === "starter" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                  Assinar Starter
-                </Button>
-              ) : isCurrent ? (
-                <Button variant="outline" size="sm" className="w-full text-xs" onClick={handlePortal} disabled={loadingPortal}>
-                  {loadingPortal ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
-                  Gerenciar
+              ) : plan.id === "starter" ? (
+                <Button variant="outline" size="sm" className="w-full text-xs" disabled>
+                  Plano gratuito
                 </Button>
               ) : (
                 <Button
@@ -1022,7 +1018,11 @@ function SubscriptionTab() {
                   disabled={!!loadingPlan}
                 >
                   {isLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                  {currentPlan === "starter" ? "Assinar" : currentPlan === "plus" && plan.id === "pro" ? "Fazer upgrade" : "Mudar plano"}
+                  {currentPlan === "starter"
+                    ? `Começar grátis por 7 dias`
+                    : currentPlan === "plus" && plan.id === "pro"
+                    ? "Fazer upgrade"
+                    : "Mudar plano"}
                 </Button>
               )}
             </div>

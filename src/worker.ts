@@ -2142,6 +2142,7 @@ async function handleStripeCreateCheckout(request: Request, env: Env): Promise<R
       "line_items[0][quantity]": "1",
       success_url: body.success_url || "https://bot-connect-crm.pages.dev/app/settings?stripe=success",
       cancel_url: body.cancel_url || "https://bot-connect-crm.pages.dev/app/settings?stripe=cancel",
+      "subscription_data[trial_period_days]": "7",
       "subscription_data[metadata][tenant_id]": tenantId,
       "metadata[tenant_id]": tenantId,
       "metadata[plan]": body.plan,
@@ -2237,21 +2238,24 @@ async function handleStripeWebhook(request: Request, env: Env): Promise<Response
       break;
     }
     case "customer.subscription.deleted": {
+      // Cancelou → volta para Starter grátis, sem bloquear
       const tenantId = obj.metadata?.tenant_id;
       if (tenantId) {
         await env.DB.prepare(
-          "UPDATE tenants SET plan = 'starter', subscription_status = 'canceled', stripe_subscription_id = NULL, blocked = 0 WHERE id = ?",
+          "UPDATE tenants SET plan = 'starter', subscription_status = 'inactive', stripe_subscription_id = NULL, blocked = 0 WHERE id = ?",
         ).bind(tenantId).run();
       }
       break;
     }
     case "invoice.payment_failed": {
-      // Find tenant by customer ID
+      // Marca como atrasado — bloqueia só após 3 tentativas (attempt_count >= 3)
       const customerId = obj.customer;
+      const attemptCount = obj.attempt_count ?? 1;
       if (customerId) {
+        const blocked = attemptCount >= 3 ? 1 : 0;
         await env.DB.prepare(
-          "UPDATE tenants SET subscription_status = 'past_due', blocked = 1 WHERE stripe_customer_id = ?",
-        ).bind(customerId).run();
+          "UPDATE tenants SET subscription_status = 'past_due', blocked = ? WHERE stripe_customer_id = ?",
+        ).bind(blocked, customerId).run();
       }
       break;
     }
