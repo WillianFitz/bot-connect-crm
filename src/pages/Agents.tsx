@@ -11,8 +11,8 @@ import {
   ChevronDown,
   ChevronUp,
   Sparkles,
-  Lock,
 } from "lucide-react";
+import { PlanLock } from "@/components/PlanLock";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -2623,43 +2623,17 @@ export default function Agents() {
         className="space-y-4"
       >
         <TabsList className="bg-secondary border border-border/50">
-          <TabsTrigger value="disparo" disabled={!hasPlus} className="flex items-center gap-1.5">
-            Agente de Disparo
-            {!hasPlus && <Lock className="h-3 w-3 opacity-60" />}
-          </TabsTrigger>
+          <TabsTrigger value="disparo">Agente de Disparo</TabsTrigger>
           <TabsTrigger value="atendimento">Agente de Atendimento</TabsTrigger>
-          <TabsTrigger value="agendamento" disabled={!hasPlus} className="flex items-center gap-1.5">
-            Agente de Agendamento
-            {!hasPlus && <Lock className="h-3 w-3 opacity-60" />}
-          </TabsTrigger>
+          <TabsTrigger value="agendamento">Agente de Agendamento</TabsTrigger>
         </TabsList>
 
         <TabsContent value="disparo">
-          {!hasPlus ? (
-            <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-border/50 bg-card p-16 text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-secondary">
-                <Lock className="h-6 w-6 text-muted-foreground" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-foreground">Disponível no plano Plus</p>
-                <p className="text-xs text-muted-foreground mt-1">Faça upgrade para usar o Agente de Disparo.</p>
-              </div>
-            </div>
-          ) : renderDisparo()}
+          <PlanLock minPlan="plus" locked={!hasPlus}>{renderDisparo()}</PlanLock>
         </TabsContent>
         <TabsContent value="atendimento">{renderAtendimento()}</TabsContent>
         <TabsContent value="agendamento">
-          {!hasPlus ? (
-            <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-border/50 bg-card p-16 text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-secondary">
-                <Lock className="h-6 w-6 text-muted-foreground" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-foreground">Disponível no plano Plus</p>
-                <p className="text-xs text-muted-foreground mt-1">Faça upgrade para usar o Agente de Agendamento.</p>
-              </div>
-            </div>
-          ) : renderAgendamento()}
+          <PlanLock minPlan="plus" locked={!hasPlus}>{renderAgendamento()}</PlanLock>
         </TabsContent>
       </Tabs>
     </div>
