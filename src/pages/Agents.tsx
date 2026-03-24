@@ -2003,7 +2003,7 @@ export default function Agents() {
           agentsQuery.data.find((a: any) => a.id === "atendimento")
             ?.human_group_id || "",
       },
-      agendamento: {
+      cobranca: {
         id: "cobranca",
         name: "Agente de Cobrança",
         type: "scheduling",
@@ -2618,11 +2618,11 @@ export default function Agents() {
           onClick={() => clearMemoryMutation.mutate("cobranca")}
           disabled={clearMemoryMutation.isPending}
         >
-          🧹 Limpar memória do agendamento
+          🧹 Limpar memória da cobrança
         </Button>
         <Button
           size="sm"
-          onClick={() => saveMutation.mutate(forms.agendamento)}
+          onClick={() => saveMutation.mutate(forms.cobranca)}
           disabled={saveMutation.isPending}
         >
           {saveMutation.isPending ? "Salvando..." : "Salvar"}
@@ -2637,7 +2637,7 @@ export default function Agents() {
         <div>
           <h1 className="text-2xl font-bold text-foreground">Agentes de IA</h1>
           <p className="text-sm text-muted-foreground">
-            Configure os agentes de disparo, atendimento e agendamento usados pelo seu bot.
+            Configure os agentes de disparo, atendimento e cobrança usados pelo seu bot.
           </p>
         </div>
         <Button
