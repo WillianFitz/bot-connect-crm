@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Phone, CalendarClock, Pencil, Play, Pause, Trash2 } from "lucide-react";
+import { Plus, Phone, CalendarClock, Pencil, Play, Pause, Trash2, Megaphone, CreditCard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -48,6 +48,8 @@ interface Campaign {
   api_source: string | null;
   template_id: number | null;
   template_variables: string | null;
+  campaign_type: string | null;
+  payment_link: string | null;
 }
 
 interface WaTemplate {
@@ -79,6 +81,8 @@ export default function Campaigns() {
   const [apiSource, setApiSource] = useState<"evolution" | "whatsapp_official">("evolution");
   const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
   const [templateVariables, setTemplateVariables] = useState<string[]>([]);
+  const [activeCampaignType, setActiveCampaignType] = useState<"prospecting" | "billing">("prospecting");
+  const [paymentLink, setPaymentLink] = useState("");
 
   const funnelsQuery = useQuery({
     queryKey: ["funnels"],
@@ -247,6 +251,8 @@ export default function Campaigns() {
       api_source: apiSource,
       template_id: apiSource === "whatsapp_official" ? selectedTemplateId : null,
       template_variables: apiSource === "whatsapp_official" ? templateVariables : [],
+      campaign_type: activeCampaignType,
+      payment_link: activeCampaignType === "billing" ? paymentLink || null : null,
     });
   };
 
@@ -289,7 +295,12 @@ export default function Campaigns() {
     });
   };
 
-  const campaigns = (campaignsQuery.data || []) as Campaign[];
+  const allCampaigns = (campaignsQuery.data || []) as Campaign[];
+  const campaigns = allCampaigns.filter((c) =>
+    activeCampaignType === "billing"
+      ? c.campaign_type === "billing"
+      : c.campaign_type !== "billing"
+  );
 
   return (
     <div className="space-y-6 animate-slide-in w-full">
@@ -332,34 +343,60 @@ export default function Campaigns() {
         </div>
       </div>
 
-      <div className="rounded-xl border border-border/50 bg-card p-5 space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">
-              Disparos
-            </h2>
-          </div>
-          <Button
-            size="sm"
-            className="gap-2"
-            onClick={() => {
-              setName("");
-              setDelayMin(6);
-              setDelayMax(15);
-              setTimeFrom("09:00");
-              setTimeTo("18:00");
-              setBlockedDays([]);
-              setSelectedFunnelId(null);
-              setSelectedFolderId(null);
-              setApiSource("evolution");
-              setSelectedTemplateId(null);
-              setTemplateVariables([]);
-              setShowCreateDialog(true);
-            }}
+      {/* Tabs Prospecção / Cobrança */}
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex gap-2">
+          <button
+            onClick={() => setActiveCampaignType("prospecting")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors border ${
+              activeCampaignType === "prospecting"
+                ? "bg-primary text-primary-foreground border-primary"
+                : "bg-card text-muted-foreground border-border/50 hover:bg-secondary"
+            }`}
           >
-            <Plus className="h-4 w-4" /> Nova campanha
-          </Button>
+            <Megaphone className="h-4 w-4" />
+            Prospecção
+            <span className="ml-1 text-xs opacity-70">
+              ({allCampaigns.filter((c) => c.campaign_type !== "billing").length})
+            </span>
+          </button>
+          <button
+            onClick={() => setActiveCampaignType("billing")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors border ${
+              activeCampaignType === "billing"
+                ? "bg-amber-500 text-white border-amber-500"
+                : "bg-card text-muted-foreground border-border/50 hover:bg-secondary"
+            }`}
+          >
+            <CreditCard className="h-4 w-4" />
+            Cobrança
+            <span className="ml-1 text-xs opacity-70">
+              ({allCampaigns.filter((c) => c.campaign_type === "billing").length})
+            </span>
+          </button>
         </div>
+        <Button
+          size="sm"
+          className="gap-2"
+          onClick={() => {
+            setName("");
+            setDelayMin(6);
+            setDelayMax(15);
+            setTimeFrom("09:00");
+            setTimeTo("18:00");
+            setBlockedDays([]);
+            setSelectedFunnelId(null);
+            setSelectedFolderId(null);
+            setApiSource("evolution");
+            setSelectedTemplateId(null);
+            setTemplateVariables([]);
+            setPaymentLink("");
+            setShowCreateDialog(true);
+          }}
+        >
+          <Plus className="h-4 w-4" />
+          {activeCampaignType === "billing" ? "Nova cobrança" : "Nova campanha"}
+        </Button>
       </div>
 
       <div className="rounded-xl border border-border/50 bg-card p-5 space-y-3">
@@ -514,18 +551,42 @@ export default function Campaigns() {
       <Dialog open={showCreateDialog} onOpenChange={(open) => !open && setShowCreateDialog(false)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Nova campanha</DialogTitle>
+            <DialogTitle>
+              {activeCampaignType === "billing" ? "Nova cobrança" : "Nova campanha"}
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
+            {activeCampaignType === "billing" && (
+              <div className="flex items-center gap-2 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2">
+                <CreditCard className="h-4 w-4 text-amber-500 shrink-0" />
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  Campanha de cobrança — mensagens de lembrete de pagamento.
+                </p>
+              </div>
+            )}
             <div>
               <Label className="text-xs text-muted-foreground">Nome da campanha</Label>
               <Input
                 className="mt-1 bg-secondary border-border/50"
-                placeholder="Ex: Abertura Setembro"
+                placeholder={activeCampaignType === "billing" ? "Ex: Cobrança Outubro" : "Ex: Abertura Setembro"}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
               />
             </div>
+            {activeCampaignType === "billing" && (
+              <div>
+                <Label className="text-xs text-muted-foreground">Link de pagamento (PIX / boleto)</Label>
+                <Input
+                  className="mt-1 bg-secondary border-border/50"
+                  placeholder="https://pix.meusite.com/pagar"
+                  value={paymentLink}
+                  onChange={(e) => setPaymentLink(e.target.value)}
+                />
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Use {"{{link_pagamento}}"} no funil ou mensagem para inserir este link.
+                </p>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label className="text-xs text-muted-foreground">Delay mínimo (segundos)</Label>

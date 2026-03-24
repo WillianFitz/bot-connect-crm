@@ -22,7 +22,7 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
 
-type AgentId = "disparo" | "atendimento" | "agendamento";
+type AgentId = "disparo" | "atendimento" | "cobranca";
 
 interface AgentFormState {
   id: AgentId;
@@ -1859,8 +1859,42 @@ function ToolChip({ visual }: { visual: TokenVisual }) {
   );
 }
 
-const AGENDAMENTO_PROMPT_PLACEHOLDER =
-  "Insira o prompt base do seu agente de agendamento.\nEx: como identificar intenção de reunião, como sugerir horários, como usar o link da agenda etc.";
+const COBRANCA_PROMPT_PLACEHOLDER =
+  "Insira o prompt base do seu agente de cobrança.\nEx: como abordar o cliente, tom da mensagem, quando enviar link de pagamento, como lidar com negativas etc.";
+
+const COBRANCA_PROMPT_DEFAULT = `Você é um agente de cobrança educado e profissional. Seu objetivo é lembrar o cliente sobre um pagamento pendente e facilitar a regularização.
+
+## Tom e Personalidade:
+- Seja cordial, respeitoso e compreensivo
+- Evite tom ameaçador ou agressivo
+- Demonstre disposição em ajudar o cliente a resolver a situação
+
+## Fluxo de Conversa:
+
+** ETAPA 1: Identificação
+Confirme se está falando com a pessoa correta.
+Exemplo: "Oi, [nome]! Tudo bem? Aqui é da [Empresa]. Poderia confirmar se é você mesmo?"
+
+** ETAPA 2: Informar sobre o débito
+Após confirmação, informe sobre o pagamento pendente de forma clara e objetiva.
+Exemplo: "Identifiquei que há uma fatura em aberto no valor de R$ [valor] com vencimento em [data]. Gostaria de te ajudar a regularizar isso."
+
+** ETAPA 3: Oferecer solução
+Pergunte como pode ajudar e apresente opções (link de pagamento, negociação, parcelamento).
+Exemplo: "Posso te enviar o link de pagamento agora. Prefere pagar à vista ou precisa de alguma flexibilidade?"
+
+** ETAPA 4: Envio do link
+Após interesse, envie o link de pagamento:
+Exemplo: "Ótimo! Aqui está o link para regularizar: {{link_agendamento}} ✅ Assim que confirmar o pagamento, me avisa!"
+
+** ETAPA 5: Encerramento
+Agradeça e confirme próximos passos.
+
+## Regras:
+- Mensagens curtas e diretas
+- Nunca pressione ou ameace o cliente
+- Se o cliente pedir prazo ou negociação, transfira para humano via {{numero_humano}}`;
+
 
 const PLAN_RANK: Record<string, number> = { starter: 0, plus: 1, pro: 2 };
 
@@ -1904,7 +1938,7 @@ export default function Agents() {
   });
 
   const clearMemoryMutation = useMutation({
-    mutationFn: (agentId: "disparo" | "atendimento" | "agendamento" | "all") =>
+    mutationFn: (agentId: "disparo" | "atendimento" | "cobranca" | "all") =>
       api.clearAgentMemory(agentId),
     onSuccess: () => {
       toast({
@@ -1970,29 +2004,29 @@ export default function Agents() {
             ?.human_group_id || "",
       },
       agendamento: {
-        id: "agendamento",
-        name: "Agente de Agendamento",
+        id: "cobranca",
+        name: "Agente de Cobrança",
         type: "scheduling",
         base_prompt:
-          agentsQuery.data.find((a: any) => a.id === "agendamento")
+          agentsQuery.data.find((a: any) => a.id === "cobranca")
             ?.base_prompt || "",
         default_message:
-          agentsQuery.data.find((a: any) => a.id === "agendamento")
+          agentsQuery.data.find((a: any) => a.id === "cobranca")
             ?.default_message || "",
         pause_minutes:
-          agentsQuery.data.find((a: any) => a.id === "agendamento")
+          agentsQuery.data.find((a: any) => a.id === "cobranca")
             ?.pause_minutes ?? 0,
         pause_definitive:
-          !!agentsQuery.data.find((a: any) => a.id === "agendamento")
+          !!agentsQuery.data.find((a: any) => a.id === "cobranca")
             ?.pause_definitive,
         agenda_link:
-          agentsQuery.data.find((a: any) => a.id === "agendamento")
+          agentsQuery.data.find((a: any) => a.id === "cobranca")
             ?.agenda_link || "",
         human_number:
-          agentsQuery.data.find((a: any) => a.id === "agendamento")
+          agentsQuery.data.find((a: any) => a.id === "cobranca")
             ?.human_number || "",
         human_group_id:
-          agentsQuery.data.find((a: any) => a.id === "agendamento")
+          agentsQuery.data.find((a: any) => a.id === "cobranca")
             ?.human_group_id || "",
       },
     };
@@ -2501,7 +2535,7 @@ export default function Agents() {
     );
   };
 
-  const renderAgendamento = () => (
+  const renderCobranca = () => (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
         <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
@@ -2509,24 +2543,24 @@ export default function Agents() {
         </div>
         <div>
           <h2 className="text-sm font-semibold text-foreground">
-            Agente de Agendamento
+            Agente de Cobrança
           </h2>
           <p className="text-xs text-muted-foreground">
-            Prompt base usado para detectar intenção de reunião e sugerir horários.
+            Aborda clientes com pagamentos pendentes de forma educada e envia o link de pagamento.
           </p>
         </div>
       </div>
 
       <div className="space-y-3">
         <Label className="text-xs text-muted-foreground">
-          Prompt do agente de agendamento
+          Prompt do agente de cobrança
         </Label>
         <Textarea
           className="min-h-[200px] bg-secondary border-border/50 text-xs leading-relaxed"
-          placeholder={AGENDAMENTO_PROMPT_PLACEHOLDER}
-          value={current.base_prompt}
+          placeholder={COBRANCA_PROMPT_PLACEHOLDER}
+          value={current.base_prompt || COBRANCA_PROMPT_DEFAULT}
           onChange={(e) =>
-            updateField("agendamento", { base_prompt: e.target.value })
+            updateField("cobranca", { base_prompt: e.target.value })
           }
         />
       </div>
@@ -2537,13 +2571,13 @@ export default function Agents() {
         </h3>
         <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
           <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">🗓️ Agenda</Label>
+            <Label className="text-xs text-muted-foreground">💳 Link de pagamento</Label>
             <Input
               className="h-8 bg-secondary border-border/50 text-xs"
-              placeholder="https://cal.com/seu-usuario"
+              placeholder="https://pix.meusite.com/pagamento"
               value={current.agenda_link}
               onChange={(e) =>
-                updateField("agendamento", { agenda_link: e.target.value })
+                updateField("cobranca", { agenda_link: e.target.value })
               }
             />
           </div>
@@ -2556,7 +2590,7 @@ export default function Agents() {
               placeholder="5511999999999"
               value={current.human_number}
               onChange={(e) =>
-                updateField("agendamento", { human_number: e.target.value })
+                updateField("cobranca", { human_number: e.target.value })
               }
             />
           </div>
@@ -2569,7 +2603,7 @@ export default function Agents() {
               placeholder="1234567890-123456@g.us"
               value={current.human_group_id}
               onChange={(e) =>
-                updateField("agendamento", { human_group_id: e.target.value })
+                updateField("cobranca", { human_group_id: e.target.value })
               }
             />
           </div>
@@ -2581,7 +2615,7 @@ export default function Agents() {
           variant="ghost"
           size="sm"
           className="h-8 text-xs gap-1.5 text-muted-foreground hover:text-destructive"
-          onClick={() => clearMemoryMutation.mutate("agendamento")}
+          onClick={() => clearMemoryMutation.mutate("cobranca")}
           disabled={clearMemoryMutation.isPending}
         >
           🧹 Limpar memória do agendamento
@@ -2625,15 +2659,15 @@ export default function Agents() {
         <TabsList className="bg-secondary border border-border/50">
           <TabsTrigger value="disparo">Agente de Disparo</TabsTrigger>
           <TabsTrigger value="atendimento">Agente de Atendimento</TabsTrigger>
-          <TabsTrigger value="agendamento">Agente de Agendamento</TabsTrigger>
+          <TabsTrigger value="cobranca">Agente de Cobrança</TabsTrigger>
         </TabsList>
 
         <TabsContent value="disparo">
           <PlanLock minPlan="plus" locked={!hasPlus}>{renderDisparo()}</PlanLock>
         </TabsContent>
         <TabsContent value="atendimento">{renderAtendimento()}</TabsContent>
-        <TabsContent value="agendamento">
-          <PlanLock minPlan="plus" locked={!hasPlus}>{renderAgendamento()}</PlanLock>
+        <TabsContent value="cobranca">
+          <PlanLock minPlan="plus" locked={!hasPlus}>{renderCobranca()}</PlanLock>
         </TabsContent>
       </Tabs>
     </div>

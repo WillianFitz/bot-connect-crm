@@ -1447,7 +1447,7 @@ async function handleAIDisparo(request: Request, env: Env): Promise<Response> {
 async function handleAIAgent(
   request: Request,
   env: Env,
-  agentId: "atendimento" | "agendamento",
+  agentId: "atendimento" | "cobranca",
 ): Promise<Response> {
   const tenantId = await getTenantId(request, env);
   await ensureTenant(env, tenantId);
@@ -1465,7 +1465,7 @@ async function handleAIAgent(
     row?.base_prompt ||
     (agentId === "atendimento"
       ? "Você é um vendedor consultivo. Siga o fluxo: 1) confirm se o lead tem tempo, 2) apresente brevemente, 3) envie mídia se disponível (APENAS o token, sem texto), 4) encaminhe para agendamento quando houver interesse. Tom casual e humano, mensagens curtas."
-      : "Você é um agente de agendamento. Ajude a marcar reuniões de forma natural e objetiva, confirmando data/hora com o lead.");
+      : "Você é um agente de cobrança. Aborde o cliente de forma educada e profissional, lembrando sobre o pagamento pendente e facilitando a regularização. Informe o link de pagamento quando disponível. Seja firme mas respeitoso.");
 
   const content = await callOpenAI(env, [
     { role: "system", content: basePrompt },
@@ -2152,7 +2152,7 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
   if (method === "GET") {
     if (isSingle && campaignId) {
       const row = await env.DB.prepare(
-        "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id, status, total_leads, sent, errors, no_whatsapp, api_source, template_id, template_variables, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE id = ? AND tenant_id = ?",
+        "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id, status, total_leads, sent, errors, no_whatsapp, api_source, template_id, template_variables, campaign_type, payment_link, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE id = ? AND tenant_id = ?",
       )
         .bind(campaignId, tenantId)
         .first();
@@ -2160,7 +2160,7 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
       return json(row);
     }
     const res = await env.DB.prepare(
-      "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id, status, total_leads, sent, errors, no_whatsapp, api_source, template_id, template_variables, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE tenant_id = ? ORDER BY created_at DESC",
+      "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id, status, total_leads, sent, errors, no_whatsapp, api_source, template_id, template_variables, campaign_type, payment_link, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE tenant_id = ? ORDER BY created_at DESC",
     ).bind(tenantId).all();
     return json(res.results || []);
   }
@@ -2180,6 +2180,8 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
       api_source = "evolution",
       template_id = null,
       template_variables = null,
+      campaign_type = "prospecting",
+      payment_link = null,
     } = body;
 
     if (!name || typeof name !== "string" || name.trim().length === 0) {
@@ -2201,11 +2203,12 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
     if (!/^\d{2}:\d{2}$/.test(resolvedTimeTo)) {
       return json({ error: "time_to deve estar no formato HH:MM" }, { status: 400 });
     }
+    const resolvedCampaignType = campaign_type === "billing" ? "billing" : "prospecting";
 
     const res = await env.DB.prepare(
       `INSERT INTO campaigns
-       (tenant_id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id, api_source, template_id, template_variables)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (tenant_id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id, api_source, template_id, template_variables, campaign_type, payment_link)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
       .bind(
         tenantId,
@@ -2221,13 +2224,15 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
         api_source === "whatsapp_official" ? "whatsapp_official" : "evolution",
         template_id ? Number(template_id) : null,
         template_variables ? JSON.stringify(template_variables) : null,
+        resolvedCampaignType,
+        payment_link ? String(payment_link) : null,
       )
       .run();
 
     const raw = res as { meta?: { last_row_id?: number }; lastRowId?: number };
     const lastId = raw.meta?.last_row_id ?? raw.lastRowId ?? 0;
     const created = await env.DB.prepare(
-      "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id, status, total_leads, sent, errors, no_whatsapp, api_source, template_id, template_variables, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE id = ? AND tenant_id = ?",
+      "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id, status, total_leads, sent, errors, no_whatsapp, api_source, template_id, template_variables, campaign_type, payment_link, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE id = ? AND tenant_id = ?",
     )
       .bind(lastId, tenantId)
       .first();
@@ -2342,7 +2347,7 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
       .run();
 
     const updated = await env.DB.prepare(
-      "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id, status, total_leads, sent, errors, no_whatsapp, api_source, template_id, template_variables, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE id = ? AND tenant_id = ?",
+      "SELECT id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id, status, total_leads, sent, errors, no_whatsapp, api_source, template_id, template_variables, campaign_type, payment_link, created_at, scheduled_at, scheduled_dispatched FROM campaigns WHERE id = ? AND tenant_id = ?",
     )
       .bind(campaignId, tenantId)
       .first();
@@ -5501,8 +5506,8 @@ export default {
         response = await handleAIDisparo(request, env);
       } else if (pathname === "/api/ai/atendimento" && method === "POST") {
         response = await handleAIAgent(request, env, "atendimento");
-      } else if (pathname === "/api/ai/agendamento" && method === "POST") {
-        response = await handleAIAgent(request, env, "agendamento");
+      } else if (pathname === "/api/ai/cobranca" && method === "POST") {
+        response = await handleAIAgent(request, env, "cobranca");
       } else if (pathname === "/api/webhook/evolution" && method === "POST") {
         response = await handleEvolutionWebhook(request, env, ctx);
       } else {
