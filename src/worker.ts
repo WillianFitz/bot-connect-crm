@@ -340,7 +340,8 @@ async function handleAdminListUsers(request: Request, env: Env): Promise<Respons
 
   const res = await env.DB.prepare(
     `SELECT u.id, u.tenant_id, t.name as tenant_name, u.username, u.document, u.created_at,
-            COALESCE(t.plan, 'starter') as plan, COALESCE(t.blocked, 0) as blocked
+            COALESCE(t.plan, 'starter') as plan, COALESCE(t.blocked, 0) as blocked,
+            COALESCE(t.subscription_status, 'inactive') as subscription_status
      FROM users u
      JOIN tenants t ON t.id = u.tenant_id
      ORDER BY t.name ASC, u.username ASC`,
@@ -2214,17 +2215,19 @@ async function handleStripeWebhook(request: Request, env: Env): Promise<Response
     case "customer.subscription.updated": {
       const tenantId = obj.metadata?.tenant_id;
       const status = obj.status; // active | trialing | past_due | canceled | unpaid
+      const cancelAtPeriodEnd = obj.cancel_at_period_end === true;
       const priceId = obj.items?.data?.[0]?.price?.id;
       if (tenantId) {
-        // Determine plan from price ID
         let plan: string | null = null;
         if (priceId && env.STRIPE_PRICE_STARTER && priceId === env.STRIPE_PRICE_STARTER) plan = "starter";
         if (priceId && env.STRIPE_PRICE_PLUS && priceId === env.STRIPE_PRICE_PLUS) plan = "plus";
         if (priceId && env.STRIPE_PRICE_PRO && priceId === env.STRIPE_PRICE_PRO) plan = "pro";
 
         const blocked = status === "past_due" || status === "unpaid" || status === "canceled" ? 1 : 0;
+        // Se cancel_at_period_end, marca como "canceling" para aparecer no admin
+        const effectiveStatus = cancelAtPeriodEnd ? "canceling" : status;
         const updates: string[] = ["subscription_status = ?", "blocked = ?"];
-        const params: any[] = [status, blocked];
+        const params: any[] = [effectiveStatus, blocked];
         if (plan) { updates.push("plan = ?"); params.push(plan); }
         params.push(tenantId);
         await env.DB.prepare(

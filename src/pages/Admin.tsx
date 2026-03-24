@@ -219,6 +219,14 @@ export default function Admin() {
                             <span className="inline-flex items-center gap-1 text-[11px] text-destructive">
                               <Ban className="h-3 w-3" /> Bloqueado
                             </span>
+                          ) : u.subscription_status === "canceling" ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] text-amber-400">
+                              <CheckCircle2 className="h-3 w-3" /> Cancelando
+                            </span>
+                          ) : u.subscription_status === "past_due" ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] text-amber-400">
+                              <Ban className="h-3 w-3" /> Atrasado
+                            </span>
                           ) : (
                             <span className="inline-flex items-center gap-1 text-[11px] text-green-500">
                               <CheckCircle2 className="h-3 w-3" /> Ativo

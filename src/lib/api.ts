@@ -421,6 +421,7 @@ export const api = {
         created_at: string;
         plan: string;
         blocked: number;
+        subscription_status: string;
       }>
     >("/admin/users", {
       method: "GET",

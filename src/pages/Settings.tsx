@@ -864,11 +864,12 @@ const PLANS = [
 ];
 
 const STATUS_LABEL: Record<string, { label: string; color: string }> = {
-  active:   { label: "Ativa",             color: "text-emerald-400" },
-  trialing: { label: "Trial",             color: "text-blue-400" },
-  past_due: { label: "Pagamento atrasado", color: "text-amber-400" },
-  canceled: { label: "Cancelada",         color: "text-red-400" },
-  inactive: { label: "Sem assinatura",    color: "text-muted-foreground" },
+  active:    { label: "Ativa",              color: "text-emerald-400" },
+  trialing:  { label: "Trial",              color: "text-blue-400" },
+  canceling: { label: "Cancelando no fim do período", color: "text-amber-400" },
+  past_due:  { label: "Pagamento atrasado", color: "text-amber-400" },
+  canceled:  { label: "Cancelada",          color: "text-red-400" },
+  inactive:  { label: "Sem assinatura",     color: "text-muted-foreground" },
 };
 
 function SubscriptionTab() {
