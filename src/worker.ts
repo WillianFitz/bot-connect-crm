@@ -1,6 +1,10 @@
 export interface Env {
   DB: D1Database;
   MEDIA_BUCKET: R2Bucket;
+  STRIPE_SECRET_KEY?: string;
+  STRIPE_WEBHOOK_SECRET?: string;
+  STRIPE_PRICE_PLUS?: string;
+  STRIPE_PRICE_PRO?: string;
   MEDIA_PUBLIC_URL: string;
   OPENAI_API_KEY: string;
   ADMIN_API_KEY: string;
@@ -2051,11 +2055,239 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
 async function handleGetTenantPlan(request: Request, env: Env): Promise<Response> {
   const tenantId = await getTenantId(request, env);
   const row = await env.DB.prepare(
-    "SELECT COALESCE(plan, 'starter') as plan FROM tenants WHERE id = ? LIMIT 1",
+    "SELECT COALESCE(plan, 'starter') as plan, COALESCE(subscription_status, 'inactive') as subscription_status, stripe_customer_id FROM tenants WHERE id = ? LIMIT 1",
   )
     .bind(tenantId)
-    .first<{ plan: string }>();
-  return json({ plan: row?.plan ?? "starter" });
+    .first<{ plan: string; subscription_status: string; stripe_customer_id: string | null }>();
+  return json({
+    plan: row?.plan ?? "starter",
+    subscription_status: row?.subscription_status ?? "inactive",
+    has_subscription: !!row?.stripe_customer_id,
+  });
+}
+
+// ─── Stripe helpers ──────────────────────────────────────────────────────────
+
+async function stripeRequest(env: Env, path: string, body?: Record<string, string>): Promise<any> {
+  const method = body ? "POST" : "GET";
+  const res = await fetch(`https://api.stripe.com/v1${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    ...(body ? { body: new URLSearchParams(body).toString() } : {}),
+  });
+  if (!res.ok) {
+    const err = await res.json() as any;
+    throw new Error(err?.error?.message || "Stripe error");
+  }
+  return res.json();
+}
+
+const PLAN_PRICE_MAP: Record<string, string> = {
+  plus: "__STRIPE_PRICE_PLUS__",
+  pro:  "__STRIPE_PRICE_PRO__",
+};
+
+function getPriceId(env: Env, plan: string): string {
+  if (plan === "plus") return env.STRIPE_PRICE_PLUS || "";
+  if (plan === "pro") return env.STRIPE_PRICE_PRO || "";
+  return "";
+}
+
+async function ensureStripeCustomer(env: Env, tenantId: string, email: string, name: string): Promise<string> {
+  const row = await env.DB.prepare(
+    "SELECT stripe_customer_id FROM tenants WHERE id = ? LIMIT 1",
+  ).bind(tenantId).first<{ stripe_customer_id: string | null }>();
+
+  if (row?.stripe_customer_id) return row.stripe_customer_id;
+
+  const customer = await stripeRequest(env, "/customers", {
+    email,
+    name,
+    "metadata[tenant_id]": tenantId,
+  });
+
+  await env.DB.prepare(
+    "UPDATE tenants SET stripe_customer_id = ? WHERE id = ?",
+  ).bind(customer.id, tenantId).run();
+
+  return customer.id;
+}
+
+// POST /api/stripe/create-checkout
+async function handleStripeCreateCheckout(request: Request, env: Env): Promise<Response> {
+  if (!env.STRIPE_SECRET_KEY) return json({ error: "Stripe não configurado" }, { status: 503 });
+
+  const tenantId = await getTenantId(request, env);
+  const body = await readBody<{ plan: string; success_url: string; cancel_url: string }>(request);
+
+  const priceId = getPriceId(env, body.plan);
+  if (!priceId) return json({ error: "Plano inválido ou price ID não configurado" }, { status: 400 });
+
+  // Get tenant info
+  const tenant = await env.DB.prepare(
+    "SELECT name, username, stripe_customer_id FROM tenants WHERE id = ? LIMIT 1",
+  ).bind(tenantId).first<{ name: string; username: string; stripe_customer_id: string | null }>();
+
+  const customerId = tenant?.stripe_customer_id
+    ? tenant.stripe_customer_id
+    : await ensureStripeCustomer(env, tenantId, tenant?.username || tenantId, tenant?.name || tenantId);
+
+  const session = await stripeRequest(env, "/checkout/sessions", {
+    mode: "subscription",
+    customer: customerId,
+    "line_items[0][price]": priceId,
+    "line_items[0][quantity]": "1",
+    success_url: body.success_url || "https://bot-connect-crm.pages.dev/app/settings?stripe=success",
+    cancel_url: body.cancel_url || "https://bot-connect-crm.pages.dev/app/settings?stripe=cancel",
+    "subscription_data[metadata][tenant_id]": tenantId,
+    "metadata[tenant_id]": tenantId,
+    "metadata[plan]": body.plan,
+  });
+
+  return json({ url: session.url, session_id: session.id });
+}
+
+// POST /api/stripe/portal
+async function handleStripePortal(request: Request, env: Env): Promise<Response> {
+  if (!env.STRIPE_SECRET_KEY) return json({ error: "Stripe não configurado" }, { status: 503 });
+
+  const tenantId = await getTenantId(request, env);
+  const body = await readBody<{ return_url?: string }>(request);
+
+  const tenant = await env.DB.prepare(
+    "SELECT stripe_customer_id FROM tenants WHERE id = ? LIMIT 1",
+  ).bind(tenantId).first<{ stripe_customer_id: string | null }>();
+
+  if (!tenant?.stripe_customer_id) {
+    return json({ error: "Nenhuma assinatura encontrada" }, { status: 404 });
+  }
+
+  const session = await stripeRequest(env, "/billing_portal/sessions", {
+    customer: tenant.stripe_customer_id,
+    return_url: body.return_url || "https://bot-connect-crm.pages.dev/app/settings",
+  });
+
+  return json({ url: session.url });
+}
+
+// POST /api/webhook/stripe  — recebe eventos do Stripe
+async function handleStripeWebhook(request: Request, env: Env): Promise<Response> {
+  if (!env.STRIPE_SECRET_KEY) return json({ ok: false });
+
+  const payload = await request.text();
+
+  // Verify webhook signature if secret is set
+  if (env.STRIPE_WEBHOOK_SECRET) {
+    const sig = request.headers.get("stripe-signature") || "";
+    const valid = await verifyStripeSignature(payload, sig, env.STRIPE_WEBHOOK_SECRET);
+    if (!valid) return json({ error: "Invalid signature" }, { status: 400 });
+  }
+
+  let event: any;
+  try {
+    event = JSON.parse(payload);
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const obj = event.data?.object;
+
+  switch (event.type) {
+    case "checkout.session.completed": {
+      const tenantId = obj.metadata?.tenant_id;
+      const plan = obj.metadata?.plan;
+      const subscriptionId = obj.subscription;
+      const customerId = obj.customer;
+      if (tenantId && plan && subscriptionId) {
+        await env.DB.prepare(
+          `UPDATE tenants SET plan = ?, stripe_subscription_id = ?, stripe_customer_id = COALESCE(stripe_customer_id, ?),
+           subscription_status = 'active', blocked = 0 WHERE id = ?`,
+        ).bind(plan, subscriptionId, customerId, tenantId).run();
+      }
+      break;
+    }
+    case "customer.subscription.updated": {
+      const tenantId = obj.metadata?.tenant_id;
+      const status = obj.status; // active | trialing | past_due | canceled | unpaid
+      const priceId = obj.items?.data?.[0]?.price?.id;
+      if (tenantId) {
+        // Determine plan from price ID
+        let plan: string | null = null;
+        if (priceId && env.STRIPE_PRICE_PLUS && priceId === env.STRIPE_PRICE_PLUS) plan = "plus";
+        if (priceId && env.STRIPE_PRICE_PRO && priceId === env.STRIPE_PRICE_PRO) plan = "pro";
+
+        const blocked = status === "past_due" || status === "unpaid" || status === "canceled" ? 1 : 0;
+        const updates: string[] = ["subscription_status = ?", "blocked = ?"];
+        const params: any[] = [status, blocked];
+        if (plan) { updates.push("plan = ?"); params.push(plan); }
+        params.push(tenantId);
+        await env.DB.prepare(
+          `UPDATE tenants SET ${updates.join(", ")} WHERE id = ?`,
+        ).bind(...params).run();
+      }
+      break;
+    }
+    case "customer.subscription.deleted": {
+      const tenantId = obj.metadata?.tenant_id;
+      if (tenantId) {
+        await env.DB.prepare(
+          "UPDATE tenants SET plan = 'starter', subscription_status = 'canceled', stripe_subscription_id = NULL, blocked = 0 WHERE id = ?",
+        ).bind(tenantId).run();
+      }
+      break;
+    }
+    case "invoice.payment_failed": {
+      // Find tenant by customer ID
+      const customerId = obj.customer;
+      if (customerId) {
+        await env.DB.prepare(
+          "UPDATE tenants SET subscription_status = 'past_due', blocked = 1 WHERE stripe_customer_id = ?",
+        ).bind(customerId).run();
+      }
+      break;
+    }
+    case "invoice.payment_succeeded": {
+      const customerId = obj.customer;
+      if (customerId) {
+        await env.DB.prepare(
+          "UPDATE tenants SET subscription_status = 'active', blocked = 0 WHERE stripe_customer_id = ?",
+        ).bind(customerId).run();
+      }
+      break;
+    }
+  }
+
+  return json({ received: true });
+}
+
+async function verifyStripeSignature(payload: string, sigHeader: string, secret: string): Promise<boolean> {
+  try {
+    const parts = sigHeader.split(",").reduce<Record<string, string>>((acc, part) => {
+      const [k, v] = part.split("=");
+      acc[k] = v;
+      return acc;
+    }, {});
+    const timestamp = parts["t"];
+    const signature = parts["v1"];
+    if (!timestamp || !signature) return false;
+
+    const signedPayload = `${timestamp}.${payload}`;
+    const key = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(signedPayload));
+    const hex = Array.from(new Uint8Array(mac)).map((b) => b.toString(16).padStart(2, "0")).join("");
+    return hex === signature;
+  } catch {
+    return false;
+  }
 }
 
 async function handleDashboardStats(request: Request, env: Env): Promise<Response> {
@@ -5433,6 +5665,12 @@ export default {
         response = await handleClientLogin(request, env);
       } else if (pathname === "/api/tenant/plan" && method === "GET") {
         response = await handleGetTenantPlan(request, env);
+      } else if (pathname === "/api/stripe/create-checkout" && method === "POST") {
+        response = await handleStripeCreateCheckout(request, env);
+      } else if (pathname === "/api/stripe/portal" && method === "POST") {
+        response = await handleStripePortal(request, env);
+      } else if (pathname === "/api/webhook/stripe" && method === "POST") {
+        response = await handleStripeWebhook(request, env);
       } else if (pathname === "/api/dashboard/stats" && method === "GET") {
         response = await handleDashboardStats(request, env);
       } else if (pathname === "/api/groups" && method === "GET") {

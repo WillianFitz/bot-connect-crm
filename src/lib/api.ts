@@ -38,7 +38,19 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
-  getTenantPlan: () => request<{ plan: string }>("/tenant/plan"),
+  getTenantPlan: () => request<{ plan: string; subscription_status: string; has_subscription: boolean }>("/tenant/plan"),
+
+  stripeCreateCheckout: (payload: { plan: string; success_url: string; cancel_url: string }) =>
+    request<{ url: string }>("/stripe/create-checkout", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  stripePortal: () =>
+    request<{ url: string }>("/stripe/portal", {
+      method: "POST",
+      body: JSON.stringify({ return_url: window.location.href }),
+    }),
 
   getWhatsappConnection: () =>
     request<{

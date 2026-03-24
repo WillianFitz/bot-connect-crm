@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Save, Bell, Key, Building2, Loader2, Check, Calendar, Copy, ExternalLink, Link2, Users, Phone, MessageSquare, Trash2, RefreshCw, Plus } from "lucide-react";
+import { Save, Bell, Key, Building2, Loader2, Check, Calendar, Copy, ExternalLink, Link2, Users, Phone, MessageSquare, Trash2, RefreshCw, Plus, CreditCard, Zap, Shield, Crown, CheckCircle2, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -126,6 +126,9 @@ export default function SettingsPage() {
           <TabsTrigger value="notifications">Notificações</TabsTrigger>
           <TabsTrigger value="booking">Agenda Pública</TabsTrigger>
           <TabsTrigger value="whatsapp-official">WhatsApp Oficial</TabsTrigger>
+          <TabsTrigger value="subscription" className="gap-1.5">
+            <CreditCard className="h-3.5 w-3.5" /> Assinatura
+          </TabsTrigger>
         </TabsList>
 
         {/* ── Minha Empresa ── */}
@@ -382,6 +385,9 @@ export default function SettingsPage() {
 
         {/* ── WhatsApp Oficial ── */}
         <WhatsappOfficialTab />
+
+        {/* ── Assinatura ── */}
+        <SubscriptionTab />
       </Tabs>
     </div>
   );
@@ -820,6 +826,201 @@ function BookingSettingsTab() {
           </div>
         )}
       </div>
+    </TabsContent>
+  );
+}
+
+// ─── Subscription Tab ────────────────────────────────────────────────────────
+
+const PLANS = [
+  {
+    id: "starter",
+    name: "Starter",
+    price: "Grátis",
+    icon: Zap,
+    color: "text-slate-400",
+    bg: "bg-slate-500/10 border-slate-500/30",
+    features: ["500 leads", "Agente de Atendimento", "Extrator WhatsApp", "1 conexão"],
+  },
+  {
+    id: "plus",
+    name: "Plus",
+    price: "R$ 97/mês",
+    icon: Shield,
+    color: "text-blue-400",
+    bg: "bg-blue-500/10 border-blue-500/30",
+    features: ["2.000 leads", "Todos os agentes", "Todos os extratores", "Disparos ilimitados", "Funis de venda"],
+    highlight: true,
+  },
+  {
+    id: "pro",
+    name: "Pro",
+    price: "R$ 197/mês",
+    icon: Crown,
+    color: "text-amber-400",
+    bg: "bg-amber-500/10 border-amber-500/30",
+    features: ["Leads ilimitados", "Tudo do Plus", "CRM completo", "Mapa de calor", "Agendamentos", "Suporte prioritário"],
+  },
+];
+
+const STATUS_LABEL: Record<string, { label: string; color: string }> = {
+  active:   { label: "Ativa",             color: "text-emerald-400" },
+  trialing: { label: "Trial",             color: "text-blue-400" },
+  past_due: { label: "Pagamento atrasado", color: "text-amber-400" },
+  canceled: { label: "Cancelada",         color: "text-red-400" },
+  inactive: { label: "Sem assinatura",    color: "text-muted-foreground" },
+};
+
+function SubscriptionTab() {
+  const { toast } = useToast();
+  const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
+  const [loadingPortal, setLoadingPortal] = useState(false);
+
+  const planQuery = useQuery({
+    queryKey: ["tenant-plan"],
+    queryFn: api.getTenantPlan,
+  });
+
+  const currentPlan = planQuery.data?.plan ?? "starter";
+  const subStatus = planQuery.data?.subscription_status ?? "inactive";
+  const hasSubscription = planQuery.data?.has_subscription ?? false;
+  const statusInfo = STATUS_LABEL[subStatus] ?? STATUS_LABEL.inactive;
+
+  const handleCheckout = async (planId: string) => {
+    if (planId === "starter") return;
+    setLoadingPlan(planId);
+    try {
+      const { url } = await api.stripeCreateCheckout({
+        plan: planId,
+        success_url: `${window.location.origin}/app/settings?tab=subscription&stripe=success`,
+        cancel_url: `${window.location.origin}/app/settings?tab=subscription`,
+      });
+      window.location.href = url;
+    } catch (e: any) {
+      toast({ title: "Erro ao iniciar checkout", description: e.message, variant: "destructive" });
+      setLoadingPlan(null);
+    }
+  };
+
+  const handlePortal = async () => {
+    setLoadingPortal(true);
+    try {
+      const { url } = await api.stripePortal();
+      window.location.href = url;
+    } catch (e: any) {
+      toast({ title: "Erro", description: e.message, variant: "destructive" });
+      setLoadingPortal(false);
+    }
+  };
+
+  return (
+    <TabsContent value="subscription" className="space-y-6">
+      {/* Status atual */}
+      <div className="rounded-xl border border-border/50 bg-card p-5 space-y-3">
+        <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+          <CreditCard className="h-4 w-4 text-primary" /> Sua Assinatura
+        </h3>
+
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div>
+              <p className="text-xs text-muted-foreground">Plano atual</p>
+              <p className="text-lg font-bold text-foreground capitalize">{currentPlan}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Status</p>
+              <p className={`text-sm font-medium ${statusInfo.color} flex items-center gap-1.5`}>
+                {subStatus === "active" || subStatus === "trialing"
+                  ? <CheckCircle2 className="h-3.5 w-3.5" />
+                  : <AlertCircle className="h-3.5 w-3.5" />}
+                {statusInfo.label}
+              </p>
+            </div>
+          </div>
+
+          {hasSubscription && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2 text-xs"
+              onClick={handlePortal}
+              disabled={loadingPortal}
+            >
+              {loadingPortal ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="h-3.5 w-3.5" />}
+              Gerenciar / Cancelar assinatura
+            </Button>
+          )}
+        </div>
+
+        {subStatus === "past_due" && (
+          <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-3 text-xs text-amber-300 flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            Pagamento pendente. Regularize pelo botão "Gerenciar assinatura" para evitar bloqueio da conta.
+          </div>
+        )}
+      </div>
+
+      {/* Planos */}
+      <div className="grid gap-4 md:grid-cols-3">
+        {PLANS.map((plan) => {
+          const Icon = plan.icon;
+          const isCurrent = currentPlan === plan.id;
+          const isLoading = loadingPlan === plan.id;
+
+          return (
+            <div
+              key={plan.id}
+              className={`rounded-xl border p-5 space-y-4 transition-all ${plan.bg} ${isCurrent ? "ring-2 ring-primary" : ""}`}
+            >
+              <div className="flex items-center gap-2">
+                <Icon className={`h-5 w-5 ${plan.color}`} />
+                <span className="font-semibold text-foreground">{plan.name}</span>
+                {isCurrent && (
+                  <span className="ml-auto text-[10px] font-bold bg-primary/20 text-primary px-2 py-0.5 rounded-full">
+                    ATUAL
+                  </span>
+                )}
+              </div>
+
+              <p className={`text-2xl font-bold ${plan.color}`}>{plan.price}</p>
+
+              <ul className="space-y-1.5">
+                {plan.features.map((f) => (
+                  <li key={f} className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                    {f}
+                  </li>
+                ))}
+              </ul>
+
+              {plan.id === "starter" ? (
+                <Button variant="outline" size="sm" className="w-full text-xs" disabled>
+                  Plano gratuito
+                </Button>
+              ) : isCurrent ? (
+                <Button variant="outline" size="sm" className="w-full text-xs" onClick={handlePortal} disabled={loadingPortal}>
+                  {loadingPortal ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
+                  Gerenciar
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  className="w-full text-xs gap-2"
+                  onClick={() => handleCheckout(plan.id)}
+                  disabled={!!loadingPlan}
+                >
+                  {isLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                  {currentPlan === "starter" ? "Assinar" : currentPlan === "plus" && plan.id === "pro" ? "Fazer upgrade" : "Mudar plano"}
+                </Button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <p className="text-xs text-muted-foreground text-center">
+        Pagamentos processados com segurança pelo Stripe · Cancele a qualquer momento
+      </p>
     </TabsContent>
   );
 }

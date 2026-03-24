@@ -19,7 +19,8 @@
       "Bash(grep -n '\"\"agendamento\"\"' src/pages/Agents.tsx)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(wrangler secret)"
     ]
   }
 }
