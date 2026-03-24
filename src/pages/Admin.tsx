@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Trash2, Ban, CheckCircle2 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 import {
   Select,
   SelectContent,
@@ -36,6 +37,7 @@ export default function Admin() {
   const [password, setPassword] = useState("");
   const [document, setDocument] = useState("");
   const queryClient = useQueryClient();
+  const { toast } = useToast();
 
   const usersQuery = useQuery({
     queryKey: ["admin-users"],
@@ -64,13 +66,21 @@ export default function Admin() {
     mutationFn: api.adminSetPlan,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+      toast({ title: "Plano atualizado com sucesso." });
+    },
+    onError: () => {
+      toast({ title: "Erro ao atualizar plano.", variant: "destructive" });
     },
   });
 
   const toggleBlockMutation = useMutation({
     mutationFn: api.adminToggleBlock,
-    onSuccess: () => {
+    onSuccess: (_data, vars) => {
       queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+      toast({ title: vars.blocked ? "Conta bloqueada." : "Conta desbloqueada." });
+    },
+    onError: () => {
+      toast({ title: "Erro ao alterar status da conta.", variant: "destructive" });
     },
   });
 

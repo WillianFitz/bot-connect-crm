@@ -2048,6 +2048,16 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
   });
 }
 
+async function handleGetTenantPlan(request: Request, env: Env): Promise<Response> {
+  const tenantId = await getTenantId(request, env);
+  const row = await env.DB.prepare(
+    "SELECT COALESCE(plan, 'starter') as plan FROM tenants WHERE id = ? LIMIT 1",
+  )
+    .bind(tenantId)
+    .first<{ plan: string }>();
+  return json({ plan: row?.plan ?? "starter" });
+}
+
 async function handleDashboardStats(request: Request, env: Env): Promise<Response> {
   const tenantId = await getTenantId(request, env);
   await ensureTenant(env, tenantId);
@@ -5415,6 +5425,8 @@ export default {
         response = await handleAdminToggleBlock(request, env);
       } else if (pathname === "/api/auth/login" && method === "POST") {
         response = await handleClientLogin(request, env);
+      } else if (pathname === "/api/tenant/plan" && method === "GET") {
+        response = await handleGetTenantPlan(request, env);
       } else if (pathname === "/api/dashboard/stats" && method === "GET") {
         response = await handleDashboardStats(request, env);
       } else if (pathname === "/api/groups" && method === "GET") {

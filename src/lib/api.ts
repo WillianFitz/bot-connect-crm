@@ -38,6 +38,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
+  getTenantPlan: () => request<{ plan: string }>("/tenant/plan"),
+
   getWhatsappConnection: () =>
     request<{
       type: string;
