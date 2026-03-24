@@ -37,16 +37,30 @@ function extractFromItems(items) {
   const seen = new Set();
   const leads = [];
   items.forEach(item => {
-    const spans = Array.from(item.querySelectorAll('span[dir="auto"], span[dir="ltr"]'));
-    const texts = spans.map(s => s.textContent?.trim()).filter(Boolean);
-    let phone = '', name = texts[0] || '';
-    if (looksLikePhone(texts[0])) {
-      phone = normalizePhone(texts[0]); name = '';
-    } else {
-      for (const t of texts.slice(1)) {
+    // Pula separadores de letra (não têm role="button" dentro)
+    const btn = item.querySelector('[role="button"]') ||
+                (item.getAttribute('role') === 'button' ? item : null);
+    if (!btn) return;
+
+    // Nome: atributo title do span dir="auto" (mais confiável que textContent)
+    let name = '';
+    const nameSpan = btn.querySelector('span[dir="auto"][title]');
+    if (nameSpan) name = (nameSpan.getAttribute('title') || nameSpan.textContent || '').trim();
+    name = name.replace(/^~\s*/, '').trim(); // remove prefixo "~ " de contatos não salvos
+
+    // Telefone: span com classe _ajzr (formatado pelo WhatsApp)
+    let phone = '';
+    const phoneEl = btn.querySelector('._ajzr ._ao3e, ._ajzr span');
+    if (phoneEl) phone = normalizePhone(phoneEl.textContent.trim());
+
+    // Fallback: busca qualquer span que pareça telefone
+    if (!phone) {
+      for (const s of btn.querySelectorAll('span[dir="auto"], span[dir="ltr"]')) {
+        const t = s.textContent.trim();
         if (looksLikePhone(t)) { phone = normalizePhone(t); break; }
       }
     }
+
     const key = phone || name;
     if (!key || seen.has(key)) return;
     if (name === 'Você' || name === 'You' || name.length < 2) return;
@@ -57,7 +71,9 @@ function extractFromItems(items) {
 }
 
 /* O painel de info do grupo fica na DIREITA da tela.
-   A lista de conversas fica na ESQUERDA — mesmos seletores, lado errado. */
+   A lista de conversas fica na ESQUERDA — mesmos seletores, lado errado.
+   EXCEÇÃO: a tela "Pesquisar membros" (aberta após "ver tudo") fica na
+   metade esquerda/central — para ela o filtro de lado é desativado. */
 const RIGHT_THRESHOLD = () => window.innerWidth * 0.5;
 
 function isOnRightSide(el) {
@@ -65,22 +81,57 @@ function isOnRightSide(el) {
   return rect.left >= RIGHT_THRESHOLD() && rect.width > 50;
 }
 
-function findItems(container) {
+/* Detecta se a tela "Pesquisar membros" está aberta (aparece após "ver tudo") */
+function findParticipantScreen() {
+  const input = document.querySelector(
+    'input[aria-label*="esquisar contatos"], input[aria-label*="earch contacts"], ' +
+    'input[placeholder*="esquisar contatos"], input[placeholder*="earch contacts"]'
+  );
+  if (!input) return null;
+
+  // Sobe até achar o ancestral que contém os listitems
+  let el = input.parentElement;
+  for (let i = 0; i < 25 && el; i++) {
+    if (el.querySelectorAll('[role="listitem"]').length >= 2) return el;
+    el = el.parentElement;
+  }
+  return null;
+}
+
+/* Acha o container scrollável dentro da tela de participantes.
+   WhatsApp Web usa div[tabindex="0"] como elemento scrollável na lista virtual. */
+function findScrollableInScreen(screen) {
+  // div com tabindex="0" e scrollHeight maior que clientHeight
+  for (const div of screen.querySelectorAll('div[tabindex="0"]')) {
+    if (div.scrollHeight > div.clientHeight + 30) return div;
+  }
+  // Fallback: overflow auto/scroll
+  for (const div of screen.querySelectorAll('div')) {
+    const s = window.getComputedStyle(div);
+    if ((s.overflowY === 'auto' || s.overflowY === 'scroll') &&
+        div.scrollHeight > div.clientHeight + 30 && div.clientWidth > 80) {
+      return div;
+    }
+  }
+  return screen;
+}
+
+function findItems(container, skipSideFilter) {
   for (const sel of [
-    '[data-testid="cell-frame-container"]',
+    '[role="listitem"]',
     '[data-testid*="list-item"]',
     '[data-testid*="contact-list-item"]',
     '[data-testid*="participant"]',
-    '[role="listitem"]',
+    '[data-testid="cell-frame-container"]',
   ]) {
     const items = Array.from(container.querySelectorAll(sel))
-      .filter(isOnRightSide);
+      .filter(el => skipSideFilter || isOnRightSide(el));
     if (items.length >= 2) return items;
   }
-  // Fallback geométrico — só lado direito
+  // Fallback geométrico
   const all = Array.from(container.querySelectorAll('div'));
   const candidates = all.filter(el => {
-    if (!isOnRightSide(el)) return false;
+    if (!skipSideFilter && !isOnRightSide(el)) return false;
     const h = el.getBoundingClientRect().height;
     return h >= 40 && h <= 90 && el.querySelectorAll('span[dir="auto"], span[dir="ltr"]').length >= 1;
   });
@@ -101,8 +152,8 @@ function findInfoPanel() {
     const s    = window.getComputedStyle(el);
     const rect = el.getBoundingClientRect();
     if (s.overflowY !== 'auto' && s.overflowY !== 'scroll') continue;
-    if (rect.left < RIGHT_THRESHOLD()) continue; // ignora lado esquerdo
-    if (findItems(el).length >= 2) return el;
+    if (rect.left < RIGHT_THRESHOLD()) continue;
+    if (findItems(el, false).length >= 2) return el;
   }
 
   // Sobe a partir do heading "Participantes" — garante que está na direita
@@ -187,11 +238,15 @@ async function scrollAndClickVerMais(panel) {
   return false;
 }
 
-/* ── Após "Ver tudo", aguarda o novo painel de participantes surgir ── */
-async function waitForParticipantPanel(oldPanel, maxWait = 6000) {
+/* ── Após "Ver tudo", aguarda a tela "Pesquisar membros" surgir ── */
+async function waitForParticipantPanel(oldPanel, maxWait = 7000) {
   const deadline = Date.now() + maxWait;
   while (Date.now() < deadline) {
     await sleep(400);
+
+    // Prioridade máxima: tela "Pesquisar membros" (nova tela pós "ver tudo")
+    const screen = findParticipantScreen();
+    if (screen) return { screen, scrollable: findScrollableInScreen(screen), skipSide: true };
 
     // Testa data-testids específicos da tela de participantes
     for (const sel of [
@@ -201,95 +256,111 @@ async function waitForParticipantPanel(oldPanel, maxWait = 6000) {
       '[data-testid="participants-list"]',
     ]) {
       const el = document.querySelector(sel);
-      if (el && el !== oldPanel) return el;
+      if (el && el !== oldPanel) return { screen: el, scrollable: el, skipSide: true };
     }
 
-    // Procura qualquer novo painel rolável no lado direito com participantes
+    // Painel direito com mais itens (agora sem "ver tudo" necessário)
     const newPanel = findInfoPanel();
-    if (newPanel && newPanel !== oldPanel && findItems(newPanel).length >= 2) {
-      return newPanel;
+    if (newPanel && newPanel !== oldPanel && findItems(newPanel, false).length >= 2) {
+      return { screen: newPanel, scrollable: newPanel, skipSide: false };
     }
-
-    // Tenta também por container que cresceu — mesmo painel, mas agora com + itens
-    if (oldPanel && findItems(oldPanel).length >= 3) return oldPanel;
+    if (oldPanel && findItems(oldPanel, false).length >= 3) {
+      return { screen: oldPanel, scrollable: oldPanel, skipSide: false };
+    }
   }
 
-  // Fallback: tenta achar container rolável que tenha itens de participante
-  for (const el of document.querySelectorAll('div')) {
-    if (!isOnRightSide(el)) continue;
-    const s = window.getComputedStyle(el);
-    if (s.overflowY !== 'auto' && s.overflowY !== 'scroll') continue;
-    if (el.clientWidth < 150 || el.scrollHeight <= el.clientHeight + 30) continue;
-    if (findItems(el).length >= 2) return el;
-  }
-
-  return oldPanel; // último recurso: mantém painel original
+  return { screen: oldPanel, scrollable: oldPanel, skipSide: false };
 }
 
-/* ── Rola um painel tentando múltiplos métodos ── */
-async function scrollPanel(panel, amount) {
-  const before = panel.scrollTop;
-  panel.scrollTop += amount;
-  await sleep(50);
-  if (panel.scrollTop !== before) return; // funcionou
+/* ── Rola um elemento tentando múltiplos métodos ── */
+async function scrollPanel(el, amount) {
+  const before = el.scrollTop;
+  el.scrollTop += amount;
+  await sleep(80);
+  if (el.scrollTop !== before) return;
 
-  // Tenta scroll() e wheel event como fallback
-  panel.scroll({ top: panel.scrollTop + amount, behavior: 'instant' });
-  panel.dispatchEvent(new WheelEvent('wheel', { deltaY: amount, bubbles: true }));
-  await sleep(50);
+  // Tenta via scroll()
+  el.scroll({ top: before + amount, behavior: 'instant' });
+  await sleep(80);
+  if (el.scrollTop !== before) return;
 
-  // Último recurso: Arrow Down no elemento focado dentro do painel
-  if (panel.scrollTop === before) {
-    const focusable = panel.querySelector('[tabindex], [role="listitem"], [data-testid*="cell"]');
-    if (focusable) {
-      focusable.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+  // Wheel event no elemento
+  el.dispatchEvent(new WheelEvent('wheel', { deltaY: amount, bubbles: true, cancelable: true }));
+  await sleep(80);
+
+  // Arrow Down em elemento focável dentro do painel (lista virtual do WhatsApp)
+  const focusable = el.querySelector('[tabindex="0"], [role="listitem"]');
+  if (focusable) {
+    focusable.focus();
+    for (let i = 0; i < 8; i++) {
+      focusable.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+      await sleep(30);
     }
   }
 }
 
 async function extractParticipants(targetCount, onProgress) {
   await sleep(600);
-  // 1. Acha o painel de info do grupo
-  let panel = findInfoPanel();
-  if (!panel) {
-    return { ok: false, error: 'Painel de participantes não encontrado. Clique no nome do grupo para abrir as Informações do grupo.' };
+
+  // 1. Acha o painel de info do grupo (lado direito)
+  // Mas primeiro verifica se a tela de "Pesquisar membros" já está aberta
+  let participantCtx = null;
+  const screenAlready = findParticipantScreen();
+  if (screenAlready) {
+    participantCtx = { screen: screenAlready, scrollable: findScrollableInScreen(screenAlready), skipSide: true };
   }
 
-  // 2. Rola até "Ver tudo" e clica — pode abrir nova tela com todos participantes
-  const clicked = await scrollAndClickVerMais(panel);
+  if (!participantCtx) {
+    const panel = findInfoPanel();
+    if (!panel) {
+      return { ok: false, error: 'Painel de participantes não encontrado. Clique no nome do grupo para abrir as Informações do grupo.' };
+    }
 
-  // 3. Re-acha o painel — aguarda carregamento da nova tela se clicou "Ver tudo"
-  if (clicked) {
-    panel = await waitForParticipantPanel(panel, 6000);
-  } else {
-    panel = findInfoPanel() || panel;
+    // 2. Rola até "Ver tudo" e clica
+    const clicked = await scrollAndClickVerMais(panel);
+    await sleep(800);
+
+    // 3. Aguarda tela de "Pesquisar membros" ou novo painel
+    if (clicked) {
+      participantCtx = await waitForParticipantPanel(panel, 7000);
+    } else {
+      const p = findInfoPanel() || panel;
+      participantCtx = { screen: p, scrollable: p, skipSide: false };
+    }
   }
 
+  const { screen, scrollable, skipSide } = participantCtx;
   const seen = new Set();
   const leads = [];
   let noNewRounds = 0, prevCount = 0;
 
-  while (leads.length < targetCount && noNewRounds < 12) {
-    const newLeads = extractFromItems(findItems(panel));
+  // Vai ao topo antes de começar
+  scrollable.scrollTop = 0;
+  await sleep(500);
+
+  while (leads.length < targetCount && noNewRounds < 15) {
+    const items = findItems(screen, skipSide);
+    const newLeads = extractFromItems(items);
     for (const lead of newLeads) {
       const key = lead.phone || lead.name;
       if (!key || seen.has(key)) continue;
       seen.add(key); leads.push(lead);
     }
+
     if (leads.length === prevCount) noNewRounds++;
     else { noNewRounds = 0; prevCount = leads.length; }
 
     if (onProgress) onProgress(leads.length);
 
-    // Rola o painel (WhatsApp Web usa virtual scrolling)
-    await scrollPanel(panel, 600);
-    await sleep(600);
+    // Verifica se chegou ao fim
+    if (scrollable.scrollTop + scrollable.clientHeight >= scrollable.scrollHeight - 80) break;
 
-    // Para se chegou ao fim
-    if (panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 50) break;
+    // Rola (lista virtual do WhatsApp precisa de scrollTop no container certo)
+    await scrollPanel(scrollable, 500);
+    await sleep(500);
   }
 
-  if (!leads.length) return { ok: false, error: 'Nenhum participante encontrado. Certifique-se de que o painel de informações está aberto.' };
+  if (!leads.length) return { ok: false, error: 'Nenhum participante encontrado. Certifique-se de que o painel de informações ou a tela de membros está aberta.' };
   return { ok: true, leads };
 }
 
