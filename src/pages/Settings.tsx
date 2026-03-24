@@ -836,7 +836,7 @@ const PLANS = [
   {
     id: "starter",
     name: "Starter",
-    price: "Grátis",
+    price: "R$ 69,90/mês",
     icon: Zap,
     color: "text-slate-400",
     bg: "bg-slate-500/10 border-slate-500/30",
@@ -845,7 +845,7 @@ const PLANS = [
   {
     id: "plus",
     name: "Plus",
-    price: "R$ 97/mês",
+    price: "R$ 99,90/mês",
     icon: Shield,
     color: "text-blue-400",
     bg: "bg-blue-500/10 border-blue-500/30",
@@ -855,7 +855,7 @@ const PLANS = [
   {
     id: "pro",
     name: "Pro",
-    price: "R$ 197/mês",
+    price: "R$ 129,90/mês",
     icon: Crown,
     color: "text-amber-400",
     bg: "bg-amber-500/10 border-amber-500/30",
@@ -993,9 +993,9 @@ function SubscriptionTab() {
                 ))}
               </ul>
 
-              {plan.id === "starter" ? (
+              {plan.id === "starter" && isCurrent ? (
                 <Button variant="outline" size="sm" className="w-full text-xs" disabled>
-                  Plano gratuito
+                  Plano atual
                 </Button>
               ) : isCurrent ? (
                 <Button variant="outline" size="sm" className="w-full text-xs" onClick={handlePortal} disabled={loadingPortal}>
