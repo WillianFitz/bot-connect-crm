@@ -2142,11 +2142,44 @@ async function handleStripeCreateCheckout(request: Request, env: Env): Promise<R
     if (!priceId) return json({ error: "Price ID não configurado para o plano: " + body.plan }, { status: 400 });
 
     const tenant = await env.DB.prepare(
-      `SELECT t.name, t.stripe_customer_id, u.username
+      `SELECT t.name, t.stripe_customer_id, t.stripe_subscription_id, t.subscription_status, u.username
        FROM tenants t LEFT JOIN users u ON u.tenant_id = t.id
        WHERE t.id = ? LIMIT 1`,
-    ).bind(tenantId).first<{ name: string; username: string | null; stripe_customer_id: string | null }>();
+    ).bind(tenantId).first<{
+      name: string;
+      username: string | null;
+      stripe_customer_id: string | null;
+      stripe_subscription_id: string | null;
+      subscription_status: string | null;
+    }>();
 
+    const activeStatuses = ["active", "trialing", "past_due", "canceling"];
+    const hasActiveSub = !!tenant?.stripe_subscription_id &&
+      activeStatuses.includes(tenant?.subscription_status ?? "");
+
+    // Já tem assinatura ativa → atualiza o plano sem criar nova assinatura
+    if (hasActiveSub && tenant!.stripe_subscription_id) {
+      const sub = await stripeRequest(env, `/subscriptions/${tenant!.stripe_subscription_id}`);
+      const itemId = sub.items?.data?.[0]?.id;
+      if (!itemId) throw new Error("Item da assinatura não encontrado");
+
+      await stripeRequest(env, `/subscriptions/${tenant!.stripe_subscription_id}`, {
+        [`items[0][id]`]: itemId,
+        [`items[0][price]`]: priceId,
+        "metadata[tenant_id]": tenantId,
+        "metadata[plan]": body.plan,
+        proration_behavior: "always_invoice",
+      });
+
+      // Atualiza plano no banco imediatamente
+      await env.DB.prepare(
+        "UPDATE tenants SET plan = ? WHERE id = ?",
+      ).bind(body.plan, tenantId).run();
+
+      return json({ upgraded: true });
+    }
+
+    // Sem assinatura ativa → cria novo checkout com trial
     const customerId = tenant?.stripe_customer_id
       ? tenant.stripe_customer_id
       : await ensureStripeCustomer(env, tenantId, tenant?.username || tenantId, tenant?.name || tenantId);

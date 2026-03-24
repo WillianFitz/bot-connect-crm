@@ -908,14 +908,20 @@ function SubscriptionTab() {
     if (planId === "starter") return;
     setLoadingPlan(planId);
     try {
-      const { url } = await api.stripeCreateCheckout({
+      const result = await api.stripeCreateCheckout({
         plan: planId,
         success_url: `${window.location.origin}/app/settings?tab=subscription&stripe=success`,
         cancel_url: `${window.location.origin}/app/settings?tab=subscription`,
       });
-      window.location.href = url;
+      if ((result as any).upgraded) {
+        toast({ title: "Plano atualizado!", description: `Seu plano foi alterado para ${planId.charAt(0).toUpperCase() + planId.slice(1)} com sucesso.` });
+        planQuery.refetch();
+      } else {
+        window.location.href = (result as any).url;
+      }
     } catch (e: any) {
       toast({ title: "Erro ao iniciar checkout", description: e.message, variant: "destructive" });
+    } finally {
       setLoadingPlan(null);
     }
   };
