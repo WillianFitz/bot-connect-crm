@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { PlanLock } from "@/components/PlanLock";
 import {
   MessageSquare, Clock, ImageIcon, Mic, FileText, Video,
   ChevronDown, ChevronUp, Trash2, Pencil, GitBranch, Upload, Link, Loader2,
@@ -154,6 +155,9 @@ export default function ProspectFunnels() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
+  const { data: planData } = useQuery({ queryKey: ["tenant-plan"], queryFn: () => api.getTenantPlan(), staleTime: 5 * 60_000 });
+  const hasPlus = ["plus", "pro"].includes(planData?.plan ?? "starter");
+
   const [funnelName, setFunnelName] = useState("");
   const [editingId, setEditingId] = useState<number | null>(null);
   const [blocks, setBlocks] = useState<CanvasBlock[]>([]);
@@ -270,6 +274,7 @@ export default function ProspectFunnels() {
   const totalWait = blocks.filter((b) => b.type === "wait").reduce((s, b) => s + (b.wait_seconds || 0), 0);
 
   return (
+    <PlanLock minPlan="plus" locked={!hasPlus}>
     <div className="space-y-6 animate-slide-in w-full">
       {/* Hidden file input */}
       <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileUpload} />
@@ -649,5 +654,6 @@ export default function ProspectFunnels() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+    </PlanLock>
   );
 }

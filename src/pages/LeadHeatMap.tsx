@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
+import { PlanLock } from "@/components/PlanLock";
 
 interface LeadHeat {
   id: number;
@@ -384,6 +385,9 @@ export default function LeadHeatMap() {
   const { toast } = useToast();
   const [analyzingIds, setAnalyzingIds] = useState<Set<number>>(new Set());
 
+  const { data: planData } = useQuery({ queryKey: ["tenant-plan"], queryFn: () => api.getTenantPlan(), staleTime: 5 * 60_000 });
+  const hasPro = (planData?.plan ?? "starter") === "pro";
+
   const { data: rawLeads = [], isLoading } = useQuery({
     queryKey: ["leads-heat"],
     queryFn: () => api.getLeadsHeat(),
@@ -506,6 +510,7 @@ export default function LeadHeatMap() {
   ];
 
   return (
+    <PlanLock minPlan="pro" locked={!hasPro}>
     <div className="flex flex-col h-full gap-6 p-6">
       {/* Page header */}
       <div className="flex items-start justify-between gap-4">
@@ -604,5 +609,6 @@ export default function LeadHeatMap() {
         </>
       )}
     </div>
+    </PlanLock>
   );
 }

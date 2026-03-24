@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { PlanLock } from "@/components/PlanLock";
 import {
   CalendarCheck, Plus, ChevronLeft, ChevronRight, Clock, Phone,
   Building2, Pencil, Trash2, CheckCircle2, XCircle, AlertCircle,
@@ -609,6 +610,9 @@ function StatsBar({ apts }: { apts: Apt[] }) {
 export default function Appointments() {
   const today = new Date();
   const [currentMonth, setCurrentMonth] = useState(isoMonth(today.getFullYear(), today.getMonth()));
+
+  const { data: planData } = useQuery({ queryKey: ["tenant-plan"], queryFn: () => api.getTenantPlan(), staleTime: 5 * 60_000 });
+  const hasPro = (planData?.plan ?? "starter") === "pro";
   const [modalOpen, setModalOpen] = useState(false);
   const [editingApt, setEditingApt] = useState<Apt | null>(null);
   const [defaultDate, setDefaultDate] = useState<string | undefined>();
@@ -643,6 +647,7 @@ export default function Appointments() {
   }
 
   return (
+    <PlanLock minPlan="pro" locked={!hasPro}>
     <div className="space-y-5 animate-slide-in w-full max-w-6xl">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
@@ -721,5 +726,6 @@ export default function Appointments() {
         defaultDate={defaultDate}
       />
     </div>
+    </PlanLock>
   );
 }

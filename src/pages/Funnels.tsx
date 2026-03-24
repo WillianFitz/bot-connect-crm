@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { PlanLock } from "@/components/PlanLock";
 import {
   GripVertical, User, Plus, Search, X, Settings2, Trash2,
   AlertTriangle, Clock, Check, DollarSign,
@@ -601,6 +602,9 @@ export default function Funnels() {
   const queryClient   = useQueryClient();
   const { toast }     = useToast();
 
+  const { data: planData } = useQuery({ queryKey: ["tenant-plan"], queryFn: () => api.getTenantPlan(), staleTime: 5 * 60_000 });
+  const hasPro = (planData?.plan ?? "starter") === "pro";
+
   const [search, setSearch]               = useState("");
   const [draggingId, setDraggingId]       = useState<number | null>(null);
   const [dragOverCol, setDragOverCol]     = useState<number | null>(null);
@@ -717,6 +721,7 @@ export default function Funnels() {
 
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
+    <PlanLock minPlan="pro" locked={!hasPro}>
     <div className="space-y-6 animate-slide-in">
 
       {/* Header */}
@@ -946,5 +951,6 @@ export default function Funnels() {
         isPending={createLeadInCrm.isPending}
       />
     </div>
+    </PlanLock>
   );
 }

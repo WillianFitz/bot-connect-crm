@@ -82,18 +82,16 @@ function SidebarSection({
               return (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton asChild>
-                    <div
-                      className="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground/40 cursor-not-allowed select-none"
-                      title={`Disponível no plano ${item.minPlan === "plus" ? "Plus" : "Pro"}`}
+                    <NavLink
+                      to={item.url}
+                      end={false}
+                      className="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground/50 hover:bg-sidebar-accent/50 transition-colors"
+                      activeClassName=""
                     >
                       <item.icon className="h-4 w-4 shrink-0" />
-                      {!collapsed && (
-                        <span className="flex-1">{item.title}</span>
-                      )}
-                      {!collapsed && (
-                        <Lock className="h-3 w-3 shrink-0 opacity-60" />
-                      )}
-                    </div>
+                      {!collapsed && <span className="flex-1">{item.title}</span>}
+                      {!collapsed && <Lock className="h-3 w-3 shrink-0 opacity-50" />}
+                    </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               );
