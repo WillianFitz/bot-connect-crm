@@ -2125,8 +2125,10 @@ async function handleStripeCreateCheckout(request: Request, env: Env): Promise<R
     if (!priceId) return json({ error: "Price ID não configurado para o plano: " + body.plan }, { status: 400 });
 
     const tenant = await env.DB.prepare(
-      "SELECT name, username, stripe_customer_id FROM tenants WHERE id = ? LIMIT 1",
-    ).bind(tenantId).first<{ name: string; username: string; stripe_customer_id: string | null }>();
+      `SELECT t.name, t.stripe_customer_id, u.username
+       FROM tenants t LEFT JOIN users u ON u.tenant_id = t.id
+       WHERE t.id = ? LIMIT 1`,
+    ).bind(tenantId).first<{ name: string; username: string | null; stripe_customer_id: string | null }>();
 
     const customerId = tenant?.stripe_customer_id
       ? tenant.stripe_customer_id
