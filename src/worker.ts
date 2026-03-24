@@ -2117,34 +2117,37 @@ async function ensureStripeCustomer(env: Env, tenantId: string, email: string, n
 async function handleStripeCreateCheckout(request: Request, env: Env): Promise<Response> {
   if (!env.STRIPE_SECRET_KEY) return json({ error: "Stripe não configurado" }, { status: 503 });
 
-  const tenantId = await getTenantId(request, env);
-  const body = await readBody<{ plan: string; success_url: string; cancel_url: string }>(request);
+  try {
+    const tenantId = await getTenantId(request, env);
+    const body = await readBody<{ plan: string; success_url: string; cancel_url: string }>(request);
 
-  const priceId = getPriceId(env, body.plan);
-  if (!priceId) return json({ error: "Plano inválido ou price ID não configurado" }, { status: 400 });
+    const priceId = getPriceId(env, body.plan);
+    if (!priceId) return json({ error: "Price ID não configurado para o plano: " + body.plan }, { status: 400 });
 
-  // Get tenant info
-  const tenant = await env.DB.prepare(
-    "SELECT name, username, stripe_customer_id FROM tenants WHERE id = ? LIMIT 1",
-  ).bind(tenantId).first<{ name: string; username: string; stripe_customer_id: string | null }>();
+    const tenant = await env.DB.prepare(
+      "SELECT name, username, stripe_customer_id FROM tenants WHERE id = ? LIMIT 1",
+    ).bind(tenantId).first<{ name: string; username: string; stripe_customer_id: string | null }>();
 
-  const customerId = tenant?.stripe_customer_id
-    ? tenant.stripe_customer_id
-    : await ensureStripeCustomer(env, tenantId, tenant?.username || tenantId, tenant?.name || tenantId);
+    const customerId = tenant?.stripe_customer_id
+      ? tenant.stripe_customer_id
+      : await ensureStripeCustomer(env, tenantId, tenant?.username || tenantId, tenant?.name || tenantId);
 
-  const session = await stripeRequest(env, "/checkout/sessions", {
-    mode: "subscription",
-    customer: customerId,
-    "line_items[0][price]": priceId,
-    "line_items[0][quantity]": "1",
-    success_url: body.success_url || "https://bot-connect-crm.pages.dev/app/settings?stripe=success",
-    cancel_url: body.cancel_url || "https://bot-connect-crm.pages.dev/app/settings?stripe=cancel",
-    "subscription_data[metadata][tenant_id]": tenantId,
-    "metadata[tenant_id]": tenantId,
-    "metadata[plan]": body.plan,
-  });
+    const session = await stripeRequest(env, "/checkout/sessions", {
+      mode: "subscription",
+      customer: customerId,
+      "line_items[0][price]": priceId,
+      "line_items[0][quantity]": "1",
+      success_url: body.success_url || "https://bot-connect-crm.pages.dev/app/settings?stripe=success",
+      cancel_url: body.cancel_url || "https://bot-connect-crm.pages.dev/app/settings?stripe=cancel",
+      "subscription_data[metadata][tenant_id]": tenantId,
+      "metadata[tenant_id]": tenantId,
+      "metadata[plan]": body.plan,
+    });
 
-  return json({ url: session.url, session_id: session.id });
+    return json({ url: session.url, session_id: session.id });
+  } catch (err: any) {
+    return json({ error: err?.message || "Erro ao criar checkout" }, { status: 500 });
+  }
 }
 
 // POST /api/stripe/portal
