@@ -890,6 +890,20 @@ function SubscriptionTab() {
   const hasSubscription = planQuery.data?.has_subscription ?? false;
   const statusInfo = STATUS_LABEL[subStatus] ?? STATUS_LABEL.inactive;
 
+  const periodEnd = planQuery.data?.current_period_end ?? null;
+  const trialEnd = planQuery.data?.trial_end ?? null;
+
+  const daysUntil = (ts: number | null): number | null => {
+    if (!ts) return null;
+    const diff = ts * 1000 - Date.now();
+    return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
+  };
+
+  const trialDays = daysUntil(trialEnd);
+  const periodDays = daysUntil(periodEnd);
+  const isTrialing = subStatus === "trialing" && trialDays !== null;
+  const isCanceling = subStatus === "canceling" && periodDays !== null;
+
   const handleCheckout = async (planId: string) => {
     if (planId === "starter") return;
     setLoadingPlan(planId);
@@ -955,6 +969,26 @@ function SubscriptionTab() {
             </Button>
           )}
         </div>
+
+        {isTrialing && (
+          <div className="rounded-lg bg-blue-500/10 border border-blue-500/30 p-3 text-xs text-blue-300 flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+            Você está no período de teste. <strong>{trialDays} {trialDays === 1 ? "dia restante" : "dias restantes"}</strong> — a cobrança começa automaticamente após o trial.
+          </div>
+        )}
+
+        {isCanceling && (
+          <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-3 text-xs text-amber-300 flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            Assinatura cancelada. Você tem acesso até o fim do período pago: <strong>{periodDays} {periodDays === 1 ? "dia restante" : "dias restantes"}</strong>. Após isso, volta para o Starter gratuito.
+          </div>
+        )}
+
+        {subStatus === "active" && periodDays !== null && !isCanceling && (
+          <p className="text-xs text-muted-foreground">
+            Próxima cobrança em <strong>{periodDays} {periodDays === 1 ? "dia" : "dias"}</strong> · R$ {currentPlan === "plus" ? "99,90" : currentPlan === "pro" ? "129,90" : "0,00"}
+          </p>
+        )}
 
         {subStatus === "past_due" && (
           <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-3 text-xs text-amber-300 flex items-center gap-2">

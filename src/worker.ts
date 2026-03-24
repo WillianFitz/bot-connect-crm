@@ -2057,14 +2057,30 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
 async function handleGetTenantPlan(request: Request, env: Env): Promise<Response> {
   const tenantId = await getTenantId(request, env);
   const row = await env.DB.prepare(
-    "SELECT COALESCE(plan, 'starter') as plan, COALESCE(subscription_status, 'inactive') as subscription_status, stripe_customer_id FROM tenants WHERE id = ? LIMIT 1",
+    "SELECT COALESCE(plan, 'starter') as plan, COALESCE(subscription_status, 'inactive') as subscription_status, stripe_customer_id, stripe_subscription_id FROM tenants WHERE id = ? LIMIT 1",
   )
     .bind(tenantId)
-    .first<{ plan: string; subscription_status: string; stripe_customer_id: string | null }>();
+    .first<{ plan: string; subscription_status: string; stripe_customer_id: string | null; stripe_subscription_id: string | null }>();
+
+  let current_period_end: number | null = null;
+  let trial_end: number | null = null;
+
+  if (env.STRIPE_SECRET_KEY && row?.stripe_subscription_id) {
+    try {
+      const sub = await stripeRequest(env, `/subscriptions/${row.stripe_subscription_id}`);
+      current_period_end = sub.current_period_end ?? null;
+      trial_end = sub.trial_end ?? null;
+    } catch {
+      // ignora se Stripe falhar
+    }
+  }
+
   return json({
     plan: row?.plan ?? "starter",
     subscription_status: row?.subscription_status ?? "inactive",
     has_subscription: !!row?.stripe_customer_id,
+    current_period_end,
+    trial_end,
   });
 }
 
