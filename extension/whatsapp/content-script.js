@@ -3,6 +3,14 @@
    Injeta painel flutuante diretamente no WhatsApp Web
    ══════════════════════════════════════════════════════════ */
 
+/* Guard: WhatsApp Web é SPA — o Chrome pode reinjetar o script na navegação.
+   `let` declarado duas vezes lança SyntaxError → erro "line 1 anonymous function".
+   Este guard impede dupla execução. */
+if (window.__leadflowWaInjected) {
+  // Script já está ativo nesta página — não faz nada
+} else {
+window.__leadflowWaInjected = true;
+
 /* ── Utilidades ── */
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -614,7 +622,7 @@ function initPanel(shadow) {
     });
   });
 
-  // Exportar CSV
+  // Exportar CSV — usa <a download> pois chrome.downloads não está disponível em content scripts
   shadow.getElementById('csvBtn').addEventListener('click', () => {
     const leads = _leads.length ? _leads : [];
     if (!leads.length) return;
@@ -622,7 +630,10 @@ function initPanel(shadow) {
     const rows = [['name','phone'], ...leads.map(l => [l.name||'', l.phone||''])];
     const csv  = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(';')).join('\n');
     const url  = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
-    chrome.downloads.download({ url, filename: `whatsapp-${folder}.csv`, saveAs: true });
+    const a = document.createElement('a');
+    a.href = url; a.download = `whatsapp-${folder}.csv`;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
   });
 }
 
@@ -653,3 +664,5 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 });
+
+} // fim do guard window.__leadflowWaInjected
