@@ -3,6 +3,7 @@ export interface Env {
   MEDIA_BUCKET: R2Bucket;
   STRIPE_SECRET_KEY?: string;
   STRIPE_WEBHOOK_SECRET?: string;
+  STRIPE_PRICE_STARTER?: string;
   STRIPE_PRICE_PLUS?: string;
   STRIPE_PRICE_PRO?: string;
   MEDIA_PUBLIC_URL: string;
@@ -2085,12 +2086,8 @@ async function stripeRequest(env: Env, path: string, body?: Record<string, strin
   return res.json();
 }
 
-const PLAN_PRICE_MAP: Record<string, string> = {
-  plus: "__STRIPE_PRICE_PLUS__",
-  pro:  "__STRIPE_PRICE_PRO__",
-};
-
 function getPriceId(env: Env, plan: string): string {
+  if (plan === "starter") return env.STRIPE_PRICE_STARTER || "";
   if (plan === "plus") return env.STRIPE_PRICE_PLUS || "";
   if (plan === "pro") return env.STRIPE_PRICE_PRO || "";
   return "";
@@ -2216,6 +2213,7 @@ async function handleStripeWebhook(request: Request, env: Env): Promise<Response
       if (tenantId) {
         // Determine plan from price ID
         let plan: string | null = null;
+        if (priceId && env.STRIPE_PRICE_STARTER && priceId === env.STRIPE_PRICE_STARTER) plan = "starter";
         if (priceId && env.STRIPE_PRICE_PLUS && priceId === env.STRIPE_PRICE_PLUS) plan = "plus";
         if (priceId && env.STRIPE_PRICE_PRO && priceId === env.STRIPE_PRICE_PRO) plan = "pro";
 

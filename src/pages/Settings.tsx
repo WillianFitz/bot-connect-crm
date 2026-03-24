@@ -993,9 +993,20 @@ function SubscriptionTab() {
                 ))}
               </ul>
 
-              {plan.id === "starter" && isCurrent ? (
+              {isCurrent ? (
                 <Button variant="outline" size="sm" className="w-full text-xs" disabled>
                   Plano atual
+                </Button>
+              ) : plan.id === "starter" && !isCurrent ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full text-xs gap-2"
+                  onClick={() => handleCheckout("starter")}
+                  disabled={!!loadingPlan}
+                >
+                  {loadingPlan === "starter" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                  Assinar Starter
                 </Button>
               ) : isCurrent ? (
                 <Button variant="outline" size="sm" className="w-full text-xs" onClick={handlePortal} disabled={loadingPortal}>
