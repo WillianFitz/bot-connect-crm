@@ -302,6 +302,17 @@ export default function Campaigns() {
       : c.campaign_type !== "billing"
   );
 
+  if (campaignsQuery.isError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-40 gap-2">
+        <p className="text-sm text-destructive">Erro ao carregar campanhas.</p>
+        <button className="text-xs text-muted-foreground underline" onClick={() => campaignsQuery.refetch()}>
+          Tentar novamente
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 animate-slide-in w-full">
       <div>

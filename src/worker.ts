@@ -2631,6 +2631,20 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
     }
     const resolvedCampaignType = campaign_type === "billing" ? "billing" : "prospecting";
 
+    // Valida ownership de folder_id e funnel_id antes de inserir
+    if (folder_id != null) {
+      const folderOk = await env.DB.prepare(
+        "SELECT 1 FROM lead_folders WHERE id = ? AND tenant_id = ? LIMIT 1",
+      ).bind(Number(folder_id), tenantId).first();
+      if (!folderOk) return json({ error: "Pasta não encontrada" }, { status: 404 });
+    }
+    if (funnel_id != null) {
+      const funnelOk = await env.DB.prepare(
+        "SELECT 1 FROM prospect_funnels WHERE id = ? AND tenant_id = ? LIMIT 1",
+      ).bind(Number(funnel_id), tenantId).first();
+      if (!funnelOk) return json({ error: "Funil não encontrado" }, { status: 404 });
+    }
+
     const res = await env.DB.prepare(
       `INSERT INTO campaigns
        (tenant_id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id, api_source, template_id, template_variables, campaign_type, payment_link)
@@ -2735,10 +2749,22 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
       }
     }
     if (newFunnelId !== undefined) {
+      if (newFunnelId !== null && newFunnelId !== "") {
+        const funnelOk = await env.DB.prepare(
+          "SELECT 1 FROM prospect_funnels WHERE id = ? AND tenant_id = ? LIMIT 1",
+        ).bind(Number(newFunnelId), tenantId).first();
+        if (!funnelOk) return json({ error: "Funil não encontrado" }, { status: 404 });
+      }
       updates.push("funnel_id = ?");
       params.push(newFunnelId === null || newFunnelId === "" ? null : Number(newFunnelId));
     }
     if ("folder_id" in body) {
+      if (body.folder_id != null) {
+        const folderOk = await env.DB.prepare(
+          "SELECT 1 FROM lead_folders WHERE id = ? AND tenant_id = ? LIMIT 1",
+        ).bind(Number(body.folder_id), tenantId).first();
+        if (!folderOk) return json({ error: "Pasta não encontrada" }, { status: 404 });
+      }
       updates.push("folder_id = ?");
       params.push(body.folder_id ? Number(body.folder_id) : null);
       // Reseta contadores para a nova pasta
