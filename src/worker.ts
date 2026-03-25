@@ -43,10 +43,16 @@ async function readBody<T = any>(request: Request): Promise<T> {
 
 async function getTenantId(request: Request, env: Env): Promise<string> {
   const authHeader = request.headers.get("Authorization");
-  if (env.JWT_SECRET && authHeader?.startsWith("Bearer ")) {
-    const payload = await verifyJwt(authHeader.slice(7), env.JWT_SECRET);
-    if (payload) return payload.tenantId;
+  if (env.JWT_SECRET) {
+    // Modo seguro: JWT_SECRET configurado → só aceita JWT válido
+    if (authHeader?.startsWith("Bearer ")) {
+      const payload = await verifyJwt(authHeader.slice(7), env.JWT_SECRET);
+      if (payload) return payload.tenantId;
+    }
+    // JWT ausente ou inválido → rejeita (impede spoofing via x-tenant-id)
+    throw json({ error: "Sessão inválida. Faça login novamente." }, { status: 401 });
   }
+  // Modo dev (sem JWT_SECRET): aceita x-tenant-id para compatibilidade
   const header = request.headers.get("x-tenant-id");
   if (!header) return "tenant_demo";
   return header;
@@ -309,6 +315,9 @@ async function handleAdminCreateTenantUser(request: Request, env: Env): Promise<
 
   if (!body.tenantName || !body.username || !body.password || !body.document) {
     return json({ error: "Nome da conta, usuário, senha e documento são obrigatórios" }, { status: 400 });
+  }
+  if (body.password.length < 8) {
+    return json({ error: "A senha deve ter pelo menos 8 caracteres" }, { status: 400 });
   }
 
   const tenantId = body.tenantId && body.tenantId.trim().length > 0
@@ -915,6 +924,24 @@ async function handleLeads(request: Request, env: Env, method: string, url: URL)
 
     if (!company || !phone) {
       return json({ error: "Empresa e telefone são obrigatórios" }, { status: 400 });
+    }
+
+    // Validar limite de leads do plano
+    const planRow = await env.DB.prepare(
+      "SELECT COALESCE(plan, 'starter') as plan FROM tenants WHERE id = ? LIMIT 1",
+    ).bind(tenantId).first<{ plan: string }>();
+    const tenantPlan = planRow?.plan ?? "starter";
+    const LEAD_LIMITS: Record<string, number> = { starter: 100, plus: 2000, pro: Infinity };
+    const leadLimit = LEAD_LIMITS[tenantPlan] ?? 100;
+    if (leadLimit !== Infinity) {
+      const countRow = await env.DB.prepare(
+        "SELECT COUNT(*) as c FROM leads WHERE tenant_id = ?",
+      ).bind(tenantId).first<{ c: number }>();
+      if ((countRow?.c ?? 0) >= leadLimit) {
+        return json({
+          error: `Limite de ${leadLimit} leads atingido no plano ${tenantPlan}. Faça upgrade para continuar.`,
+        }, { status: 403 });
+      }
     }
 
     const res = await env.DB.prepare(
@@ -3192,8 +3219,8 @@ async function handleChangePassword(request: Request, env: Env) {
   const body = await readBody<{ currentPassword?: string; newPassword?: string }>(request);
   if (!body.currentPassword || !body.newPassword)
     return json({ error: "Senha atual e nova senha são obrigatórias" }, { status: 400 });
-  if (body.newPassword.length < 6)
-    return json({ error: "A nova senha deve ter pelo menos 6 caracteres" }, { status: 400 });
+  if (body.newPassword.length < 8)
+    return json({ error: "A nova senha deve ter pelo menos 8 caracteres" }, { status: 400 });
 
   const user = await env.DB.prepare(
     "SELECT id, password_hash FROM users WHERE tenant_id = ? LIMIT 1",
@@ -5826,8 +5853,13 @@ export default {
         response = notFound();
       }
     } catch (err: any) {
-      console.error("[worker] internal error", err?.message || err);
-      response = json({ error: "Internal error" }, { status: 500 });
+      // getTenantId e outras guards lançam Response diretamente para auth/validação
+      if (err instanceof Response) {
+        response = err;
+      } else {
+        console.error("[worker] internal error", err?.message || err);
+        response = json({ error: "Internal error" }, { status: 500 });
+      }
     }
 
     const headers = new Headers(response.headers);

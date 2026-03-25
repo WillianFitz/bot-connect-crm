@@ -60,6 +60,10 @@ export default function SettingsPage() {
 
   const handleChangePassword = (e: React.FormEvent) => {
     e.preventDefault();
+    if (newPassword.length < 8) {
+      toast({ title: "Erro", description: "A nova senha deve ter pelo menos 8 caracteres.", variant: "destructive" });
+      return;
+    }
     if (newPassword !== confirmPassword) {
       toast({ title: "Erro", description: "A nova senha e a confirmação não coincidem.", variant: "destructive" });
       return;

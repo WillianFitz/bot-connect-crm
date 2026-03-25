@@ -87,6 +87,10 @@ export default function Admin() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (password.length < 8) {
+      toast({ title: "Senha muito curta", description: "A senha deve ter pelo menos 8 caracteres.", variant: "destructive" });
+      return;
+    }
     mutation.mutate({ tenantName, username, password, document });
   };
 

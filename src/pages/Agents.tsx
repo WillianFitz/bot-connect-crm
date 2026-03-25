@@ -1982,83 +1982,45 @@ export default function Agents() {
   useEffect(() => {
     if (!agentsQuery.data) return;
 
+    const d = agentsQuery.data;
+    const find = (id: string) => d.find((a) => a.id === id);
+
     const byId: Record<AgentId, AgentFormState> = {
       disparo: {
         id: "disparo",
         name: "Agente de Disparo",
         type: "attendance",
-        base_prompt:
-          agentsQuery.data.find((a: any) => a.id === "disparo")?.base_prompt ?? "",
-        default_message:
-          agentsQuery.data.find((a: any) => a.id === "disparo")
-            ?.default_message || "Oi, tudo bem? 😊",
-        pause_minutes:
-          agentsQuery.data.find((a: any) => a.id === "disparo")
-            ?.pause_minutes ?? 0,
-        pause_definitive:
-          !!agentsQuery.data.find((a: any) => a.id === "disparo")
-            ?.pause_definitive,
-        agenda_link:
-          agentsQuery.data.find((a: any) => a.id === "disparo")?.agenda_link ||
-          "",
-        human_number:
-          agentsQuery.data.find((a: any) => a.id === "disparo")?.human_number ||
-          "",
-        human_group_id:
-          agentsQuery.data.find((a: any) => a.id === "disparo")
-            ?.human_group_id || "",
+        base_prompt: find("disparo")?.base_prompt ?? "",
+        default_message: find("disparo")?.default_message || "Oi, tudo bem? 😊",
+        pause_minutes: find("disparo")?.pause_minutes ?? 0,
+        pause_definitive: !!find("disparo")?.pause_definitive,
+        agenda_link: find("disparo")?.agenda_link || "",
+        human_number: find("disparo")?.human_number || "",
+        human_group_id: find("disparo")?.human_group_id || "",
       },
       atendimento: {
         id: "atendimento",
         name: "Agente de Atendimento",
         type: "attendance",
-        base_prompt:
-          agentsQuery.data.find((a: any) => a.id === "atendimento")
-            ?.base_prompt || "",
-        default_message:
-          agentsQuery.data.find((a: any) => a.id === "atendimento")
-            ?.default_message || "",
-        pause_minutes:
-          agentsQuery.data.find((a: any) => a.id === "atendimento")
-            ?.pause_minutes ?? 12,
-        pause_definitive:
-          !!agentsQuery.data.find((a: any) => a.id === "atendimento")
-            ?.pause_definitive,
-        agenda_link:
-          agentsQuery.data.find((a: any) => a.id === "atendimento")
-            ?.agenda_link || "",
-        human_number:
-          agentsQuery.data.find((a: any) => a.id === "atendimento")
-            ?.human_number || "",
-        human_group_id:
-          agentsQuery.data.find((a: any) => a.id === "atendimento")
-            ?.human_group_id || "",
+        base_prompt: find("atendimento")?.base_prompt || "",
+        default_message: find("atendimento")?.default_message || "",
+        pause_minutes: find("atendimento")?.pause_minutes ?? 12,
+        pause_definitive: !!find("atendimento")?.pause_definitive,
+        agenda_link: find("atendimento")?.agenda_link || "",
+        human_number: find("atendimento")?.human_number || "",
+        human_group_id: find("atendimento")?.human_group_id || "",
       },
       cobranca: {
         id: "cobranca",
         name: "Agente de Cobrança",
         type: "scheduling",
-        base_prompt:
-          agentsQuery.data.find((a: any) => a.id === "cobranca")
-            ?.base_prompt || "",
-        default_message:
-          agentsQuery.data.find((a: any) => a.id === "cobranca")
-            ?.default_message || "",
-        pause_minutes:
-          agentsQuery.data.find((a: any) => a.id === "cobranca")
-            ?.pause_minutes ?? 0,
-        pause_definitive:
-          !!agentsQuery.data.find((a: any) => a.id === "cobranca")
-            ?.pause_definitive,
-        agenda_link:
-          agentsQuery.data.find((a: any) => a.id === "cobranca")
-            ?.agenda_link || "",
-        human_number:
-          agentsQuery.data.find((a: any) => a.id === "cobranca")
-            ?.human_number || "",
-        human_group_id:
-          agentsQuery.data.find((a: any) => a.id === "cobranca")
-            ?.human_group_id || "",
+        base_prompt: find("cobranca")?.base_prompt || "",
+        default_message: find("cobranca")?.default_message || "",
+        pause_minutes: find("cobranca")?.pause_minutes ?? 0,
+        pause_definitive: !!find("cobranca")?.pause_definitive,
+        agenda_link: find("cobranca")?.agenda_link || "",
+        human_number: find("cobranca")?.human_number || "",
+        human_group_id: find("cobranca")?.human_group_id || "",
       },
     };
 
@@ -2089,6 +2051,20 @@ export default function Agents() {
       });
     },
   });
+
+  if (agentsQuery.isError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-40 gap-2">
+        <p className="text-sm text-destructive">Erro ao carregar agentes.</p>
+        <button
+          className="text-xs text-muted-foreground underline"
+          onClick={() => agentsQuery.refetch()}
+        >
+          Tentar novamente
+        </button>
+      </div>
+    );
+  }
 
   if (!forms) {
     return (

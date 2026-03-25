@@ -159,19 +159,46 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
-  getCampaigns: () => request<any[]>("/campaigns"),
-  getCampaign: (id: number) =>
-    request<any>(`/campaigns/${id}`),
-  createCampaign: (payload: any) =>
-    request<any>("/campaigns", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-  updateCampaign: (id: number, payload: any) =>
-    request<any>(`/campaigns/${id}`, {
-      method: "PUT",
-      body: JSON.stringify(payload),
-    }),
+  getCampaigns: () => request<Array<{
+    id: number; name: string; delay_min: number; delay_max: number;
+    time_from: string; time_to: string; days_blocked: string;
+    status: string; total_leads: number; sent: number; errors: number;
+    no_whatsapp: number; funnel_id: number | null; folder_id: number | null;
+    api_source: string | null; template_id: number | null;
+    template_variables: string | null; campaign_type: string | null;
+    payment_link: string | null;
+  }>>("/campaigns"),
+  getCampaign: (id: number) => request<{
+    id: number; name: string; delay_min: number; delay_max: number;
+    time_from: string; time_to: string; days_blocked: string;
+    status: string; total_leads: number; sent: number; errors: number;
+    no_whatsapp: number; funnel_id: number | null; folder_id: number | null;
+    api_source: string | null; template_id: number | null;
+    template_variables: string | null; campaign_type: string | null;
+    payment_link: string | null;
+  }>(`/campaigns/${id}`),
+  createCampaign: (payload: {
+    name: string; delay_min?: number; delay_max?: number;
+    time_from?: string; time_to?: string; days_blocked?: string;
+    funnel_id?: number | null; folder_id?: number | null;
+    api_source?: string | null; template_id?: number | null;
+    template_variables?: string | null; campaign_type?: string | null;
+    payment_link?: string | null;
+  }) => request<{ id: number; name: string; status: string }>("/campaigns", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }),
+  updateCampaign: (id: number, payload: {
+    name?: string; delay_min?: number; delay_max?: number;
+    time_from?: string; time_to?: string; days_blocked?: string;
+    status?: string; funnel_id?: number | null; folder_id?: number | null;
+    api_source?: string | null; template_id?: number | null;
+    template_variables?: string | null; campaign_type?: string | null;
+    payment_link?: string | null;
+  }) => request<{ ok: true }>(`/campaigns/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  }),
   deleteCampaign: (id: number) =>
     request<{ ok: true }>(`/campaigns/${id}`, { method: "DELETE" }),
   runCampaigns: (options?: { ignoreWindow?: boolean }) =>
@@ -392,8 +419,16 @@ export const api = {
       method: "POST",
     }),
 
-  getAgents: () => request<any[]>("/agents"),
-  saveAgents: (agents: any[]) =>
+  getAgents: () => request<Array<{
+    id: string; name: string; type: string; base_prompt: string;
+    default_message: string; pause_minutes: number; pause_definitive: number;
+    agenda_link: string; human_number: string; human_group_id: string;
+  }>>("/agents"),
+  saveAgents: (agents: Array<{
+    id: string; name: string; type: string; base_prompt: string;
+    default_message: string; pause_minutes: number; pause_definitive: boolean;
+    agenda_link: string; human_number: string; human_group_id: string;
+  }>) =>
     request<{ ok: true; count: number }>("/agents", {
       method: "PUT",
       body: JSON.stringify(agents),
