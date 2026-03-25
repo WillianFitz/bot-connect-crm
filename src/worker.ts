@@ -2969,8 +2969,8 @@ async function handleWhatsappTemplates(request: Request, env: Env, method: strin
     const raw = insertRes as { meta?: { last_row_id?: number }; lastRowId?: number };
     const lastId = raw.meta?.last_row_id ?? raw.lastRowId ?? 0;
     const created = await env.DB.prepare(
-      "SELECT id, meta_template_id, name, language, category, body_text, status, rejection_reason, created_at FROM whatsapp_templates WHERE id = ?",
-    ).bind(lastId).first();
+      "SELECT id, meta_template_id, name, language, category, body_text, status, rejection_reason, created_at FROM whatsapp_templates WHERE id = ? AND tenant_id = ?",
+    ).bind(lastId, tenantId).first();
     return json(created, { status: 201 });
   }
 
@@ -2991,8 +2991,8 @@ async function handleWhatsappTemplates(request: Request, env: Env, method: strin
       ).bind(syncRes.status, syncRes.rejection_reason ?? null, templateId, tenantId).run();
     }
     const updated = await env.DB.prepare(
-      "SELECT id, meta_template_id, name, language, category, body_text, status, rejection_reason, updated_at FROM whatsapp_templates WHERE id = ?",
-    ).bind(templateId).first();
+      "SELECT id, meta_template_id, name, language, category, body_text, status, rejection_reason, updated_at FROM whatsapp_templates WHERE id = ? AND tenant_id = ?",
+    ).bind(templateId, tenantId).first();
     return json(updated);
   }
 
@@ -3425,7 +3425,7 @@ async function processAppointmentReminders(env: Env, tenantId: string) {
 
   for (const apt of (due.results || [])) {
     // Mark sent first to avoid double-sends
-    await env.DB.prepare("UPDATE appointments SET reminder_sent = 1 WHERE id = ?").bind(apt.id).run();
+    await env.DB.prepare("UPDATE appointments SET reminder_sent = 1 WHERE id = ? AND tenant_id = ?").bind(apt.id, tenantId).run();
 
     const timeStr = fmtScheduledAt(apt.scheduled_at);
 
@@ -3461,7 +3461,7 @@ async function processScheduledCampaigns(env: Env, tenantId: string) {
   `).bind(tenantId).all<{ id: number }>();
 
   for (const camp of (due.results || [])) {
-    await env.DB.prepare("UPDATE campaigns SET scheduled_dispatched = 1 WHERE id = ?").bind(camp.id).run();
+    await env.DB.prepare("UPDATE campaigns SET scheduled_dispatched = 1 WHERE id = ? AND tenant_id = ?").bind(camp.id, tenantId).run();
     try {
       await handleCampaignRun(env, tenantId, false);
     } catch (e) {
@@ -5241,7 +5241,7 @@ async function handleEvolutionWebhook(request: Request, env: Env, ctx: Execution
             ? webhookUrl
             : `https://bot-connect-crm-api.willian-fitzbr.workers.dev/api/webhook/evolution`;
 
-          // Atualiza webhook da instância para incluir PRESENCE_UPDATE
+          // Atualiza webhook da instância para incluir PRESENCE_UPDATE (mantém o secret header se configurado)
           await fetch(`${baseUrl}/webhook/set/${tenantId}`, {
             method: "POST",
             headers: { "Content-Type": "application/json", apikey: env.EVOLUTION_API_KEY },
@@ -5250,6 +5250,7 @@ async function handleEvolutionWebhook(request: Request, env: Env, ctx: Execution
               url: fullWebhookUrl,
               webhookByEvents: false,
               webhookBase64: false,
+              ...(env.EVOLUTION_WEBHOOK_SECRET ? { headers: { Authorization: `Bearer ${env.EVOLUTION_WEBHOOK_SECRET}` } } : {}),
               events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "PRESENCE_UPDATE", "CONTACTS_UPSERT"],
             }),
           });
