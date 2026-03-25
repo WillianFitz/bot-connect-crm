@@ -5757,6 +5757,7 @@ export default {
         const tenantId = await getTenantId(request, env);
         const phone = new URL(request.url).searchParams.get("phone") || "";
         if (!phone) { response = json({ error: "phone obrigatório" }, { status: 400 }); }
+        else if (!/^\+?[\d@\-.]{5,30}$/.test(phone)) { response = json({ error: "phone inválido" }, { status: 400 }); }
         else if (method === "PUT") {
           await env.DB.prepare(
             `INSERT INTO agent_pauses (tenant_id, phone, paused_until, pause_definitive)

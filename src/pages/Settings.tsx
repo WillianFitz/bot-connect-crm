@@ -169,7 +169,7 @@ export default function SettingsPage() {
             <Button
               size="sm"
               className="gap-2"
-              disabled={saveAccountMutation.isPending || accountQuery.isLoading}
+              disabled={saveAccountMutation.isPending || accountQuery.isLoading || tenantName.trim().length < 2}
               onClick={() => saveAccountMutation.mutate()}
             >
               {saveAccountMutation.isPending ? (

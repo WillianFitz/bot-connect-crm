@@ -29,6 +29,7 @@ type AdminUser = {
   created_at: string;
   plan: string;
   blocked: number;
+  subscription_status?: string;
 };
 
 export default function Admin() {
