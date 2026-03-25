@@ -11,6 +11,7 @@ export interface Env {
   ADMIN_API_KEY: string;
   EVOLUTION_API_URL: string;
   EVOLUTION_API_KEY: string;
+  EVOLUTION_WEBHOOK_SECRET?: string;
   JWT_SECRET?: string;
   ALLOWED_ORIGINS?: string;
 }
@@ -1332,8 +1333,12 @@ async function handleAgents(request: Request, env: Env, method: string, url: URL
           return json({ error: "media_id inválido: use apenas a-z 0-9 _ -" }, { status: 400 });
         }
 
-        // Build R2 key: tenant/mediaId.ext
+        // Valida extensão de arquivo permitida
         const ext = (file.name.split(".").pop() ?? "").toLowerCase();
+        const ALLOWED_MEDIA_EXTS = ["jpg", "jpeg", "png", "gif", "webp", "mp4", "webm", "mov", "m4a", "mp3", "ogg", "pdf"];
+        if (ext && !ALLOWED_MEDIA_EXTS.includes(ext)) {
+          return json({ error: `Tipo de arquivo não permitido: .${ext}` }, { status: 400 });
+        }
         const r2Key = `${tenantId}/${mediaId}${ext ? "." + ext : ""}`;
 
         // Upload to R2
@@ -1708,6 +1713,20 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
     template_variables: string | null;
   }>;
 
+  // Busca plano do tenant para aplicar limite diário de disparos
+  const tenantPlanRow = await env.DB.prepare(
+    "SELECT COALESCE(plan, 'starter') as plan FROM tenants WHERE id = ? LIMIT 1",
+  ).bind(tenantId).first<{ plan: string }>();
+  const tenantPlan = tenantPlanRow?.plan ?? "starter";
+  const DAILY_SEND_LIMITS: Record<string, number> = { starter: 50, plus: 200, pro: 500 };
+  const dailyLimit = DAILY_SEND_LIMITS[tenantPlan] ?? 50;
+
+  // Conta quantos foram enviados hoje
+  const todaySentRow = await env.DB.prepare(
+    "SELECT COUNT(*) as c FROM campaign_sends WHERE tenant_id = ? AND status = 'sent' AND date(sent_at) = date('now')",
+  ).bind(tenantId).first<{ c: number }>();
+  let todaySentCount = Number(todaySentRow?.c ?? 0);
+
   let processed = 0;
   const runResult: { campaignId: number; name: string; sent: number; errors: number; errorDetails: string[] }[] = [];
   const globalErrors: string[] = [];
@@ -1781,9 +1800,15 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
       .bind(Math.max(0, Number(totalLeadsNow?.c ?? 0)), camp.id, tenantId)
       .run();
 
+    // Verifica limite diário do plano (ignoreWindow não bypassa limite de plano)
+    if (todaySentCount >= dailyLimit) {
+      globalErrors.push(`Limite diário de ${dailyLimit} disparos atingido (plano ${tenantPlan}).`);
+      break; // para todas as campanhas deste tenant
+    }
+
     // Manual "processar agora" (ignoreWindow=true): processa tudo de uma vez
     // Cron automático: máx 5 por tick para respeitar o delay entre envios
-    const limitPerRun = ignoreWindow ? 999 : 5;
+    const limitPerRun = ignoreWindow ? Math.min(999, dailyLimit - todaySentCount) : 5;
 
     const pending = fid != null
       ? await env.DB.prepare(
@@ -1840,6 +1865,7 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
             "UPDATE campaigns SET sent = sent + 1 WHERE id = ? AND tenant_id = ?",
           ).bind(camp.id, tenantId).run();
           sent++;
+          todaySentCount++;
         } catch (err: any) {
           const errMsg = err?.message || "Erro ao criar execução do funil";
           campaignErrors.push(errMsg);
@@ -1925,6 +1951,7 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
           ).bind(camp.id, lead.id).run();
           await env.DB.prepare("UPDATE campaigns SET sent = sent + 1 WHERE id = ? AND tenant_id = ?").bind(camp.id, tenantId).run();
           sent++;
+          todaySentCount++;
         } else {
           const errMsg = officialResult.error || "Erro ao enviar via API Oficial";
           campaignErrors.push(errMsg);
@@ -2002,6 +2029,7 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
           .bind(camp.id, tenantId)
           .run();
         sent++;
+        todaySentCount++;
         const isLastLead = rows.indexOf(lead) === rows.length - 1;
         if (!isLastLead && (delayMin > 0 || delayMax > 0)) {
           const waitSec = Math.min(delayMin + Math.random() * (delayMax - delayMin), 5);
@@ -3629,6 +3657,10 @@ async function handleProspectFunnels(request: Request, env: Env, method: string,
     if (!file) return json({ error: "Campo 'file' obrigatório" }, { status: 400 });
 
     const ext = (file.name.split(".").pop() ?? "").toLowerCase();
+    const ALLOWED_FUNNEL_EXTS = ["jpg", "jpeg", "png", "gif", "webp", "mp4", "webm", "mov", "m4a", "mp3", "ogg", "pdf"];
+    if (ext && !ALLOWED_FUNNEL_EXTS.includes(ext)) {
+      return json({ error: `Tipo de arquivo não permitido: .${ext}` }, { status: 400 });
+    }
     const slug = `funnel_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const r2Key = `${tenantId}/funnels/${slug}${ext ? "." + ext : ""}`;
 
@@ -3660,17 +3692,32 @@ async function handleProspectFunnels(request: Request, env: Env, method: string,
     }
     // List all funnels
     const funnelsRes = await env.DB.prepare(
-      "SELECT id, name, status, version, created_at, updated_at FROM prospect_funnels WHERE tenant_id = ? ORDER BY created_at DESC",
-    ).bind(tenantId).all<{ id: number; name: string; status: string; version: number; created_at: string; updated_at: string }>();
-    const funnels = funnelsRes.results || [];
-    // Attach steps for each
-    const result = await Promise.all(funnels.map(async (f) => {
-      const stepsRes = await env.DB.prepare(
-        "SELECT id, position, type, content, wait_seconds, caption FROM funnel_steps WHERE funnel_id = ? ORDER BY position ASC",
-      ).bind(f.id).all();
-      return { ...f, steps: stepsRes.results || [] };
-    }));
-    return json(result);
+      `SELECT f.id, f.name, f.status, f.version, f.created_at, f.updated_at,
+              s.id as step_id, s.position, s.type, s.content, s.wait_seconds, s.caption
+       FROM prospect_funnels f
+       LEFT JOIN funnel_steps s ON s.funnel_id = f.id
+       WHERE f.tenant_id = ?
+       ORDER BY f.created_at DESC, s.position ASC`,
+    ).bind(tenantId).all<Record<string, unknown>>();
+    // Agrupa steps por funil em uma única query (evita N+1)
+    const funnelMap = new Map<number, { id: number; name: string; status: string; version: number; created_at: string; updated_at: string; steps: unknown[] }>();
+    for (const row of (funnelsRes.results || [])) {
+      const fid = Number(row.id);
+      if (!funnelMap.has(fid)) {
+        funnelMap.set(fid, {
+          id: fid, name: String(row.name), status: String(row.status),
+          version: Number(row.version), created_at: String(row.created_at),
+          updated_at: String(row.updated_at), steps: [],
+        });
+      }
+      if (row.step_id != null) {
+        funnelMap.get(fid)!.steps.push({
+          id: row.step_id, position: row.position, type: row.type,
+          content: row.content, wait_seconds: row.wait_seconds, caption: row.caption,
+        });
+      }
+    }
+    return json(Array.from(funnelMap.values()));
   }
 
   if (method === "POST" && !funnelId) {
@@ -3761,6 +3808,12 @@ async function processFunnelExecutions(env: Env, tenantId: string): Promise<void
 
   for (const exec of executions) {
     try {
+      // Claim atômico: só processa se ainda estiver em 'running' (evita race condition entre workers)
+      const claimRes = await env.DB.prepare(
+        "UPDATE funnel_executions SET status = 'processing' WHERE id = ? AND status = 'running'",
+      ).bind(exec.id).run();
+      if (!claimRes.meta?.changes) continue; // Outro worker já pegou este
+
       const step = await env.DB.prepare(
         "SELECT id, position, type, content, wait_seconds, caption FROM funnel_steps WHERE funnel_id = ? AND position = ?",
       ).bind(exec.funnel_id, exec.current_step).first<{ id: number; position: number; type: string; content: string | null; wait_seconds: number | null; caption: string | null }>();
@@ -3797,7 +3850,7 @@ async function processFunnelExecutions(env: Env, tenantId: string): Promise<void
       if (step.type === "wait") {
         const waitSecs = step.wait_seconds ?? 60;
         await env.DB.prepare(
-          `UPDATE funnel_executions SET current_step = ?, next_execute_at = datetime('now', '+' || ? || ' seconds') WHERE id = ?`,
+          `UPDATE funnel_executions SET status = 'running', current_step = ?, next_execute_at = datetime('now', '+' || ? || ' seconds') WHERE id = ?`,
         ).bind(nextStep, String(waitSecs), exec.id).run();
         continue;
       }
@@ -3852,11 +3905,15 @@ async function processFunnelExecutions(env: Env, tenantId: string): Promise<void
         ).bind(nextStep, exec.id).run();
       } else {
         await env.DB.prepare(
-          "UPDATE funnel_executions SET current_step = ?, next_execute_at = datetime('now') WHERE id = ?",
+          "UPDATE funnel_executions SET status = 'running', current_step = ?, next_execute_at = datetime('now') WHERE id = ?",
         ).bind(nextStep, exec.id).run();
       }
     } catch (err) {
       console.error("[funnel_exec] error processing execution", exec.id, err);
+      // Em caso de erro, volta para 'running' para retentar no próximo ciclo
+      await env.DB.prepare(
+        "UPDATE funnel_executions SET status = 'running' WHERE id = ? AND status = 'processing'",
+      ).bind(exec.id).run().catch(() => {});
     }
   }
 }
@@ -5084,6 +5141,14 @@ async function handleInbox(request: Request, env: Env, method: string, url: URL)
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function handleEvolutionWebhook(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  // Verifica token secreto do webhook (se configurado)
+  if (env.EVOLUTION_WEBHOOK_SECRET) {
+    const authHeader = request.headers.get("Authorization");
+    if (authHeader !== `Bearer ${env.EVOLUTION_WEBHOOK_SECRET}`) {
+      return json({ error: "Unauthorized" }, { status: 401 });
+    }
+  }
+
   let data: any;
   try {
     data = await request.json();
@@ -5094,6 +5159,12 @@ async function handleEvolutionWebhook(request: Request, env: Env, ctx: Execution
   // Instance name = tenantId in this system
   const tenantId: string = data?.instance || "";
   if (!tenantId) return json({ ok: true });
+
+  // Valida que o tenant realmente existe (impede spoofing de tenants válidos)
+  const tenantExists = await env.DB.prepare(
+    "SELECT 1 FROM tenants WHERE id = ? LIMIT 1",
+  ).bind(tenantId).first();
+  if (!tenantExists) return json({ ok: true });
 
   const event: string = normalizeEvolutionEvent(data?.event || "");
 
@@ -5419,7 +5490,15 @@ async function handleEvolutionWebhook(request: Request, env: Env, ctx: Execution
   ).bind(tenantId, phone).all();
 
   const bufferIds = (buffered.results ?? []).map((r: any) => Number(r.id));
-  const combinedText = (buffered.results ?? []).map((r: any) => String(r.message)).join("\n").trim();
+  // Limita tamanho do texto combinado para evitar payloads imensos na OpenAI
+  const MAX_COMBINED_CHARS = 8_000;
+  let combined = "";
+  for (const r of (buffered.results ?? [])) {
+    const msg = String((r as any).message);
+    if (combined.length + msg.length + 1 > MAX_COMBINED_CHARS) break;
+    combined += (combined ? "\n" : "") + msg;
+  }
+  const combinedText = combined.trim();
 
   if (!combinedText) {
     console.log(`[debounce] buffer vazio após espera. phone:${phone}`);
