@@ -913,11 +913,14 @@ function SubscriptionTab() {
         success_url: `${window.location.origin}/app/settings?tab=subscription&stripe=success`,
         cancel_url: `${window.location.origin}/app/settings?tab=subscription`,
       });
-      if ((result as any).upgraded) {
+      const res = result as { upgraded?: boolean; url?: string };
+      if (res.upgraded) {
         toast({ title: "Plano atualizado!", description: `Seu plano foi alterado para ${planId.charAt(0).toUpperCase() + planId.slice(1)} com sucesso.` });
         planQuery.refetch();
+      } else if (res.url && res.url.startsWith("https://checkout.stripe.com")) {
+        window.location.href = res.url;
       } else {
-        window.location.href = (result as any).url;
+        throw new Error("Resposta inválida do servidor");
       }
     } catch (e: any) {
       toast({ title: "Erro ao iniciar checkout", description: e.message, variant: "destructive" });

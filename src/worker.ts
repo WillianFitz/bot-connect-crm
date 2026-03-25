@@ -2138,6 +2138,7 @@ async function handleStripeCreateCheckout(request: Request, env: Env): Promise<R
     const tenantId = await getTenantId(request, env);
     const body = await readBody<{ plan: string; success_url: string; cancel_url: string }>(request);
 
+    if (!VALID_PLANS.has(body.plan)) return json({ error: "Plano inválido" }, { status: 400 });
     const priceId = getPriceId(env, body.plan);
     if (!priceId) return json({ error: "Price ID não configurado para o plano: " + body.plan }, { status: 400 });
 
@@ -2163,7 +2164,8 @@ async function handleStripeCreateCheckout(request: Request, env: Env): Promise<R
       const itemId = sub.items?.data?.[0]?.id;
       if (!itemId) throw new Error("Item da assinatura não encontrado");
 
-      await stripeRequest(env, `/subscriptions/${tenant!.stripe_subscription_id}`, {
+      // Stripe confirma antes de atualizar o banco
+      const updated = await stripeRequest(env, `/subscriptions/${tenant!.stripe_subscription_id}`, {
         [`items[0][id]`]: itemId,
         [`items[0][price]`]: priceId,
         "metadata[tenant_id]": tenantId,
@@ -2171,10 +2173,12 @@ async function handleStripeCreateCheckout(request: Request, env: Env): Promise<R
         proration_behavior: "always_invoice",
       });
 
-      // Atualiza plano no banco imediatamente
-      await env.DB.prepare(
-        "UPDATE tenants SET plan = ? WHERE id = ?",
-      ).bind(body.plan, tenantId).run();
+      // Só atualiza DB após Stripe confirmar (updated.id = subscription ID)
+      if (updated?.id) {
+        await env.DB.prepare(
+          "UPDATE tenants SET plan = ? WHERE id = ?",
+        ).bind(body.plan, tenantId).run();
+      }
 
       return json({ upgraded: true });
     }
@@ -2226,18 +2230,21 @@ async function handleStripePortal(request: Request, env: Env): Promise<Response>
   return json({ url: session.url });
 }
 
+const VALID_PLANS = new Set(["starter", "plus", "pro"]);
+
 // POST /api/webhook/stripe  — recebe eventos do Stripe
 async function handleStripeWebhook(request: Request, env: Env): Promise<Response> {
-  if (!env.STRIPE_SECRET_KEY) return json({ ok: false });
+  if (!env.STRIPE_SECRET_KEY) return json({ error: "Stripe não configurado" }, { status: 503 });
+
+  // Webhook secret é obrigatório em produção
+  if (!env.STRIPE_WEBHOOK_SECRET) {
+    return json({ error: "Webhook secret não configurado" }, { status: 503 });
+  }
 
   const payload = await request.text();
-
-  // Verify webhook signature if secret is set
-  if (env.STRIPE_WEBHOOK_SECRET) {
-    const sig = request.headers.get("stripe-signature") || "";
-    const valid = await verifyStripeSignature(payload, sig, env.STRIPE_WEBHOOK_SECRET);
-    if (!valid) return json({ error: "Invalid signature" }, { status: 400 });
-  }
+  const sig = request.headers.get("stripe-signature") || "";
+  const valid = await verifyStripeSignature(payload, sig, env.STRIPE_WEBHOOK_SECRET);
+  if (!valid) return json({ error: "Invalid signature" }, { status: 400 });
 
   let event: any;
   try {
@@ -2254,7 +2261,7 @@ async function handleStripeWebhook(request: Request, env: Env): Promise<Response
       const plan = obj.metadata?.plan;
       const subscriptionId = obj.subscription;
       const customerId = obj.customer;
-      if (tenantId && plan && subscriptionId) {
+      if (tenantId && plan && VALID_PLANS.has(plan) && subscriptionId) {
         await env.DB.prepare(
           `UPDATE tenants SET plan = ?, stripe_subscription_id = ?, stripe_customer_id = COALESCE(stripe_customer_id, ?),
            subscription_status = 'active', blocked = 0 WHERE id = ?`,
@@ -2325,13 +2332,19 @@ async function handleStripeWebhook(request: Request, env: Env): Promise<Response
 async function verifyStripeSignature(payload: string, sigHeader: string, secret: string): Promise<boolean> {
   try {
     const parts = sigHeader.split(",").reduce<Record<string, string>>((acc, part) => {
-      const [k, v] = part.split("=");
-      acc[k] = v;
+      const idx = part.indexOf("=");
+      if (idx > 0) acc[part.slice(0, idx).trim()] = part.slice(idx + 1).trim();
       return acc;
     }, {});
+
     const timestamp = parts["t"];
     const signature = parts["v1"];
     if (!timestamp || !signature) return false;
+
+    // Rejeita webhooks com mais de 5 minutos (anti-replay)
+    const tsSeconds = parseInt(timestamp, 10);
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    if (Math.abs(nowSeconds - tsSeconds) > 300) return false;
 
     const signedPayload = `${timestamp}.${payload}`;
     const key = await crypto.subtle.importKey(
