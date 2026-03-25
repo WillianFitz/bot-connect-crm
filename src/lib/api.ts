@@ -496,6 +496,14 @@ export const api = {
     });
   },
 
+  adminUpdateEvolutionWebhooks: () => {
+    const adminToken = typeof localStorage !== "undefined" ? localStorage.getItem("admin_token") || "" : "";
+    return request<{ ok: true; total: number; succeeded: number; failed: number; results: Array<{ tenant: string; ok: boolean; error?: string }> }>("/admin/update-evolution-webhooks", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+  },
+
   clientLogin: (payload: { username: string; password: string }) =>
     request<{ ok: true; tenantId: string; username: string; token?: string }>("/auth/login", {
       method: "POST",

@@ -408,6 +408,54 @@ async function handleAdminToggleBlock(request: Request, env: Env): Promise<Respo
   return json({ ok: true });
 }
 
+// POST /api/admin/update-evolution-webhooks — atualiza todas as instâncias Evolution com o secret header
+async function handleAdminUpdateEvolutionWebhooks(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) {
+    return json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!env.EVOLUTION_API_URL || !env.EVOLUTION_API_KEY) {
+    return json({ error: "EVOLUTION_API_URL ou EVOLUTION_API_KEY não configurados" }, { status: 503 });
+  }
+  if (!env.EVOLUTION_WEBHOOK_SECRET) {
+    return json({ error: "EVOLUTION_WEBHOOK_SECRET não configurado" }, { status: 503 });
+  }
+
+  const baseUrl = getEvolutionBaseUrl(env);
+  const webhookUrl = "https://bot-connect-crm-api.willian-fitzbr.workers.dev/api/webhook/evolution";
+
+  // Busca todas as instâncias no banco
+  const tenantsRes = await env.DB.prepare("SELECT id FROM tenants").all<{ id: string }>();
+  const tenants = tenantsRes.results || [];
+
+  const results: { tenant: string; ok: boolean; error?: string }[] = [];
+
+  for (const tenant of tenants) {
+    try {
+      const res = await fetch(`${baseUrl}/webhook/set/${tenant.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: env.EVOLUTION_API_KEY },
+        body: JSON.stringify({
+          enabled: true,
+          url: webhookUrl,
+          webhookByEvents: false,
+          webhookBase64: false,
+          headers: {
+            Authorization: `Bearer ${env.EVOLUTION_WEBHOOK_SECRET}`,
+          },
+          events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "PRESENCE_UPDATE", "CONTACTS_UPSERT"],
+        }),
+      });
+      results.push({ tenant: tenant.id, ok: res.ok, error: res.ok ? undefined : await res.text() });
+    } catch (err: any) {
+      results.push({ tenant: tenant.id, ok: false, error: err?.message });
+    }
+  }
+
+  const succeeded = results.filter((r) => r.ok).length;
+  const failed = results.filter((r) => !r.ok).length;
+  return json({ ok: true, total: tenants.length, succeeded, failed, results });
+}
+
 const LOGIN_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 5;
 
@@ -5839,6 +5887,8 @@ export default {
         response = await handleAdminSetPlan(request, env);
       } else if (pathname === "/api/admin/toggle-block" && method === "POST") {
         response = await handleAdminToggleBlock(request, env);
+      } else if (pathname === "/api/admin/update-evolution-webhooks" && method === "POST") {
+        response = await handleAdminUpdateEvolutionWebhooks(request, env);
       } else if (pathname === "/api/auth/login" && method === "POST") {
         response = await handleClientLogin(request, env);
       } else if (pathname === "/api/tenant/plan" && method === "GET") {

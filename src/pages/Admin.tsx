@@ -4,7 +4,7 @@ import { api } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Trash2, Ban, CheckCircle2 } from "lucide-react";
+import { Trash2, Ban, CheckCircle2, RefreshCw, Webhook } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   Select,
@@ -85,6 +85,20 @@ export default function Admin() {
     },
   });
 
+  const updateWebhooksMutation = useMutation({
+    mutationFn: api.adminUpdateEvolutionWebhooks,
+    onSuccess: (data) => {
+      toast({
+        title: `Webhooks atualizados: ${data.succeeded}/${data.total} instâncias`,
+        description: data.failed > 0 ? `${data.failed} falharam — verifique os logs.` : "Todas as instâncias configuradas com sucesso.",
+        variant: data.failed > 0 ? "destructive" : "default",
+      });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Erro ao atualizar webhooks", description: e.message, variant: "destructive" });
+    },
+  });
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (password.length < 8) {
@@ -105,6 +119,19 @@ export default function Admin() {
             Gerencie todas as contas, planos e acessos do LeadFlowAI.
           </p>
         </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-2"
+          disabled={updateWebhooksMutation.isPending}
+          onClick={() => updateWebhooksMutation.mutate()}
+          title="Atualiza o header de autenticação em todas as instâncias Evolution"
+        >
+          {updateWebhooksMutation.isPending
+            ? <RefreshCw className="h-4 w-4 animate-spin" />
+            : <Webhook className="h-4 w-4" />}
+          Atualizar Webhooks Evolution
+        </Button>
       </div>
 
       {/* Plans info */}
