@@ -89,6 +89,17 @@ export default function Connections() {
     }
   }
 
+  if (connectionQuery.isError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-40 gap-2">
+        <p className="text-sm text-destructive">Erro ao carregar conexões.</p>
+        <button className="text-xs text-muted-foreground underline" onClick={() => connectionQuery.refetch()}>
+          Tentar novamente
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 animate-slide-in w-full max-w-4xl xl:max-w-5xl 2xl:max-w-6xl">
       <div>

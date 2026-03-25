@@ -720,6 +720,17 @@ export default function Funnels() {
   };
 
   // ── Render ───────────────────────────────────────────────────────────────────
+  if (columnsQuery.isError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-40 gap-2">
+        <p className="text-sm text-destructive">Erro ao carregar CRM.</p>
+        <button className="text-xs text-muted-foreground underline" onClick={() => columnsQuery.refetch()}>
+          Tentar novamente
+        </button>
+      </div>
+    );
+  }
+
   return (
     <PlanLock minPlan="pro" locked={!hasPro}>
     <div className="space-y-6 animate-slide-in">

@@ -1630,11 +1630,15 @@ async function sendWhatsAppMessage(
     };
   }
   try {
+    const abortCtrl = new AbortController();
+    const abortTimer = setTimeout(() => abortCtrl.abort(), 15_000);
     const res = await fetch(`${baseUrl}/message/sendText/${tenantId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: env.EVOLUTION_API_KEY },
       body: JSON.stringify(payload),
+      signal: abortCtrl.signal,
     });
+    clearTimeout(abortTimer);
     if (!res.ok) {
       let errMsg = res.statusText;
       let existsFalse = false;
@@ -1864,7 +1868,7 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
 
     // Manual "processar agora" (ignoreWindow=true): processa tudo de uma vez
     // Cron automático: máx 5 por tick para respeitar o delay entre envios
-    const limitPerRun = ignoreWindow ? Math.min(999, dailyLimit - todaySentCount) : 5;
+    const limitPerRun = ignoreWindow ? Math.min(999, dailyLimit - todaySentCount) : 3;
 
     const pending = fid != null
       ? await env.DB.prepare(
@@ -3394,12 +3398,23 @@ async function handleAppointments(request: Request, env: Env, method: string, ur
     if (!body.title || !body.scheduled_at) {
       return json({ error: "Título e data/hora são obrigatórios" }, { status: 400 });
     }
+    if (new Date(body.scheduled_at) <= new Date()) {
+      return json({ error: "A data/hora do agendamento deve ser no futuro" }, { status: 400 });
+    }
+    // Valida que lead_id pertence ao tenant
+    const leadId = body.lead_id ?? null;
+    if (leadId != null) {
+      const leadOk = await env.DB.prepare(
+        "SELECT 1 FROM leads WHERE id = ? AND tenant_id = ? LIMIT 1",
+      ).bind(leadId, tenantId).first();
+      if (!leadOk) return json({ error: "Lead não encontrado" }, { status: 404 });
+    }
     const res = await env.DB.prepare(
       `INSERT INTO appointments (tenant_id, lead_id, title, description, scheduled_at, type, status, reminder_minutes)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
     ).bind(
       tenantId,
-      body.lead_id ?? null,
+      leadId,
       body.title,
       body.description ?? null,
       body.scheduled_at,
@@ -3824,9 +3839,11 @@ async function handleProspectFunnels(request: Request, env: Env, method: string,
     ).bind(tenantId, body.name.trim(), status).run();
     const newId = res.lastRowId;
 
+    const VALID_STEP_TYPES = new Set(["text", "wait", "image", "video", "audio", "pdf"]);
     const steps = Array.isArray(body.steps) ? body.steps : [];
     for (let i = 0; i < steps.length; i++) {
       const s = steps[i];
+      if (!VALID_STEP_TYPES.has(s.type)) continue;
       await env.DB.prepare(
         "INSERT INTO funnel_steps (funnel_id, position, type, content, wait_seconds, caption) VALUES (?, ?, ?, ?, ?, ?)",
       ).bind(newId, s.position ?? i, s.type, s.content ?? null, s.wait_seconds ?? 60, s.caption ?? null).run();
@@ -3860,9 +3877,11 @@ async function handleProspectFunnels(request: Request, env: Env, method: string,
 
     // Replace all steps
     await env.DB.prepare("DELETE FROM funnel_steps WHERE funnel_id = ?").bind(funnelId).run();
+    const VALID_STEP_TYPES_PUT = new Set(["text", "wait", "image", "video", "audio", "pdf"]);
     const steps = Array.isArray(body.steps) ? body.steps : [];
     for (let i = 0; i < steps.length; i++) {
       const s = steps[i];
+      if (!VALID_STEP_TYPES_PUT.has(s.type)) continue;
       await env.DB.prepare(
         "INSERT INTO funnel_steps (funnel_id, position, type, content, wait_seconds, caption) VALUES (?, ?, ?, ?, ?, ?)",
       ).bind(funnelId, s.position ?? i, s.type, s.content ?? null, s.wait_seconds ?? 60, s.caption ?? null).run();

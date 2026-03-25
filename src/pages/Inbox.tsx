@@ -113,6 +113,17 @@ export default function InboxPage() {
   const current = list.find((c) => c.phone === sel) ?? null;
   const msgs = (msgsQ.data ?? []) as Msg[];
 
+  if (listQ.isError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-40 gap-2">
+        <p className="text-sm text-destructive">Erro ao carregar inbox.</p>
+        <button className="text-xs text-muted-foreground underline" onClick={() => listQ.refetch()}>
+          Tentar novamente
+        </button>
+      </div>
+    );
+  }
+
   return (
     // Ocupa o espaço disponível dentro do AppLayout sem fazer a página crescer
     <div className="flex flex-col gap-3 animate-slide-in" style={{ height: "calc(100vh - 7rem)" }}>
