@@ -179,6 +179,17 @@ export default function Leads() {
     setSelectedIds(new Set());
   }
 
+  if (leadsQuery.isError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-40 gap-2">
+        <p className="text-sm text-destructive">Erro ao carregar leads.</p>
+        <button className="text-xs text-muted-foreground underline" onClick={() => leadsQuery.refetch()}>
+          Tentar novamente
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 animate-slide-in">
       {/* Header */}

@@ -952,6 +952,7 @@ async function handleLeads(request: Request, env: Env, method: string, url: URL)
       LEFT JOIN lead_folders lf ON lf.id = l.folder_id
       ${where}
       ORDER BY l.created_at DESC
+      LIMIT 5000
     `;
 
     const res = await env.DB.prepare(query).bind(...params).all();
@@ -1010,6 +1011,14 @@ async function handleLeads(request: Request, env: Env, method: string, url: URL)
     const normalizedPhone = body.phone ? normalizeBrazilNumber(body.phone) : "";
     if (!body.company || !normalizedPhone) {
       return json({ error: "Empresa e telefone são obrigatórios" }, { status: 400 });
+    }
+
+    // Valida que folder_id pertence ao tenant (evita mover lead para pasta de outro tenant)
+    if (body.folder_id != null) {
+      const folderOwned = await env.DB.prepare(
+        "SELECT 1 FROM lead_folders WHERE id = ? AND tenant_id = ? LIMIT 1",
+      ).bind(body.folder_id, tenantId).first();
+      if (!folderOwned) return json({ error: "Pasta não encontrada" }, { status: 404 });
     }
 
     await env.DB.prepare(
@@ -1704,7 +1713,7 @@ async function sendNotificationMessage(env: Env, tenantId: string, text: string)
 const BR_DAY_MAP: Record<string, string> = { dom: "Dom", seg: "Seg", ter: "Ter", qua: "Qua", qui: "Qui", sex: "Sex", sáb: "Sáb", sab: "Sáb" };
 
 function normalizeTimeToHHMM(s: string): string {
-  const match = (s || "").match(/^\s*(\d{1,2})\s*[:\h]\s*(\d{1,2})/);
+  const match = (s || "").slice(0, 20).match(/^\s*(\d{1,2})\s*[:.\s]\s*(\d{1,2})/);
   if (!match) return "00:00";
   const h = Math.min(23, Math.max(0, parseInt(match[1], 10)));
   const m = Math.min(59, Math.max(0, parseInt(match[2], 10)));
@@ -5788,8 +5797,8 @@ Regras gerais:
     "SELECT COUNT(*) as cnt FROM agent_conversations WHERE tenant_id = ? AND phone = ?",
   ).bind(tenantId, phone).first<{ cnt: number }>();
   if (msgCount && msgCount.cnt % 5 === 0) {
-    // Fire and forget heat analysis (don't await to not delay response)
-    analyzeAndSaveLeadHeat(env, tenantId, phone).catch(() => {});
+    // ctx.waitUntil garante que a análise termina mesmo após o response ser enviado
+    ctx.waitUntil(analyzeAndSaveLeadHeat(env, tenantId, phone).catch((e) => console.error("[heat]", e)));
   }
 
   // Parse response segments (text + media tokens)
