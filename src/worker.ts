@@ -323,7 +323,7 @@ async function handleAdminCreateTenantUser(request: Request, env: Env): Promise<
 
   const tenantId = body.tenantId && body.tenantId.trim().length > 0
     ? body.tenantId.trim()
-    : `conta_${crypto.randomUUID()}`;
+    : `conta_${Array.from(crypto.getRandomValues(new Uint8Array(12))).map(b => b.toString(16).padStart(2, "0")).join("")}`;
 
   await env.DB.prepare(
     "INSERT OR IGNORE INTO tenants (id, name) VALUES (?, ?)",
@@ -467,11 +467,10 @@ async function handleClientLogin(request: Request, env: Env): Promise<Response> 
 
   const ip = request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() || "unknown";
   const rateKey = `login:${body.username}:${ip}`;
-  const windowStart = Date.now() - LOGIN_RATE_LIMIT_WINDOW_MS;
   await env.DB.prepare(
-    "DELETE FROM login_attempts WHERE key = ? AND window_start < ?",
+    "DELETE FROM login_attempts WHERE key = ? AND window_start < datetime('now', '-15 minutes')",
   )
-    .bind(rateKey, new Date(windowStart).toISOString())
+    .bind(rateKey)
     .run();
   const rateRow = await env.DB.prepare(
     "SELECT attempts FROM login_attempts WHERE key = ? LIMIT 1",
@@ -961,7 +960,7 @@ async function handleLeads(request: Request, env: Env, method: string, url: URL)
 
   if (method === "POST") {
     const body = await readBody<{ company?: unknown; phone?: unknown; folder_id?: unknown }>(request);
-    const company = typeof body.company === "string" ? body.company : "";
+    const company = (typeof body.company === "string" ? body.company : "").trim();
     const rawPhone = typeof body.phone === "string" ? body.phone : "";
     const phone = normalizeBrazilNumber(rawPhone);
     const folderId =
@@ -2354,6 +2353,17 @@ async function handleStripeWebhook(request: Request, env: Env): Promise<Response
     event = JSON.parse(payload);
   } catch {
     return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  // Anti-replay: rejeita eventos Stripe já processados (dedup por event.id)
+  if (event.id) {
+    const already = await env.DB.prepare(
+      "SELECT 1 FROM webhook_dedup WHERE tenant_id = 'stripe' AND message_id = ? LIMIT 1",
+    ).bind(event.id).first();
+    if (already) return json({ ok: true, duplicate: true });
+    await env.DB.prepare(
+      "INSERT OR IGNORE INTO webhook_dedup (tenant_id, message_id) VALUES ('stripe', ?)",
+    ).bind(event.id).run();
   }
 
   const obj = event.data?.object;
@@ -4069,7 +4079,7 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
       }
 
       if (!extensionToken) {
-        extensionToken = crypto.randomUUID().replace(/-/g, "");
+        extensionToken = Array.from(crypto.getRandomValues(new Uint8Array(20))).map(b => b.toString(16).padStart(2, "0")).join("");
         const config = JSON.stringify({ username, extensionToken });
 
         await env.DB.prepare(
@@ -5998,6 +6008,7 @@ export default {
     headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-admin-key, x-tenant-id, x-extension-token");
     headers.set("X-Content-Type-Options", "nosniff");
     headers.set("X-Frame-Options", "DENY");
+    headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
 
     return new Response(response.body, {
       status: response.status,
