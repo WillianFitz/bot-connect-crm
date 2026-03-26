@@ -1370,7 +1370,7 @@ async function handleAgents(request: Request, env: Env, method: string, url: URL
     if (sub === "media") {
       if (method === "GET") {
         const res = await env.DB.prepare(
-          "SELECT id, media_id, file_name, media_type, url, created_at FROM agent_media WHERE tenant_id = ? ORDER BY created_at DESC",
+          "SELECT id, media_id, file_name, media_type, data_url AS url, created_at FROM agent_media WHERE tenant_id = ? ORDER BY created_at DESC",
         ).bind(tenantId).all();
         return json(res.results || []);
       }
@@ -1417,7 +1417,7 @@ async function handleAgents(request: Request, env: Env, method: string, url: URL
         // Save metadata to D1
         try {
           const result = await env.DB.prepare(
-            `INSERT INTO agent_media (tenant_id, media_id, file_name, media_type, url)
+            `INSERT INTO agent_media (tenant_id, media_id, file_name, media_type, data_url)
              VALUES (?, ?, ?, ?, ?)`,
           ).bind(tenantId, mediaId, fileName, file.type, publicUrl).run();
           return json({ ok: true, id: result.meta.last_row_id, url: publicUrl });
@@ -1439,7 +1439,7 @@ async function handleAgents(request: Request, env: Env, method: string, url: URL
 
         // Fetch URL to derive R2 key before deleting
         const row = await env.DB.prepare(
-          "SELECT url FROM agent_media WHERE id = ? AND tenant_id = ?",
+          "SELECT data_url AS url FROM agent_media WHERE id = ? AND tenant_id = ?",
         ).bind(Number(idParam), tenantId).first<{ url: string }>();
 
         if (row?.url) {
@@ -4980,7 +4980,7 @@ async function parseResponseSegments(
     if (mediaMatch) {
       const mediaId = mediaMatch[1];
       const row = await env.DB.prepare(
-        "SELECT media_type, url FROM agent_media WHERE tenant_id = ? AND media_id = ? LIMIT 1",
+        "SELECT media_type, data_url AS url FROM agent_media WHERE tenant_id = ? AND media_id = ? LIMIT 1",
       ).bind(tenantId, mediaId).first<{ media_type: string; url: string }>();
       if (row) {
         const mt = row.media_type || "";
