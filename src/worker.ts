@@ -1688,28 +1688,37 @@ async function sendWhatsAppMessage(
       const data = await res.json() as any;
       remoteJid = data?.key?.remoteJid || undefined;
     } catch { /* ignore */ }
-    // Subscreve à presença do contato para receber eventos composing (PRESENCE_UPDATE)
-    // Aguarda a resposta para capturar o LID resolvido e armazenar o mapeamento LID→phone
+    // Se a resposta da Evolution retornou um @lid, armazena o mapeamento imediatamente
+    if (remoteJid?.endsWith("@lid")) {
+      const lid = remoteJid.split("@")[0];
+      const cleanPhone = normalizeBrazilNumber(number);
+      if (lid && cleanPhone) {
+        await env.DB.prepare(
+          "INSERT OR REPLACE INTO contact_jid_map (tenant_id, lid, phone) VALUES (?, ?, ?)",
+        ).bind(tenantId, lid, cleanPhone).run().catch(() => {});
+        console.log(`[jid-map] LID mapeado via resposta de envio: ${lid} → ${cleanPhone}`);
+      }
+    }
+    // Subscreve à presença do contato usando sempre o número de telefone (não o LID)
+    // para receber eventos PRESENCE_UPDATE e capturar o LID via resposta quando disponível
     try {
-      const jid = remoteJid || `${number}@s.whatsapp.net`;
       const presRes = await fetch(`${baseUrl}/chat/subscribePresence/${tenantId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", apikey: env.EVOLUTION_API_KEY },
-        body: JSON.stringify({ number: jid.replace(/@.*$/, "") }),
+        body: JSON.stringify({ number }),
       });
       if (presRes.ok) {
         try {
           const presData = await presRes.json() as any;
-          // Tenta extrair o LID retornado para montar o mapeamento LID→phone
           const returnedJid: string = presData?.jid || presData?.id || presData?.remoteJid || "";
           if (returnedJid.endsWith("@lid")) {
             const lid = returnedJid.split("@")[0];
-            const phone = normalizePhoneFromJid(jid);
-            if (lid && phone) {
+            const cleanPhone = normalizeBrazilNumber(number);
+            if (lid && cleanPhone) {
               await env.DB.prepare(
                 "INSERT OR REPLACE INTO contact_jid_map (tenant_id, lid, phone) VALUES (?, ?, ?)",
-              ).bind(tenantId, lid, phone).run();
-              console.log(`[jid-map] LID mapeado: ${lid} → ${phone}`);
+              ).bind(tenantId, lid, cleanPhone).run();
+              console.log(`[jid-map] LID mapeado via subscribePresence: ${lid} → ${cleanPhone}`);
             }
           }
         } catch { /* ignora erros de parse */ }
@@ -4819,23 +4828,37 @@ async function isPhoneProspected(env: Env, tenantId: string, phone: string): Pro
  * O @lid é um identificador de privacidade novo — capturado e armazenado quando enviamos mensagens.
  */
 async function resolveLidToPhone(env: Env, tenantId: string, lid: string): Promise<string | null> {
-  // Consulta mapeamento local armazenado ao enviar campanhas/mensagens
+  // Normaliza: remove o sufixo @lid se vier completo
+  const rawLid = lid.endsWith("@lid") ? lid.split("@")[0] : lid;
+  // Checa contact_jid_map (composing/presence) primeiro
+  const cjm = await env.DB.prepare(
+    "SELECT phone FROM contact_jid_map WHERE tenant_id = ? AND lid = ? LIMIT 1",
+  ).bind(tenantId, rawLid).first<{ phone: string }>();
+  if (cjm?.phone) return cjm.phone;
+  // Fallback: lid_mappings (campanhas/envios)
   const row = await env.DB.prepare(
     "SELECT phone FROM lid_mappings WHERE tenant_id = ? AND lid = ? LIMIT 1",
-  ).bind(tenantId, lid).first<{ phone: string }>();
+  ).bind(tenantId, rawLid).first<{ phone: string }>();
   if (row?.phone) return row.phone;
   return null;
 }
 
 /**
- * Armazena o mapeamento phone → lid quando o Evolution revela o @lid de um contato.
+ * Armazena o mapeamento phone → lid nas duas tabelas para garantir consistência
+ * entre a detecção de composing (contact_jid_map) e a resolução de mensagens @lid (lid_mappings).
  */
 async function storeLidMapping(env: Env, tenantId: string, phone: string, lid: string): Promise<void> {
-  await env.DB.prepare(
-    `INSERT INTO lid_mappings (tenant_id, phone, lid)
-     VALUES (?, ?, ?)
-     ON CONFLICT(tenant_id, lid) DO UPDATE SET phone = excluded.phone, updated_at = datetime('now')`,
-  ).bind(tenantId, phone, lid).run();
+  const rawLid = lid.endsWith("@lid") ? lid.split("@")[0] : lid;
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO lid_mappings (tenant_id, phone, lid)
+       VALUES (?, ?, ?)
+       ON CONFLICT(tenant_id, lid) DO UPDATE SET phone = excluded.phone, updated_at = datetime('now')`,
+    ).bind(tenantId, phone, rawLid),
+    env.DB.prepare(
+      "INSERT OR REPLACE INTO contact_jid_map (tenant_id, lid, phone) VALUES (?, ?, ?)",
+    ).bind(tenantId, rawLid, phone),
+  ]);
 }
 
 async function getAgentPause(
