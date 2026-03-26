@@ -209,6 +209,9 @@ export const api = {
       errorSummary?: string[];
     }>(`/campaigns/run${options?.ignoreWindow ? "?ignoreWindow=1" : ""}`, { method: "POST" }),
 
+  resetCampaign: (id: number) =>
+    request<{ ok: boolean }>(`/campaigns/${id}/reset`, { method: "POST" }),
+
   getSettings: () =>
     request<{ notification_whatsapp_phone: string; notification_group_jid: string }>("/settings"),
   updateSettings: (payload: { notification_whatsapp_phone?: string; notification_group_jid?: string }) =>

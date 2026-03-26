@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Phone, CalendarClock, Pencil, Play, Pause, Trash2, Megaphone, CreditCard } from "lucide-react";
+import { Plus, Phone, CalendarClock, Pencil, Play, Pause, Trash2, Megaphone, CreditCard, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -196,6 +196,17 @@ export default function Campaigns() {
     },
     onError: (err: Error) => {
       toast({ title: "Erro ao excluir", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const resetCampaign = useMutation({
+    mutationFn: (id: number) => api.resetCampaign(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["campaigns"] });
+      toast({ title: "Campanha reiniciada. Clique em 'Processar agora' para disparar novamente." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Erro ao reiniciar", description: err.message, variant: "destructive" });
     },
   });
 
@@ -539,6 +550,16 @@ export default function Campaigns() {
                           title="Editar campanha"
                         >
                           <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-amber-500 hover:text-amber-600 hover:bg-amber-500/10"
+                          onClick={() => resetCampaign.mutate(c.id)}
+                          title="Reiniciar campanha (limpa histórico de envios para reprocessar)"
+                          disabled={resetCampaign.isPending}
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
                         </Button>
                         <Button
                           variant="ghost"

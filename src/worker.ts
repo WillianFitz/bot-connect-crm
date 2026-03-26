@@ -2566,6 +2566,24 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
   const isSingle = idParam && /^\d+$/.test(idParam);
   const campaignId = isSingle ? Number(idParam) : null;
 
+  // POST /api/campaigns/:id/reset — limpa campaign_sends e reseta contadores para reprocessar
+  if (method === "POST" && isSingle && campaignId && parts[3] === "reset") {
+    const existing = await env.DB.prepare(
+      "SELECT id FROM campaigns WHERE id = ? AND tenant_id = ?",
+    ).bind(campaignId, tenantId).first();
+    if (!existing) return json({ error: "Campanha não encontrada" }, { status: 404 });
+
+    await env.DB.prepare(
+      "DELETE FROM campaign_sends WHERE campaign_id = ?",
+    ).bind(campaignId).run();
+
+    await env.DB.prepare(
+      "UPDATE campaigns SET sent = 0, errors = 0, no_whatsapp = 0, status = 'active' WHERE id = ? AND tenant_id = ?",
+    ).bind(campaignId, tenantId).run();
+
+    return json({ ok: true });
+  }
+
   if (method === "POST" && parts[2] === "run") {
     const ignoreWindow = url.searchParams.get("ignoreWindow") === "1";
     if (ignoreWindow) {
