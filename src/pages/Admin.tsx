@@ -4,7 +4,7 @@ import { api } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Trash2, Ban, CheckCircle2, RefreshCw, Webhook } from "lucide-react";
+import { Trash2, Ban, CheckCircle2, RefreshCw, Webhook, MapPinOff } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   Select,
@@ -85,6 +85,16 @@ export default function Admin() {
     },
   });
 
+  const clearJidMapMutation = useMutation({
+    mutationFn: () => api.adminClearJidMap(),
+    onSuccess: () => {
+      toast({ title: "Mapeamentos LID limpos", description: "contact_jid_map e phone_typing resetados para todos os tenants." });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Erro ao limpar JID map", description: e.message, variant: "destructive" });
+    },
+  });
+
   const updateWebhooksMutation = useMutation({
     mutationFn: api.adminUpdateEvolutionWebhooks,
     onSuccess: (data) => {
@@ -119,19 +129,34 @@ export default function Admin() {
             Gerencie todas as contas, planos e acessos do LeadFlowAI.
           </p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          className="gap-2"
-          disabled={updateWebhooksMutation.isPending}
-          onClick={() => updateWebhooksMutation.mutate()}
-          title="Atualiza o header de autenticação em todas as instâncias Evolution"
-        >
-          {updateWebhooksMutation.isPending
-            ? <RefreshCw className="h-4 w-4 animate-spin" />
-            : <Webhook className="h-4 w-4" />}
-          Atualizar Webhooks Evolution
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            disabled={clearJidMapMutation.isPending}
+            onClick={() => clearJidMapMutation.mutate()}
+            title="Limpa mapeamentos LID→phone errados (contact_jid_map + phone_typing)"
+          >
+            {clearJidMapMutation.isPending
+              ? <RefreshCw className="h-4 w-4 animate-spin" />
+              : <MapPinOff className="h-4 w-4" />}
+            Limpar JID Map
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            disabled={updateWebhooksMutation.isPending}
+            onClick={() => updateWebhooksMutation.mutate()}
+            title="Atualiza o header de autenticação em todas as instâncias Evolution"
+          >
+            {updateWebhooksMutation.isPending
+              ? <RefreshCw className="h-4 w-4 animate-spin" />
+              : <Webhook className="h-4 w-4" />}
+            Atualizar Webhooks Evolution
+          </Button>
+        </div>
       </div>
 
       {/* Plans info */}

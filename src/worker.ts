@@ -456,6 +456,21 @@ async function handleAdminUpdateEvolutionWebhooks(request: Request, env: Env): P
   return json({ ok: true, total: tenants.length, succeeded, failed, results });
 }
 
+// POST /api/admin/clear-jid-map — limpa mapeamentos LID→phone errados
+async function handleAdminClearJidMap(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "Unauthorized" }, { status: 401 });
+  const body = await readBody<{ tenant_id?: string }>(request);
+  if (body.tenant_id) {
+    await env.DB.prepare("DELETE FROM contact_jid_map WHERE tenant_id = ?").bind(body.tenant_id).run();
+    await env.DB.prepare("DELETE FROM phone_typing WHERE tenant_id = ?").bind(body.tenant_id).run();
+    return json({ ok: true, tenant_id: body.tenant_id });
+  }
+  // Sem tenant_id: limpa tudo
+  await env.DB.prepare("DELETE FROM contact_jid_map").run();
+  await env.DB.prepare("DELETE FROM phone_typing").run();
+  return json({ ok: true, cleared: "all" });
+}
+
 const LOGIN_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 5;
 
@@ -5475,37 +5490,6 @@ async function handleEvolutionWebhook(request: Request, env: Env, ctx: Execution
   let phone = normalizePhoneFromJid(remoteJid);
   if (!phone) return json({ ok: true });
 
-  // Correlação temporal LID→phone: se houve composing de um LID desconhecido nos últimos
-  // 10 segundos, é quase certo que é esta mesma pessoa (composing chega 1-3s antes da msg)
-  if (!remoteJid.endsWith("@lid")) {
-    const recentLid = await env.DB.prepare(
-      `SELECT pt.phone AS lid FROM phone_typing pt
-       WHERE pt.tenant_id = ?
-         AND pt.phone != ?
-         AND pt.last_typing_at > datetime('now', '-10 seconds')
-         AND NOT EXISTS (
-           SELECT 1 FROM contact_jid_map cjm
-           WHERE cjm.tenant_id = pt.tenant_id AND cjm.phone = pt.phone
-         )
-       ORDER BY pt.last_typing_at DESC LIMIT 1`,
-    ).bind(tenantId, phone).first<{ lid: string }>();
-    if (recentLid?.lid) {
-      await env.DB.prepare(
-        "INSERT OR REPLACE INTO contact_jid_map (tenant_id, lid, phone) VALUES (?, ?, ?)",
-      ).bind(tenantId, recentLid.lid, phone).run();
-      // Migra entrada phone_typing do LID para o phone correto
-      await env.DB.prepare(
-        `INSERT INTO phone_typing (tenant_id, phone, last_typing_at)
-         SELECT tenant_id, ?, last_typing_at FROM phone_typing WHERE tenant_id = ? AND phone = ?
-         ON CONFLICT(tenant_id, phone) DO UPDATE SET last_typing_at = excluded.last_typing_at`,
-      ).bind(phone, tenantId, recentLid.lid).run();
-      await env.DB.prepare(
-        "DELETE FROM phone_typing WHERE tenant_id = ? AND phone = ?",
-      ).bind(tenantId, recentLid.lid).run();
-      console.log(`[jid-map] correlação temporal: lid:${recentLid.lid} → phone:${phone}`);
-    }
-  }
-
   // Deduplicação: ignora se já processamos este messageId
   if (incomingMsgId && await isDuplicateWebhook(env, tenantId, incomingMsgId)) {
     console.log(`[webhook] mensagem duplicada ignorada — id:${incomingMsgId}`);
@@ -5995,6 +5979,8 @@ export default {
         response = await handleAdminToggleBlock(request, env);
       } else if (pathname === "/api/admin/update-evolution-webhooks" && method === "POST") {
         response = await handleAdminUpdateEvolutionWebhooks(request, env);
+      } else if (pathname === "/api/admin/clear-jid-map" && method === "POST") {
+        response = await handleAdminClearJidMap(request, env);
       } else if (pathname === "/api/auth/login" && method === "POST") {
         response = await handleClientLogin(request, env);
       } else if (pathname === "/api/tenant/plan" && method === "GET") {

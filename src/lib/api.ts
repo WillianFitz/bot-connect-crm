@@ -507,6 +507,15 @@ export const api = {
     });
   },
 
+  adminClearJidMap: (tenantId?: string) => {
+    const adminToken = typeof localStorage !== "undefined" ? localStorage.getItem("admin_token") || "" : "";
+    return request<{ ok: true }>("/admin/clear-jid-map", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify(tenantId ? { tenant_id: tenantId } : {}),
+    });
+  },
+
   clientLogin: (payload: { username: string; password: string }) =>
     request<{ ok: true; tenantId: string; username: string; token?: string }>("/auth/login", {
       method: "POST",
