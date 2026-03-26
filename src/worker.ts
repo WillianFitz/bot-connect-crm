@@ -5490,6 +5490,39 @@ async function handleEvolutionWebhook(request: Request, env: Env, ctx: Execution
   let phone = normalizePhoneFromJid(remoteJid);
   if (!phone) return json({ ok: true });
 
+  // Correlação LID→phone com janela apertada de 3s:
+  // Composing chega via LID ~1-2s antes da mensagem. Se exatamente 1 LID não mapeado
+  // estiver ativo nos últimos 3s, é quase certeza que é esta mesma pessoa.
+  // Janela curta + "exatamente 1" evitam mapeamentos errados com múltiplos contatos.
+  if (!remoteJid.endsWith("@lid")) {
+    const recentLids = await env.DB.prepare(
+      `SELECT pt.phone AS lid FROM phone_typing pt
+       WHERE pt.tenant_id = ?
+         AND pt.phone != ?
+         AND pt.last_typing_at > datetime('now', '-3 seconds')
+         AND NOT EXISTS (
+           SELECT 1 FROM contact_jid_map cjm
+           WHERE cjm.tenant_id = pt.tenant_id AND cjm.phone = pt.phone
+         )`,
+    ).bind(tenantId, phone).all<{ lid: string }>();
+    const lids = recentLids.results ?? [];
+    if (lids.length === 1) {
+      const lid = lids[0].lid;
+      await env.DB.prepare(
+        "INSERT OR REPLACE INTO contact_jid_map (tenant_id, lid, phone) VALUES (?, ?, ?)",
+      ).bind(tenantId, lid, phone).run();
+      await env.DB.prepare(
+        `INSERT INTO phone_typing (tenant_id, phone, last_typing_at)
+         SELECT tenant_id, ?, last_typing_at FROM phone_typing WHERE tenant_id = ? AND phone = ?
+         ON CONFLICT(tenant_id, phone) DO UPDATE SET last_typing_at = excluded.last_typing_at`,
+      ).bind(phone, tenantId, lid).run();
+      await env.DB.prepare(
+        "DELETE FROM phone_typing WHERE tenant_id = ? AND phone = ?",
+      ).bind(tenantId, lid).run();
+      console.log(`[jid-map] correlação 3s: lid:${lid} → phone:${phone}`);
+    }
+  }
+
   // Deduplicação: ignora se já processamos este messageId
   if (incomingMsgId && await isDuplicateWebhook(env, tenantId, incomingMsgId)) {
     console.log(`[webhook] mensagem duplicada ignorada — id:${incomingMsgId}`);
