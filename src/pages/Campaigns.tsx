@@ -212,16 +212,8 @@ export default function Campaigns() {
 
   const runCampaigns = useMutation({
     mutationFn: (ignoreWindow?: boolean) => api.runCampaigns({ ignoreWindow }),
-    onSuccess: (data, ignoreWindow) => {
-      // Recarrega após 3s para mostrar progresso inicial
-      setTimeout(() => queryClient.invalidateQueries({ queryKey: ["campaigns"] }), 3000);
-      if (ignoreWindow) {
-        toast({
-          title: "Processamento iniciado",
-          description: "Os disparos estão sendo enviados em segundo plano. Os contadores atualizam automaticamente.",
-        });
-        return;
-      }
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["campaigns"] });
       const total = data?.campaigns?.reduce((s, c) => s + c.sent + c.errors, 0) ?? 0;
       const hasErrors = (data?.campaigns?.some((c) => c.errors > 0) ?? false) || (data?.errorSummary?.length ?? 0) > 0;
       const errorMsg = data?.errorSummary?.length
@@ -233,7 +225,9 @@ export default function Campaigns() {
           ? hasErrors && errorMsg
             ? `${data.processed} processado(s). Erro: ${errorMsg}`
             : `${data.processed} lead(s) processado(s).`
-          : "Nenhum lead pendente no horário das campanhas ativas.",
+          : errorMsg
+            ? `Erro: ${errorMsg}`
+            : "Nenhum lead pendente para disparar.",
         variant: hasErrors ? "destructive" : "default",
       });
     },

@@ -2586,11 +2586,7 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
 
   if (method === "POST" && parts[2] === "run") {
     const ignoreWindow = url.searchParams.get("ignoreWindow") === "1";
-    if (ignoreWindow) {
-      // Retorna imediatamente e processa tudo em segundo plano
-      ctx.waitUntil(handleCampaignRun(env, tenantId, true).catch((e) => console.error("[manual-run] error", e)));
-      return json({ ok: true, processed: 0, campaigns: [], message: "Processamento iniciado em segundo plano" });
-    }
+    // Roda sempre de forma síncrona para expor erros reais na resposta
     try {
       return await handleCampaignRun(env, tenantId, ignoreWindow);
     } catch (err: any) {
