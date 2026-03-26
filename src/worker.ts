@@ -1788,7 +1788,7 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
 
   // Conta quantos foram enviados hoje
   const todaySentRow = await env.DB.prepare(
-    "SELECT COUNT(*) as c FROM campaign_sends WHERE tenant_id = ? AND status = 'sent' AND date(sent_at) = date('now')",
+    "SELECT COUNT(*) as c FROM campaign_sends cs JOIN campaigns c ON c.id = cs.campaign_id WHERE c.tenant_id = ? AND cs.status = 'sent' AND date(cs.sent_at) = date('now')",
   ).bind(tenantId).first<{ c: number }>();
   let todaySentCount = Number(todaySentRow?.c ?? 0);
 
