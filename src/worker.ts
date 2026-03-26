@@ -557,6 +557,10 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
     try {
       const workerOrigin = new URL(request.url).origin;
       const webhookUrl = `${workerOrigin}/api/webhook/evolution`;
+      // Inclui o secret no header do webhook para que o worker aceite os eventos
+      const webhookHeaders = env.EVOLUTION_WEBHOOK_SECRET
+        ? { Authorization: `Bearer ${env.EVOLUTION_WEBHOOK_SECRET}` }
+        : undefined;
 
       // Tenta criar a instância
       const res = await fetch(`${baseUrl}/instance/create`, {
@@ -574,6 +578,7 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
             byEvents: false,
             base64: false,
             events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "PRESENCE_UPDATE", "CONTACTS_UPSERT"],
+            ...(webhookHeaders ? { headers: webhookHeaders } : {}),
           },
         }),
       });
@@ -618,6 +623,7 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
             byEvents: false,
             base64: false,
             events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "PRESENCE_UPDATE", "CONTACTS_UPSERT"],
+            ...(webhookHeaders ? { headers: webhookHeaders } : {}),
           },
         }),
       });
@@ -4085,11 +4091,20 @@ async function guardExtensionPush(
 }
 
 async function handleInstagramTools(request: Request, env: Env, method: string, url: URL) {
-  const tenantId = await getTenantId(request, env);
-  await ensureTenant(env, tenantId);
-
   const pathname = url.pathname;
   const parts = pathname.split("/").filter(Boolean);
+
+  // Rotas push-leads são autenticadas via x-extension-token (não JWT).
+  // O tenant é identificado pelo x-tenant-id enviado pela extensão.
+  const isPushLeadsRoute = parts[3] === "push-leads";
+  let tenantId: string;
+  if (isPushLeadsRoute) {
+    tenantId = request.headers.get("x-tenant-id") || "";
+    if (!tenantId) return json({ error: "x-tenant-id obrigatório" }, { status: 400 });
+  } else {
+    tenantId = await getTenantId(request, env);
+  }
+  await ensureTenant(env, tenantId);
 
   // /api/tools/instagram/jobs
   if (parts.length === 4 && parts[2] === "instagram" && parts[3] === "jobs") {
