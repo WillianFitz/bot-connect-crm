@@ -794,11 +794,10 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
           const state = evData?.instance?.state;
           const mappedStatus = state === "open" ? "connected" : "disconnected";
 
-          // Regra: Evolution pode forçar "disconnected" a qualquer momento.
-          // Mas NÃO pode sobrescrever "disconnected" → "connected" (previne race condition
-          // onde Evolution ainda responde "open" depois de um delete/logout explícito do CRM).
-          // A transição disconnected→connected só ocorre via webhook connection.update.
-          const shouldUpdate = mappedStatus === "disconnected" || !row || row.status !== "disconnected";
+          // Sempre sincroniza com o estado real da Evolution API.
+          // Isso permite recuperar o status "connected" quando webhooks estavam quebrados
+          // e o banco ficou travado em "disconnected" mesmo com o WA conectado na Evolution.
+          const shouldUpdate = true;
 
           if (shouldUpdate) {
             await env.DB.prepare(
