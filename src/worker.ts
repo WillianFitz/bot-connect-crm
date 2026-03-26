@@ -5601,10 +5601,21 @@ async function handleEvolutionWebhook(request: Request, env: Env, ctx: Execution
   while (Date.now() - startWait < MAX_SAFETY_MS) {
     await new Promise<void>((r) => setTimeout(r, POLL_MS));
 
-    // Verifica indicador de digitação: última vez que `composing` foi recebido
+    // Verifica indicador de digitação: phone exato OU LID não mapeado recente
+    // (LIDs não mapeados ainda não foram correlacionados, mas o composing é real)
     const typingRow = await env.DB.prepare(
-      "SELECT last_typing_at FROM phone_typing WHERE tenant_id = ? AND phone = ?",
-    ).bind(tenantId, phone).first<{ last_typing_at: string }>();
+      `SELECT last_typing_at FROM (
+         SELECT last_typing_at FROM phone_typing WHERE tenant_id = ? AND phone = ?
+         UNION ALL
+         SELECT pt.last_typing_at FROM phone_typing pt
+         WHERE pt.tenant_id = ?
+           AND pt.last_typing_at > datetime('now', '-8 seconds')
+           AND NOT EXISTS (
+             SELECT 1 FROM contact_jid_map cjm
+             WHERE cjm.tenant_id = pt.tenant_id AND cjm.phone = pt.phone
+           )
+       ) ORDER BY last_typing_at DESC LIMIT 1`,
+    ).bind(tenantId, phone, tenantId).first<{ last_typing_at: string }>();
 
     if (typingRow?.last_typing_at) {
       const lastTypingMs = Date.now() - new Date(typingRow.last_typing_at + "Z").getTime();
