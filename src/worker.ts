@@ -225,6 +225,10 @@ function getEvolutionBaseUrl(env: Env): string {
   return `https://${raw}`;
 }
 
+// Formatters de data/hora cacheados a nível de módulo — Intl.DateTimeFormat é caro de criar
+const _timeFmt = new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit", hour12: false });
+const _dayFmt  = new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", weekday: "short" });
+
 // scheduled_at é armazenado no horário de Brasília sem timezone (ex: "2026-03-20T09:30:00")
 // Formata diretamente sem converter fuso — evita subtrair 3h desnecessariamente
 function fmtScheduledAt(s: string): string {
@@ -1750,19 +1754,9 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
   let nowTimeStr: string;
   let todayName: string;
   try {
-    const timeFmt = new Intl.DateTimeFormat("pt-BR", {
-      timeZone: "America/Sao_Paulo",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
-    const dayFmt = new Intl.DateTimeFormat("pt-BR", {
-      timeZone: "America/Sao_Paulo",
-      weekday: "short",
-    });
-    const raw = timeFmt.format(now).replace(/\s/g, "");
+    const raw = _timeFmt.format(now).replace(/\s/g, "");
     nowTimeStr = normalizeTimeToHHMM(raw);
-    const dayStr = dayFmt.format(now).toLowerCase().replace(/\./g, "");
+    const dayStr = _dayFmt.format(now).toLowerCase().replace(/\./g, "");
     todayName = BR_DAY_MAP[dayStr] || dayNames[now.getUTCDay()];
   } catch {
     const utcHour = now.getUTCHours();
@@ -6144,28 +6138,21 @@ export default {
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     const tenants = await env.DB.prepare("SELECT id FROM tenants").all<{ id: string }>();
     const list = (tenants.results || []) as Array<{ id: string }>;
-    for (const row of list) {
-      try {
-        await handleCampaignRun(env, row.id, false);
-      } catch (err) {
-        console.error("[cron] campaign run for tenant", row.id, err);
-      }
-      try {
-        await processFunnelExecutions(env, row.id);
-      } catch (err) {
-        console.error("[cron] funnel executions for tenant", row.id, err);
-      }
-      try {
-        await processAppointmentReminders(env, row.id);
-      } catch (err) {
-        console.error("[cron] appointment reminders for tenant", row.id, err);
-      }
-      try {
-        await processScheduledCampaigns(env, row.id);
-      } catch (err) {
-        console.error("[cron] scheduled campaigns for tenant", row.id, err);
-      }
-    }
+    // Processa todos os tenants em paralelo para reduzir CPU total do cron
+    await Promise.allSettled(list.map(async (row) => {
+      await handleCampaignRun(env, row.id, false).catch((err) =>
+        console.error("[cron] campaign run for tenant", row.id, err),
+      );
+      await processFunnelExecutions(env, row.id).catch((err) =>
+        console.error("[cron] funnel executions for tenant", row.id, err),
+      );
+      await processAppointmentReminders(env, row.id).catch((err) =>
+        console.error("[cron] appointment reminders for tenant", row.id, err),
+      );
+      await processScheduledCampaigns(env, row.id).catch((err) =>
+        console.error("[cron] scheduled campaigns for tenant", row.id, err),
+      );
+    }));
     // Limpeza periódica: remove conversas com mais de 90 dias (roda uma vez por cron tick, fora do loop de tenants)
     try {
       await env.DB.batch([
