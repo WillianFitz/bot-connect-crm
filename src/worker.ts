@@ -3345,14 +3345,17 @@ async function handlePublicBooking(request: Request, env: Env, method: string, u
 
     // Rate limiting: máx 3 agendamentos por número por hora (evita spam via booking público)
     const rateLimitKey = `booking:${tenantId}:${phone}`;
+    await env.DB.prepare(
+      "DELETE FROM login_attempts WHERE key = ? AND window_start < datetime('now', '-1 hour')",
+    ).bind(rateLimitKey).run();
     const rateRow = await env.DB.prepare(
-      "SELECT attempt_count FROM login_attempts WHERE key = ? AND last_attempt > datetime('now', '-1 hour')",
-    ).bind(rateLimitKey).first<{ attempt_count: number }>();
-    if ((rateRow?.attempt_count ?? 0) >= 3) {
+      "SELECT attempts FROM login_attempts WHERE key = ? LIMIT 1",
+    ).bind(rateLimitKey).first<{ attempts: number }>();
+    if ((rateRow?.attempts ?? 0) >= 3) {
       return json({ error: "Muitas tentativas de agendamento. Aguarde antes de tentar novamente." }, { status: 429 });
     }
     await env.DB.prepare(
-      "INSERT INTO login_attempts (key, attempt_count, last_attempt) VALUES (?, 1, datetime('now')) ON CONFLICT(key) DO UPDATE SET attempt_count = attempt_count + 1, last_attempt = datetime('now')",
+      "INSERT INTO login_attempts (key, attempts, window_start) VALUES (?, 1, datetime('now')) ON CONFLICT(key) DO UPDATE SET attempts = attempts + 1",
     ).bind(rateLimitKey).run();
 
     // Find or create lead (verificando limite do plano antes de criar)
