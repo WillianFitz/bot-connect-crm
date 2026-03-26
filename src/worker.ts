@@ -460,6 +460,7 @@ async function handleAdminUpdateEvolutionWebhooks(request: Request, env: Env): P
   return json({ ok: true, total: tenants.length, succeeded, failed, results });
 }
 
+
 // POST /api/admin/clear-jid-map — limpa mapeamentos LID→phone errados
 async function handleAdminClearJidMap(request: Request, env: Env): Promise<Response> {
   if (!(await isAdmin(request, env))) return json({ error: "Unauthorized" }, { status: 401 });
@@ -6043,6 +6044,8 @@ export default {
         response = await handleAdminToggleBlock(request, env);
       } else if (pathname === "/api/admin/update-evolution-webhooks" && method === "POST") {
         response = await handleAdminUpdateEvolutionWebhooks(request, env);
+      } else if (pathname === "/api/admin/test-subscribe-presence" && method === "POST") {
+        response = await handleAdminTestSubscribePresence(request, env);
       } else if (pathname === "/api/admin/clear-jid-map" && method === "POST") {
         response = await handleAdminClearJidMap(request, env);
       } else if (pathname === "/api/auth/login" && method === "POST") {
