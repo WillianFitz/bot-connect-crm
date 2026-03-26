@@ -1688,42 +1688,45 @@ async function sendWhatsAppMessage(
       const data = await res.json() as any;
       remoteJid = data?.key?.remoteJid || undefined;
     } catch { /* ignore */ }
-    // Se a resposta da Evolution retornou um @lid, armazena o mapeamento imediatamente
-    if (remoteJid?.endsWith("@lid")) {
-      const lid = remoteJid.split("@")[0];
+    // Só tenta mapear se `number` é um telefone real (não um @lid JID)
+    // Quando isLid=true, `number` = "XYZ@lid" — não há como extrair o telefone aqui
+    const numberIsPhone = !number.includes("@");
+    if (numberIsPhone) {
       const cleanPhone = normalizeBrazilNumber(number);
-      if (lid && cleanPhone) {
-        await env.DB.prepare(
-          "INSERT OR REPLACE INTO contact_jid_map (tenant_id, lid, phone) VALUES (?, ?, ?)",
-        ).bind(tenantId, lid, cleanPhone).run().catch(() => {});
-        console.log(`[jid-map] LID mapeado via resposta de envio: ${lid} → ${cleanPhone}`);
+      // Se a resposta retornou @lid, armazena o mapeamento imediatamente
+      if (remoteJid?.endsWith("@lid") && cleanPhone) {
+        const lid = remoteJid.split("@")[0];
+        if (lid) {
+          await env.DB.prepare(
+            "INSERT OR REPLACE INTO contact_jid_map (tenant_id, lid, phone) VALUES (?, ?, ?)",
+          ).bind(tenantId, lid, cleanPhone).run().catch(() => {});
+          console.log(`[jid-map] LID mapeado via resposta de envio: ${lid} → ${cleanPhone}`);
+        }
       }
-    }
-    // Subscreve à presença do contato usando sempre o número de telefone (não o LID)
-    // para receber eventos PRESENCE_UPDATE e capturar o LID via resposta quando disponível
-    try {
-      const presRes = await fetch(`${baseUrl}/chat/subscribePresence/${tenantId}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", apikey: env.EVOLUTION_API_KEY },
-        body: JSON.stringify({ number }),
-      });
-      if (presRes.ok) {
-        try {
-          const presData = await presRes.json() as any;
-          const returnedJid: string = presData?.jid || presData?.id || presData?.remoteJid || "";
-          if (returnedJid.endsWith("@lid")) {
-            const lid = returnedJid.split("@")[0];
-            const cleanPhone = normalizeBrazilNumber(number);
-            if (lid && cleanPhone) {
-              await env.DB.prepare(
-                "INSERT OR REPLACE INTO contact_jid_map (tenant_id, lid, phone) VALUES (?, ?, ?)",
-              ).bind(tenantId, lid, cleanPhone).run();
-              console.log(`[jid-map] LID mapeado via subscribePresence: ${lid} → ${cleanPhone}`);
+      // Subscreve à presença para receber PRESENCE_UPDATE deste contato
+      try {
+        const presRes = await fetch(`${baseUrl}/chat/subscribePresence/${tenantId}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", apikey: env.EVOLUTION_API_KEY },
+          body: JSON.stringify({ number }),
+        });
+        if (presRes.ok && cleanPhone) {
+          try {
+            const presData = await presRes.json() as any;
+            const returnedJid: string = presData?.jid || presData?.id || presData?.remoteJid || "";
+            if (returnedJid.endsWith("@lid")) {
+              const lid = returnedJid.split("@")[0];
+              if (lid) {
+                await env.DB.prepare(
+                  "INSERT OR REPLACE INTO contact_jid_map (tenant_id, lid, phone) VALUES (?, ?, ?)",
+                ).bind(tenantId, lid, cleanPhone).run();
+                console.log(`[jid-map] LID mapeado via subscribePresence: ${lid} → ${cleanPhone}`);
+              }
             }
-          }
-        } catch { /* ignora erros de parse */ }
-      }
-    } catch { /* ignora falhas de rede */ }
+          } catch { /* ignora erros de parse */ }
+        }
+      } catch { /* ignora falhas de rede */ }
+    }
 
     return { ok: true, remoteJid };
   } catch (err: any) {
