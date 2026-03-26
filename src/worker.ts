@@ -5576,7 +5576,7 @@ async function handleEvolutionWebhook(request: Request, env: Env, ctx: Execution
   // MAX_SAFETY_MS: limite de segurança absoluto (nunca ultrapassa, independente do composing)
   const POLL_MS            = 1_200;
   const COMPOSING_GRACE_MS = 5_000;
-  const IDLE_GRACE_MS      = 15_000;
+  const IDLE_GRACE_MS      = 8_000;  // sem composing, aguarda 8s desde última msg
   const MAX_SAFETY_MS      = 25_000; // limite do Cloudflare Worker (~30s wall time)
   const startWait = Date.now();
   let lastComposingDetectedAt = 0; // rastreia quando o composing foi detectado por último
@@ -5847,6 +5847,19 @@ Regras gerais:
     console.error("[webhook] OPENAI_API_KEY não configurado — agente não pode responder");
     return json({ ok: true });
   }
+
+  // Envia indicador "digitando..." ao contato enquanto o agente processa
+  try {
+    const baseUrl = getEvolutionBaseUrl(env);
+    if (baseUrl && env.EVOLUTION_API_KEY) {
+      const presNumber = isLid ? remoteJid : phone;
+      await fetch(`${baseUrl}/chat/sendPresence/${tenantId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: env.EVOLUTION_API_KEY },
+        body: JSON.stringify({ number: presNumber, presence: "composing" }),
+      });
+    }
+  } catch { /* não bloqueia se falhar */ }
 
   let aiResponse: string;
   try {
