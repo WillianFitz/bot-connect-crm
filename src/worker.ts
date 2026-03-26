@@ -1495,6 +1495,9 @@ async function handleAgents(request: Request, env: Env, method: string, url: URL
 
     if (method === "PUT") {
       const a = await readBody<any>(request);
+      if (a.base_prompt && typeof a.base_prompt === "string" && a.base_prompt.length > 12000) {
+        return json({ error: "Prompt base muito longo. Máximo de 12.000 caracteres." }, { status: 400 });
+      }
       await env.DB.prepare(
         `INSERT INTO agents (id, tenant_id, name, type, base_prompt, default_message, pause_minutes, pause_definitive, agenda_link, human_number, human_group_id)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1779,10 +1782,10 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
   }
 
   const campaigns = await env.DB.prepare(
-    "SELECT id, name, time_from, time_to, days_blocked, delay_min, delay_max, status, funnel_id, folder_id, api_source, template_id, template_variables FROM campaigns WHERE tenant_id = ? AND (status = 'active' OR status = 'completed')",
+    "SELECT id, name, time_from, time_to, days_blocked, delay_min, delay_max, status, funnel_id, folder_id, api_source, template_id, template_variables, campaign_type, payment_link FROM campaigns WHERE tenant_id = ? AND (status = 'active' OR status = 'completed')",
   )
     .bind(tenantId)
-    .all<{ id: number; name: string; time_from: string; time_to: string; days_blocked: string; delay_min: number; delay_max: number; status: string; funnel_id: number | null; folder_id: number | null; api_source: string | null; template_id: number | null; template_variables: string | null }>();
+    .all<{ id: number; name: string; time_from: string; time_to: string; days_blocked: string; delay_min: number; delay_max: number; status: string; funnel_id: number | null; folder_id: number | null; api_source: string | null; template_id: number | null; template_variables: string | null; campaign_type: string | null; payment_link: string | null }>();
 
   const list = (campaigns.results || []) as Array<{
     id: number;
@@ -1798,6 +1801,8 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
     api_source: string | null;
     template_id: number | null;
     template_variables: string | null;
+    campaign_type: string | null;
+    payment_link: string | null;
   }>;
 
   // Busca plano do tenant para aplicar limite diário de disparos
@@ -2059,6 +2064,8 @@ async function handleCampaignRun(env: Env, tenantId: string, ignoreWindow = fals
       }
       const bookingLink = `${getFrontendUrl(env)}/agendar/${tenantId}?phone=${encodeURIComponent(phone)}`;
       text = text.replace(/\{\{link_agendamento\}\}/g, bookingLink);
+      text = text.replace(/\{\{payment_link\}\}/g, camp.payment_link || "");
+      text = text.replace(/\{\{link_pagamento\}\}/g, camp.payment_link || "");
 
       const result = await sendWhatsAppMessage(env, tenantId, phone, text);
       // Se o Evolution retornou um @lid, armazena o mapeamento phone → lid
@@ -3336,7 +3343,19 @@ async function handlePublicBooking(request: Request, env: Env, method: string, u
     ).bind(tenantId, scheduled_at).first<{ c: number }>();
     if (conflict && conflict.c > 0) return json({ error: "Este horário já foi reservado. Por favor, escolha outro." }, { status: 409 });
 
-    // Find or create lead
+    // Rate limiting: máx 3 agendamentos por número por hora (evita spam via booking público)
+    const rateLimitKey = `booking:${tenantId}:${phone}`;
+    const rateRow = await env.DB.prepare(
+      "SELECT attempt_count FROM login_attempts WHERE key = ? AND last_attempt > datetime('now', '-1 hour')",
+    ).bind(rateLimitKey).first<{ attempt_count: number }>();
+    if ((rateRow?.attempt_count ?? 0) >= 3) {
+      return json({ error: "Muitas tentativas de agendamento. Aguarde antes de tentar novamente." }, { status: 429 });
+    }
+    await env.DB.prepare(
+      "INSERT INTO login_attempts (key, attempt_count, last_attempt) VALUES (?, 1, datetime('now')) ON CONFLICT(key) DO UPDATE SET attempt_count = attempt_count + 1, last_attempt = datetime('now')",
+    ).bind(rateLimitKey).run();
+
+    // Find or create lead (verificando limite do plano antes de criar)
     let leadId: number | null = null;
     const existing = await env.DB.prepare(
       "SELECT id FROM leads WHERE tenant_id = ? AND phone = ? LIMIT 1"
@@ -3344,10 +3363,32 @@ async function handlePublicBooking(request: Request, env: Env, method: string, u
     if (existing) {
       leadId = existing.id;
     } else {
-      const newLead = await env.DB.prepare(
-        "INSERT INTO leads (tenant_id, company, phone) VALUES (?, ?, ?) RETURNING id"
-      ).bind(tenantId, body.name, phone).first<{ id: number }>();
-      leadId = newLead?.id ?? null;
+      // Verifica limite de leads do plano antes de criar novo lead
+      const bkPlanRow = await env.DB.prepare(
+        "SELECT COALESCE(plan, 'starter') as plan FROM tenants WHERE id = ? LIMIT 1",
+      ).bind(tenantId).first<{ plan: string }>();
+      const bkPlan = bkPlanRow?.plan ?? "starter";
+      const BK_LEAD_LIMITS: Record<string, number> = { starter: 100, plus: 2000, pro: Infinity };
+      const bkLeadLimit = BK_LEAD_LIMITS[bkPlan] ?? 100;
+      if (bkLeadLimit !== Infinity) {
+        const bkCountRow = await env.DB.prepare(
+          "SELECT COUNT(*) as cnt FROM leads WHERE tenant_id = ?",
+        ).bind(tenantId).first<{ cnt: number }>();
+        if ((bkCountRow?.cnt ?? 0) >= bkLeadLimit) {
+          // Cria o agendamento sem lead (lead_id null é permitido pelo schema)
+          leadId = null;
+        } else {
+          const newLead = await env.DB.prepare(
+            "INSERT INTO leads (tenant_id, company, phone) VALUES (?, ?, ?) RETURNING id"
+          ).bind(tenantId, body.name, phone).first<{ id: number }>();
+          leadId = newLead?.id ?? null;
+        }
+      } else {
+        const newLead = await env.DB.prepare(
+          "INSERT INTO leads (tenant_id, company, phone) VALUES (?, ?, ?) RETURNING id"
+        ).bind(tenantId, body.name, phone).first<{ id: number }>();
+        leadId = newLead?.id ?? null;
+      }
     }
 
     await env.DB.prepare(
@@ -3562,12 +3603,9 @@ async function processScheduledCampaigns(env: Env, tenantId: string) {
   `).bind(tenantId).all<{ id: number }>();
 
   for (const camp of (due.results || [])) {
+    // Marca como despachada — o handleCampaignRun já chamado pelo cron no mesmo tick processa ela
     await env.DB.prepare("UPDATE campaigns SET scheduled_dispatched = 1 WHERE id = ? AND tenant_id = ?").bind(camp.id, tenantId).run();
-    try {
-      await handleCampaignRun(env, tenantId, false);
-    } catch (e) {
-      console.error("[scheduled-campaign] error", e);
-    }
+    console.log(`[scheduled-campaign] campanha ${camp.id} liberada para disparo no tick atual`);
   }
 }
 
@@ -3766,6 +3804,11 @@ async function handleCRM(request: Request, env: Env, method: string, url: URL) {
     if (method === "PUT") {
       const body = await readBody<{ id: number; column_id: number; position: number }>(request);
       if (!body.id) return json({ error: "ID obrigatório" }, { status: 400 });
+      // Valida que column_id pertence ao tenant antes de mover
+      const colCheck = await env.DB.prepare(
+        "SELECT id FROM crm_columns WHERE id = ? AND tenant_id = ? LIMIT 1",
+      ).bind(body.column_id, tenantId).first();
+      if (!colCheck) return json({ error: "Coluna não encontrada" }, { status: 404 });
       await env.DB.prepare(
         "UPDATE crm_leads SET column_id = ?, position = ?, moved_at = datetime('now') WHERE id = ? AND tenant_id = ?",
       ).bind(body.column_id, body.position, body.id, tenantId).run();
@@ -4106,7 +4149,26 @@ async function guardExtensionPush(
     );
   }
 
-  // 3. Limite diário por tenant (evita abuso contínuo mesmo com token válido)
+  // 3. Limite total de leads do plano
+  const planRow = await env.DB.prepare(
+    "SELECT COALESCE(plan, 'starter') as plan FROM tenants WHERE id = ? LIMIT 1",
+  ).bind(tenantId).first<{ plan: string }>();
+  const tenantPlan = planRow?.plan ?? "starter";
+  const PLAN_LEAD_LIMITS: Record<string, number> = { starter: 100, plus: 2000, pro: Infinity };
+  const planLeadLimit = PLAN_LEAD_LIMITS[tenantPlan] ?? 100;
+  if (planLeadLimit !== Infinity) {
+    const totalRow = await env.DB.prepare(
+      "SELECT COUNT(*) as cnt FROM leads WHERE tenant_id = ?",
+    ).bind(tenantId).first<{ cnt: number }>();
+    if ((totalRow?.cnt ?? 0) >= planLeadLimit) {
+      return json(
+        { error: `Limite de ${planLeadLimit} leads do plano ${tenantPlan} atingido. Faça upgrade para importar mais.` },
+        { status: 429 },
+      );
+    }
+  }
+
+  // 4. Limite diário por tenant (evita abuso contínuo mesmo com token válido)
   const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
   const countRow = await env.DB.prepare(
     "SELECT COUNT(*) as cnt FROM leads WHERE tenant_id = ? AND DATE(created_at) = ?",
@@ -6044,8 +6106,6 @@ export default {
         response = await handleAdminToggleBlock(request, env);
       } else if (pathname === "/api/admin/update-evolution-webhooks" && method === "POST") {
         response = await handleAdminUpdateEvolutionWebhooks(request, env);
-      } else if (pathname === "/api/admin/test-subscribe-presence" && method === "POST") {
-        response = await handleAdminTestSubscribePresence(request, env);
       } else if (pathname === "/api/admin/clear-jid-map" && method === "POST") {
         response = await handleAdminClearJidMap(request, env);
       } else if (pathname === "/api/auth/login" && method === "POST") {
