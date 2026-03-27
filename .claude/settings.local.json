@@ -25,7 +25,8 @@
       "Bash(node:*)",
       "Bash(TOKEN=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYWRtaW4iLCJpYXQiOjE3NzQ1NDMyNzEsImV4cCI6MTc3NDU3MjA3MX0.kFfw_EeenIjNQC0V7Pz0_s1k5wwqsRUJmWg6DDYCGdU\")",
       "Bash(__NEW_LINE_26fc8aff5a2f0e5c__ curl:*)",
-      "Bash(git rm:*)"
+      "Bash(git rm:*)",
+      "Bash(npx tsc:*)"
     ]
   }
 }

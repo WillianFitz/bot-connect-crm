@@ -104,13 +104,37 @@ async function isAdmin(request: Request, env: Env): Promise<boolean> {
 }
 
 async function handleAdminLogin(request: Request, env: Env): Promise<Response> {
+  const ip = request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() || "unknown";
+  const rateKey = `admin_login:${ip}`;
+
+  // Limpa tentativas antigas (janela de 15 minutos)
+  await env.DB.prepare(
+    "DELETE FROM login_attempts WHERE key = ? AND window_start < datetime('now', '-15 minutes')",
+  ).bind(rateKey).run();
+
+  const rateRow = await env.DB.prepare(
+    "SELECT attempts FROM login_attempts WHERE key = ? LIMIT 1",
+  ).bind(rateKey).first<{ attempts: number }>();
+
+  if ((rateRow?.attempts ?? 0) >= 5) {
+    return json({ error: "Muitas tentativas. Aguarde alguns minutos." }, { status: 429 });
+  }
+
   const body = await readBody<{ key?: string }>(request);
   if (!body.key || body.key !== env.ADMIN_API_KEY) {
+    // Incrementa contador apenas em falha
+    await env.DB.prepare(
+      "INSERT INTO login_attempts (key, attempts, window_start) VALUES (?, 1, datetime('now')) ON CONFLICT(key) DO UPDATE SET attempts = attempts + 1",
+    ).bind(rateKey).run();
     return json({ error: "Chave inválida" }, { status: 401 });
   }
   if (!env.JWT_SECRET) {
     return json({ error: "JWT_SECRET não configurado no servidor" }, { status: 500 });
   }
+
+  // Login bem-sucedido: limpa tentativas
+  await env.DB.prepare("DELETE FROM login_attempts WHERE key = ?").bind(rateKey).run();
+
   const token = await signAdminJwt(env.JWT_SECRET);
   return json({ ok: true, token });
 }
@@ -325,14 +349,28 @@ async function handleAdminCreateTenantUser(request: Request, env: Env): Promise<
     return json({ error: "A senha deve ter pelo menos 8 caracteres" }, { status: 400 });
   }
 
-  const tenantId = body.tenantId && body.tenantId.trim().length > 0
-    ? body.tenantId.trim()
-    : `conta_${Array.from(crypto.getRandomValues(new Uint8Array(12))).map(b => b.toString(16).padStart(2, "0")).join("")}`;
+  const tenantName = String(body.tenantName).trim().slice(0, 200);
+  const username = String(body.username).trim().slice(0, 100);
+  const document = String(body.document).trim().slice(0, 50);
+  if (!tenantName) return json({ error: "Nome da conta é obrigatório" }, { status: 400 });
+  if (!username) return json({ error: "Usuário é obrigatório" }, { status: 400 });
+
+  let tenantId: string;
+  if (body.tenantId && body.tenantId.trim().length > 0) {
+    const candidate = body.tenantId.trim();
+    // Whitelist de formato: apenas letras minúsculas, dígitos, _ e - (evita path traversal em chaves R2)
+    if (!/^[a-z0-9_\-]{3,60}$/.test(candidate)) {
+      return json({ error: "tenantId inválido: use apenas letras minúsculas, dígitos, _ e - (3-60 chars)" }, { status: 400 });
+    }
+    tenantId = candidate;
+  } else {
+    tenantId = `conta_${Array.from(crypto.getRandomValues(new Uint8Array(12))).map(b => b.toString(16).padStart(2, "0")).join("")}`;
+  }
 
   await env.DB.prepare(
     "INSERT OR IGNORE INTO tenants (id, name) VALUES (?, ?)",
   )
-    .bind(tenantId, body.tenantName)
+    .bind(tenantId, tenantName)
     .run();
 
   const passwordHash = await hashPassword(body.password);
@@ -341,7 +379,7 @@ async function handleAdminCreateTenantUser(request: Request, env: Env): Promise<
     `INSERT INTO users (tenant_id, username, password_hash, document)
      VALUES (?, ?, ?, ?)`,
   )
-    .bind(tenantId, body.username, passwordHash, body.document)
+    .bind(tenantId, username, passwordHash, document)
     .run();
 
   return json({ ok: true, tenantId });
@@ -678,7 +716,7 @@ async function handleWhatsappConnection(request: Request, env: Env, method: stri
     const rawNumber = (body.number || "").trim();
     const number = normalizeBrazilNumber(rawNumber);
     const text =
-      (body.text || "").trim() ||
+      (body.text || "").trim().slice(0, 4000) ||
       "✅ Mensagem de teste enviada pelo seu painel LeadFlowAI. Se você recebeu, sua conexão Evolution API está funcionando.";
 
     if (!number) {
@@ -902,23 +940,25 @@ async function handleLeadFolders(request: Request, env: Env, method: string, url
 
   if (method === "POST") {
     const body = await readBody<{ name?: string }>(request);
-    if (!body.name) return json({ error: "Nome obrigatório" }, { status: 400 });
+    const folderName = (body.name ?? "").trim().slice(0, 100);
+    if (!folderName) return json({ error: "Nome obrigatório" }, { status: 400 });
 
     const res = await env.DB.prepare(
       "INSERT INTO lead_folders (tenant_id, name) VALUES (?, ?)",
-    ).bind(tenantId, body.name).run();
-    return json({ id: res.lastRowId, name: body.name });
+    ).bind(tenantId, folderName).run();
+    return json({ id: res.lastRowId, name: folderName });
   }
 
   if (method === "PUT") {
     const id = url.searchParams.get("id");
     if (!id) return json({ error: "ID obrigatório" }, { status: 400 });
     const body = await readBody<{ name?: string }>(request);
-    if (!body.name) return json({ error: "Nome obrigatório" }, { status: 400 });
+    const folderName = (body.name ?? "").trim().slice(0, 100);
+    if (!folderName) return json({ error: "Nome obrigatório" }, { status: 400 });
 
     await env.DB.prepare(
       "UPDATE lead_folders SET name = ? WHERE id = ? AND tenant_id = ?",
-    ).bind(body.name, id, tenantId).run();
+    ).bind(folderName, id, tenantId).run();
     return json({ ok: true });
   }
 
@@ -986,7 +1026,7 @@ async function handleLeads(request: Request, env: Env, method: string, url: URL)
 
   if (method === "POST") {
     const body = await readBody<{ company?: unknown; phone?: unknown; folder_id?: unknown }>(request);
-    const company = (typeof body.company === "string" ? body.company : "").trim();
+    const company = (typeof body.company === "string" ? body.company : "").trim().slice(0, 200);
     const rawPhone = typeof body.phone === "string" ? body.phone : "";
     const phone = normalizeBrazilNumber(rawPhone);
     const folderId =
@@ -1034,7 +1074,8 @@ async function handleLeads(request: Request, env: Env, method: string, url: URL)
     if (!id) return json({ error: "ID obrigatório" }, { status: 400 });
     const body = await readBody<{ company?: string; phone?: string; folder_id?: number | null }>(request);
     const normalizedPhone = body.phone ? normalizeBrazilNumber(body.phone) : "";
-    if (!body.company || !normalizedPhone) {
+    const safeCompany = typeof body.company === "string" ? body.company.trim().slice(0, 200) : "";
+    if (!safeCompany || !normalizedPhone) {
       return json({ error: "Empresa e telefone são obrigatórios" }, { status: 400 });
     }
 
@@ -1049,7 +1090,7 @@ async function handleLeads(request: Request, env: Env, method: string, url: URL)
     await env.DB.prepare(
       "UPDATE leads SET company = ?, phone = ?, folder_id = ? WHERE id = ? AND tenant_id = ?",
     )
-      .bind(body.company, normalizedPhone, body.folder_id ?? null, id, tenantId)
+      .bind(safeCompany, normalizedPhone, body.folder_id ?? null, id, tenantId)
       .run();
 
     return json({ ok: true });
@@ -1330,6 +1371,13 @@ async function handleAgents(request: Request, env: Env, method: string, url: URL
       const body = await readBody<any>(request);
       const agents = Array.isArray(body) ? body : [];
 
+      // Valida cada agente antes de processar o batch
+      for (const a of agents) {
+        if (a.base_prompt && typeof a.base_prompt === "string" && a.base_prompt.length > 12000) {
+          return json({ error: "Prompt base muito longo. Máximo de 12.000 caracteres." }, { status: 400 });
+        }
+      }
+
       const tx = await env.DB.batch(
         agents.map((a) =>
           env.DB.prepare(
@@ -1412,6 +1460,10 @@ async function handleAgents(request: Request, env: Env, method: string, url: URL
         }
         if (!/^[a-z0-9_\-]+$/.test(mediaId)) {
           return json({ error: "media_id inválido: use apenas a-z 0-9 _ -" }, { status: 400 });
+        }
+        const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB
+        if (file.size > MAX_UPLOAD_BYTES) {
+          return json({ error: "Arquivo muito grande. Limite: 50 MB" }, { status: 413 });
         }
 
         // Valida extensão de arquivo permitida
@@ -1575,7 +1627,7 @@ async function handleAIAgent(
   await ensureTenant(env, tenantId);
 
   const body = await readBody<{ message?: string }>(request);
-  const userMessage = body.message || "";
+  const userMessage = (body.message || "").slice(0, 4000);
 
   const row = await env.DB.prepare(
     `SELECT base_prompt FROM agents WHERE tenant_id = ? AND id = ? LIMIT 1`,
@@ -2662,7 +2714,8 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
       payment_link = null,
     } = body;
 
-    if (!name || typeof name !== "string" || name.trim().length === 0) {
+    const campaignName = typeof name === "string" ? name.trim().slice(0, 200) : "";
+    if (!campaignName) {
       return json({ error: "Nome obrigatório" }, { status: 400 });
     }
     const resolvedDelayMin = Number(delay_min ?? 6);
@@ -2697,6 +2750,20 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
       if (!funnelOk) return json({ error: "Funil não encontrado" }, { status: 404 });
     }
 
+    // Valida ownership de template_id antes de inserir
+    if (template_id != null) {
+      const tmplOk = await env.DB.prepare(
+        "SELECT 1 FROM whatsapp_templates WHERE id = ? AND tenant_id = ? LIMIT 1",
+      ).bind(Number(template_id), tenantId).first();
+      if (!tmplOk) return json({ error: "Template não encontrado" }, { status: 404 });
+    }
+
+    // Sanitiza days_blocked: apenas strings curtas (nomes de dias válidos)
+    const VALID_DAY_NAMES = new Set(["Dom","Seg","Ter","Qua","Qui","Sex","Sáb","Sab"]);
+    const sanitizedDaysBlocked = Array.isArray(days_blocked)
+      ? days_blocked.filter((d: unknown) => typeof d === "string" && VALID_DAY_NAMES.has(d))
+      : [];
+
     const res = await env.DB.prepare(
       `INSERT INTO campaigns
        (tenant_id, name, delay_min, delay_max, time_from, time_to, days_blocked, funnel_id, crm_column_id, folder_id, api_source, template_id, template_variables, campaign_type, payment_link)
@@ -2704,12 +2771,12 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
     )
       .bind(
         tenantId,
-        name.trim(),
+        campaignName,
         resolvedDelayMin,
         resolvedDelayMax,
         resolvedTimeFrom,
         resolvedTimeTo,
-        JSON.stringify(Array.isArray(days_blocked) ? days_blocked : []),
+        JSON.stringify(sanitizedDaysBlocked),
         funnel_id ?? null,
         crm_column_id ?? null,
         folder_id ? Number(folder_id) : null,
@@ -2717,7 +2784,7 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
         template_id ? Number(template_id) : null,
         template_variables ? JSON.stringify(template_variables) : null,
         resolvedCampaignType,
-        payment_link ? String(payment_link) : null,
+        payment_link ? String(payment_link).slice(0, 500) : null,
       )
       .run();
 
@@ -2756,28 +2823,32 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
     const updates: string[] = [];
     const params: unknown[] = [];
     if (name !== undefined) {
-      updates.push("name = ?");
-      params.push(String(name));
+      const putCampaignName = String(name).trim().slice(0, 200);
+      if (putCampaignName) { updates.push("name = ?"); params.push(putCampaignName); }
     }
     if (delay_min !== undefined) {
-      updates.push("delay_min = ?");
-      params.push(Number(delay_min));
+      const dm = Number(delay_min);
+      if (Number.isFinite(dm) && dm >= 0 && dm <= 1440) { updates.push("delay_min = ?"); params.push(dm); }
     }
     if (delay_max !== undefined) {
-      updates.push("delay_max = ?");
-      params.push(Number(delay_max));
+      const dx = Number(delay_max);
+      if (Number.isFinite(dx) && dx >= 0 && dx <= 1440) { updates.push("delay_max = ?"); params.push(dx); }
     }
     if (time_from !== undefined) {
-      updates.push("time_from = ?");
-      params.push(String(time_from));
+      const tf = String(time_from);
+      if (/^\d{2}:\d{2}$/.test(tf)) { updates.push("time_from = ?"); params.push(tf); }
     }
     if (time_to !== undefined) {
-      updates.push("time_to = ?");
-      params.push(String(time_to));
+      const tt = String(time_to);
+      if (/^\d{2}:\d{2}$/.test(tt)) { updates.push("time_to = ?"); params.push(tt); }
     }
     if (days_blocked !== undefined) {
+      const VALID_DAYS_PUT = new Set(["Dom","Seg","Ter","Qua","Qui","Sex","Sáb","Sab"]);
+      const sanitizedDays = Array.isArray(days_blocked)
+        ? days_blocked.filter((d: unknown) => typeof d === "string" && VALID_DAYS_PUT.has(d))
+        : [];
       updates.push("days_blocked = ?");
-      params.push(JSON.stringify(Array.isArray(days_blocked) ? days_blocked : []));
+      params.push(JSON.stringify(sanitizedDays));
     }
     if (newStatus !== undefined && ["draft", "active", "paused", "completed"].includes(String(newStatus))) {
       updates.push("status = ?");
@@ -2835,6 +2906,12 @@ async function handleCampaigns(request: Request, env: Env, method: string, url: 
       params.push(body.api_source === "whatsapp_official" ? "whatsapp_official" : "evolution");
     }
     if ("template_id" in body) {
+      if (body.template_id != null) {
+        const tmplOk = await env.DB.prepare(
+          "SELECT 1 FROM whatsapp_templates WHERE id = ? AND tenant_id = ? LIMIT 1",
+        ).bind(Number(body.template_id), tenantId).first();
+        if (!tmplOk) return json({ error: "Template não encontrado" }, { status: 404 });
+      }
       updates.push("template_id = ?");
       params.push(body.template_id ? Number(body.template_id) : null);
     }
@@ -3004,9 +3081,9 @@ async function handleWhatsappOfficialSettings(request: Request, env: Env, method
   if (method === "PUT") {
     const body = await readBody<{ waba_id?: string; phone_number_id?: string; access_token?: string }>(request);
     const stmts: D1PreparedStatement[] = [];
-    if (body.waba_id != null) stmts.push(env.DB.prepare("INSERT OR REPLACE INTO tenant_settings (tenant_id, key, value) VALUES (?, 'wa_official_waba_id', ?)").bind(tenantId, String(body.waba_id).trim()));
-    if (body.phone_number_id != null) stmts.push(env.DB.prepare("INSERT OR REPLACE INTO tenant_settings (tenant_id, key, value) VALUES (?, 'wa_official_phone_number_id', ?)").bind(tenantId, String(body.phone_number_id).trim()));
-    if (body.access_token != null) stmts.push(env.DB.prepare("INSERT OR REPLACE INTO tenant_settings (tenant_id, key, value) VALUES (?, 'wa_official_access_token', ?)").bind(tenantId, String(body.access_token).trim()));
+    if (body.waba_id != null) stmts.push(env.DB.prepare("INSERT OR REPLACE INTO tenant_settings (tenant_id, key, value) VALUES (?, 'wa_official_waba_id', ?)").bind(tenantId, String(body.waba_id).trim().slice(0, 100)));
+    if (body.phone_number_id != null) stmts.push(env.DB.prepare("INSERT OR REPLACE INTO tenant_settings (tenant_id, key, value) VALUES (?, 'wa_official_phone_number_id', ?)").bind(tenantId, String(body.phone_number_id).trim().slice(0, 100)));
+    if (body.access_token != null) stmts.push(env.DB.prepare("INSERT OR REPLACE INTO tenant_settings (tenant_id, key, value) VALUES (?, 'wa_official_access_token', ?)").bind(tenantId, String(body.access_token).trim().slice(0, 512)));
     if (stmts.length) await env.DB.batch(stmts);
     return json({ ok: true });
   }
@@ -3040,8 +3117,12 @@ async function handleWhatsappTemplates(request: Request, env: Env, method: strin
 
   if (method === "POST" && !templateId) {
     const body = await readBody<{ name?: string; language?: string; category?: string; body_text?: string }>(request);
-    const { name, language = "pt_BR", category = "MARKETING", body_text } = body;
+    const { language = "pt_BR", category = "MARKETING" } = body;
+    const name = body.name ? String(body.name).trim().slice(0, 100) : "";
+    const body_text = body.body_text ? String(body.body_text).trim().slice(0, 1024) : "";
     if (!name || !body_text) return json({ error: "name e body_text são obrigatórios" }, { status: 400 });
+    const safeLanguage = String(language).trim().slice(0, 20);
+    const safeCategory = String(category).trim().slice(0, 50);
 
     const creds = await getWaOfficialCreds(env, tenantId);
     let metaTemplateId: string | null = null;
@@ -3049,7 +3130,7 @@ async function handleWhatsappTemplates(request: Request, env: Env, method: strin
     let errorReason: string | null = null;
 
     if (creds.wabaId && creds.accessToken) {
-      const metaRes = await submitTemplateToMeta(creds.wabaId, creds.accessToken, name, language, category, body_text);
+      const metaRes = await submitTemplateToMeta(creds.wabaId, creds.accessToken, name, safeLanguage, safeCategory, body_text);
       if (metaRes.ok && metaRes.id) {
         metaTemplateId = metaRes.id;
         status = metaRes.status || "PENDING";
@@ -3062,7 +3143,7 @@ async function handleWhatsappTemplates(request: Request, env: Env, method: strin
     const insertRes = await env.DB.prepare(
       `INSERT INTO whatsapp_templates (tenant_id, meta_template_id, name, language, category, body_text, status, rejection_reason)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(tenantId, metaTemplateId, name.trim(), language, category, body_text, status, errorReason).run();
+    ).bind(tenantId, metaTemplateId, name, safeLanguage, safeCategory, body_text, status, errorReason).run();
     const raw = insertRes as { meta?: { last_row_id?: number }; lastRowId?: number };
     const lastId = raw.meta?.last_row_id ?? raw.lastRowId ?? 0;
     const created = await env.DB.prepare(
@@ -3185,8 +3266,8 @@ async function handleSettings(request: Request, env: Env, method: string) {
 
   if (method === "PUT") {
     const body = await readBody<{ notification_whatsapp_phone?: string; notification_group_jid?: string }>(request);
-    const phone = body.notification_whatsapp_phone != null ? String(body.notification_whatsapp_phone).trim() : null;
-    const group = body.notification_group_jid != null ? String(body.notification_group_jid).trim() : null;
+    const phone = body.notification_whatsapp_phone != null ? String(body.notification_whatsapp_phone).trim().slice(0, 50) : null;
+    const group = body.notification_group_jid != null ? String(body.notification_group_jid).trim().slice(0, 100) : null;
     const stmts: D1PreparedStatement[] = [];
     if (phone !== null) stmts.push(env.DB.prepare("INSERT OR REPLACE INTO tenant_settings (tenant_id, key, value) VALUES (?, 'notification_whatsapp_phone', ?)").bind(tenantId, phone));
     if (group !== null) stmts.push(env.DB.prepare("INSERT OR REPLACE INTO tenant_settings (tenant_id, key, value) VALUES (?, 'notification_group_jid', ?)").bind(tenantId, group));
@@ -3211,7 +3292,7 @@ async function handleAccountSettings(request: Request, env: Env, method: string)
 
   if (method === "PUT") {
     const body = await readBody<{ tenantName?: string }>(request);
-    const name = (body.tenantName ?? "").trim();
+    const name = (body.tenantName ?? "").trim().slice(0, 200);
     if (!name) return json({ error: "Nome da conta é obrigatório" }, { status: 400 });
     await env.DB.prepare("UPDATE tenants SET name = ? WHERE id = ?").bind(name, tenantId).run();
     return json({ ok: true });
@@ -3273,8 +3354,42 @@ async function handleAvailabilitySettings(request: Request, env: Env, method: st
 
   if (method === "PUT") {
     const body = await readBody<Partial<AvailabilitySettings>>(request);
+
+    // Valida e sanitiza cada campo antes de mesclar com as configurações atuais
+    const sanitized: Partial<AvailabilitySettings> = {};
+    if (body.enabled !== undefined) sanitized.enabled = !!body.enabled;
+    if (body.title !== undefined) sanitized.title = String(body.title).trim().slice(0, 200);
+    if (body.description !== undefined) sanitized.description = String(body.description).trim().slice(0, 500);
+    if (body.days !== undefined) {
+      const validDays = Array.isArray(body.days)
+        ? body.days.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
+        : [];
+      sanitized.days = validDays;
+    }
+    if (body.start !== undefined) {
+      const start = String(body.start);
+      if (/^\d{2}:\d{2}$/.test(start)) sanitized.start = start;
+    }
+    if (body.end !== undefined) {
+      const end = String(body.end);
+      if (/^\d{2}:\d{2}$/.test(end)) sanitized.end = end;
+    }
+    if (body.slot_min !== undefined) {
+      const v = Number(body.slot_min);
+      // slot_min < 5 causaria loop infinito na geração de slots
+      if (Number.isFinite(v) && v >= 5 && v <= 120) sanitized.slot_min = v;
+    }
+    if (body.advance_days !== undefined) {
+      const v = Number(body.advance_days);
+      if (Number.isFinite(v) && v >= 1 && v <= 365) sanitized.advance_days = v;
+    }
+    if (body.min_advance_h !== undefined) {
+      const v = Number(body.min_advance_h);
+      if (Number.isFinite(v) && v >= 0 && v <= 72) sanitized.min_advance_h = v;
+    }
+
     const current = await getAvailabilitySettings(env, tenantId);
-    const updated = { ...current, ...body };
+    const updated = { ...current, ...sanitized };
     await env.DB.prepare(
       "INSERT OR REPLACE INTO tenant_settings (tenant_id, key, value) VALUES (?, 'availability', ?)"
     ).bind(tenantId, JSON.stringify(updated)).run();
@@ -3290,6 +3405,9 @@ async function handlePublicBooking(request: Request, env: Env, method: string, u
   if (method === "GET") {
     const dateStr = url.searchParams.get("date");
     if (!dateStr) return json({ availability, slots: [] });
+
+    // Valida formato de data antes de usar em new Date() e SQL
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return json({ availability, slots: [] });
 
     if (!availability.enabled) return json({ availability, slots: [] });
 
@@ -3334,7 +3452,22 @@ async function handlePublicBooking(request: Request, env: Env, method: string, u
     if (!body.date || !body.time || !body.name || !body.phone)
       return json({ error: "Preencha todos os campos" }, { status: 400 });
 
+    // Valida formato de data (YYYY-MM-DD) e hora (HH:MM)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(body.date))
+      return json({ error: "Data inválida" }, { status: 400 });
+    if (!/^\d{2}:\d{2}$/.test(body.time))
+      return json({ error: "Hora inválida" }, { status: 400 });
+
+    // Sanitiza nome: trim e limite de 100 chars
+    const cleanName = String(body.name).trim().slice(0, 100);
+    if (!cleanName) return json({ error: "Nome é obrigatório" }, { status: 400 });
+
     const scheduled_at = `${body.date}T${body.time}:00`;
+
+    // Verifica se a data resultante é válida
+    if (isNaN(new Date(scheduled_at).getTime()))
+      return json({ error: "Data/hora inválida" }, { status: 400 });
+
     const phone = normalizeBrazilNumber(body.phone) || body.phone;
 
     // Check slot still available
@@ -3383,13 +3516,13 @@ async function handlePublicBooking(request: Request, env: Env, method: string, u
         } else {
           const newLead = await env.DB.prepare(
             "INSERT INTO leads (tenant_id, company, phone) VALUES (?, ?, ?) RETURNING id"
-          ).bind(tenantId, body.name, phone).first<{ id: number }>();
+          ).bind(tenantId, cleanName, phone).first<{ id: number }>();
           leadId = newLead?.id ?? null;
         }
       } else {
         const newLead = await env.DB.prepare(
           "INSERT INTO leads (tenant_id, company, phone) VALUES (?, ?, ?) RETURNING id"
-        ).bind(tenantId, body.name, phone).first<{ id: number }>();
+        ).bind(tenantId, cleanName, phone).first<{ id: number }>();
         leadId = newLead?.id ?? null;
       }
     }
@@ -3397,13 +3530,13 @@ async function handlePublicBooking(request: Request, env: Env, method: string, u
     await env.DB.prepare(
       `INSERT INTO appointments (tenant_id, lead_id, title, description, scheduled_at, type, status, reminder_minutes)
        VALUES (?, ?, ?, ?, ?, 'meeting', 'confirmed', 30)`
-    ).bind(tenantId, leadId, availability.title || "Reunião", `Agendado por ${body.name}`, scheduled_at).run();
+    ).bind(tenantId, leadId, availability.title || "Reunião", `Agendado por ${cleanName}`, scheduled_at).run();
 
     // Send WhatsApp confirmation
     if (phone) {
       try {
         const timeStr = fmtScheduledAt(scheduled_at);
-        const msg = `✅ *Agendamento confirmado!*\n\nOlá, ${body.name}! 😊\n\nSeu agendamento foi confirmado para:\n📅 *${timeStr}*\n\nEm caso de dúvidas, entre em contato. Até lá! 🚀`;
+        const msg = `✅ *Agendamento confirmado!*\n\nOlá, ${cleanName}! 😊\n\nSeu agendamento foi confirmado para:\n📅 *${timeStr}*\n\nEm caso de dúvidas, entre em contato. Até lá! 🚀`;
         await sendWhatsAppMessage(env, tenantId, phone, msg);
       } catch (e) {
         console.error("[booking] whatsapp confirm error", e);
@@ -3413,7 +3546,7 @@ async function handlePublicBooking(request: Request, env: Env, method: string, u
     // Notify tenant about new booking
     try {
       const dateStr = fmtScheduledAt(scheduled_at);
-      await sendNotificationMessage(env, tenantId, `📅 Novo agendamento: ${body.name} para ${dateStr}.`);
+      await sendNotificationMessage(env, tenantId, `📅 Novo agendamento: ${cleanName} para ${dateStr}.`);
     } catch (e) {
       console.error("[booking] notification error", e);
     }
@@ -3426,6 +3559,19 @@ async function handlePublicBooking(request: Request, env: Env, method: string, u
 
 async function handleChangePassword(request: Request, env: Env) {
   const tenantId = await getTenantId(request, env);
+
+  // Rate limit: 5 tentativas por tenant por 15 minutos (impede brute force da senha atual)
+  const rateKey = `change_password:${tenantId}`;
+  await env.DB.prepare(
+    "DELETE FROM login_attempts WHERE key = ? AND window_start < datetime('now', '-15 minutes')",
+  ).bind(rateKey).run();
+  const rateRow = await env.DB.prepare(
+    "SELECT attempts FROM login_attempts WHERE key = ? LIMIT 1",
+  ).bind(rateKey).first<{ attempts: number }>();
+  if ((rateRow?.attempts ?? 0) >= 5) {
+    return json({ error: "Muitas tentativas. Aguarde alguns minutos." }, { status: 429 });
+  }
+
   const body = await readBody<{ currentPassword?: string; newPassword?: string }>(request);
   if (!body.currentPassword || !body.newPassword)
     return json({ error: "Senha atual e nova senha são obrigatórias" }, { status: 400 });
@@ -3438,8 +3584,15 @@ async function handleChangePassword(request: Request, env: Env) {
   if (!user) return json({ error: "Usuário não encontrado" }, { status: 404 });
 
   const valid = await verifyPassword(body.currentPassword, user.password_hash);
-  if (!valid) return json({ error: "Senha atual incorreta" }, { status: 401 });
+  if (!valid) {
+    await env.DB.prepare(
+      "INSERT INTO login_attempts (key, attempts, window_start) VALUES (?, 1, datetime('now')) ON CONFLICT(key) DO UPDATE SET attempts = attempts + 1",
+    ).bind(rateKey).run();
+    return json({ error: "Senha atual incorreta" }, { status: 401 });
+  }
 
+  // Senha correta: limpa tentativas e atualiza hash
+  await env.DB.prepare("DELETE FROM login_attempts WHERE key = ?").bind(rateKey).run();
   const newHash = await hashPassword(body.newPassword);
   await env.DB.prepare("UPDATE users SET password_hash = ? WHERE id = ?")
     .bind(newHash, user.id).run();
@@ -3486,6 +3639,14 @@ async function handleAppointments(request: Request, env: Env, method: string, ur
     if (new Date(body.scheduled_at) <= new Date()) {
       return json({ error: "A data/hora do agendamento deve ser no futuro" }, { status: 400 });
     }
+    const aptTitle = String(body.title).trim().slice(0, 200);
+    if (!aptTitle) return json({ error: "Título é obrigatório" }, { status: 400 });
+    const aptDescription = body.description != null ? String(body.description).trim().slice(0, 1000) : null;
+    const VALID_APT_TYPES = new Set(["meeting", "call", "task", "reminder"]);
+    const aptType = VALID_APT_TYPES.has(String(body.type ?? "")) ? String(body.type) : "meeting";
+    const VALID_APT_STATUSES = new Set(["pending", "confirmed", "cancelled", "completed"]);
+    const aptStatus = VALID_APT_STATUSES.has(String(body.status ?? "")) ? String(body.status) : "pending";
+    const aptReminderMinutes = Math.max(0, Math.min(10080, Number(body.reminder_minutes ?? 30)));
     // Valida que lead_id pertence ao tenant
     const leadId = body.lead_id ?? null;
     if (leadId != null) {
@@ -3500,12 +3661,12 @@ async function handleAppointments(request: Request, env: Env, method: string, ur
     ).bind(
       tenantId,
       leadId,
-      body.title,
-      body.description ?? null,
+      aptTitle,
+      aptDescription,
       body.scheduled_at,
-      body.type ?? "meeting",
-      body.status ?? "pending",
-      body.reminder_minutes ?? 30,
+      aptType,
+      aptStatus,
+      aptReminderMinutes,
     ).first<{ id: number }>();
     try {
       const dateStr = fmtScheduledAt(body.scheduled_at);
@@ -3527,12 +3688,18 @@ async function handleAppointments(request: Request, env: Env, method: string, ur
     }>(request);
     const fields: string[] = [];
     const vals: (string | number | null)[] = [];
-    if (body.title !== undefined) { fields.push("title = ?"); vals.push(body.title); }
-    if (body.description !== undefined) { fields.push("description = ?"); vals.push(body.description); }
+    if (body.title !== undefined) { fields.push("title = ?"); vals.push(String(body.title).trim().slice(0, 200)); }
+    if (body.description !== undefined) { fields.push("description = ?"); vals.push(body.description != null ? String(body.description).trim().slice(0, 1000) : null); }
     if (body.scheduled_at !== undefined) { fields.push("scheduled_at = ?"); vals.push(body.scheduled_at); }
-    if (body.type !== undefined) { fields.push("type = ?"); vals.push(body.type); }
-    if (body.status !== undefined) { fields.push("status = ?"); vals.push(body.status); }
-    if (body.reminder_minutes !== undefined) { fields.push("reminder_minutes = ?"); vals.push(body.reminder_minutes); }
+    if (body.type !== undefined) {
+      const VALID_APT_TYPES_PUT = new Set(["meeting", "call", "task", "reminder"]);
+      fields.push("type = ?"); vals.push(VALID_APT_TYPES_PUT.has(String(body.type)) ? String(body.type) : "meeting");
+    }
+    if (body.status !== undefined) {
+      const VALID_APT_STATUSES_PUT = new Set(["pending", "confirmed", "cancelled", "completed"]);
+      fields.push("status = ?"); vals.push(VALID_APT_STATUSES_PUT.has(String(body.status)) ? String(body.status) : "pending");
+    }
+    if (body.reminder_minutes !== undefined) { fields.push("reminder_minutes = ?"); vals.push(Math.max(0, Math.min(10080, Number(body.reminder_minutes)))); }
     if ("lead_id" in body) { fields.push("lead_id = ?"); vals.push(body.lead_id ?? null); }
     if (fields.length === 0) return json({ error: "Nenhum campo para atualizar" }, { status: 400 });
     // Reset reminder_sent if date changed
@@ -3648,10 +3815,10 @@ async function handleCRM(request: Request, env: Env, method: string, url: URL) {
       const body = await readBody<{ name?: string; color?: string; wip_limit?: number | null; position?: number }>(request);
       const sets: string[] = [];
       const vals: (string | number | null)[] = [];
-      if (body.name !== undefined) { sets.push("name = ?"); vals.push(body.name); }
-      if (body.color !== undefined) { sets.push("color = ?"); vals.push(body.color); }
-      if (body.wip_limit !== undefined) { sets.push("wip_limit = ?"); vals.push(body.wip_limit); }
-      if (body.position !== undefined) { sets.push("position = ?"); vals.push(body.position); }
+      if (body.name !== undefined) { sets.push("name = ?"); vals.push(String(body.name).trim().slice(0, 100)); }
+      if (body.color !== undefined) { sets.push("color = ?"); vals.push(String(body.color).trim().slice(0, 30)); }
+      if (body.wip_limit !== undefined) { sets.push("wip_limit = ?"); vals.push(body.wip_limit !== null ? Math.max(0, Math.min(9999, Number(body.wip_limit))) : null); }
+      if (body.position !== undefined) { sets.push("position = ?"); vals.push(Math.max(0, Number(body.position))); }
       if (sets.length === 0) return json({ error: "Nenhum campo para atualizar" }, { status: 400 });
       vals.push(colId, tenantId);
       await env.DB.prepare(
@@ -3721,14 +3888,16 @@ async function handleCRM(request: Request, env: Env, method: string, url: URL) {
 
     if (method === "POST") {
       const body = await readBody<{ name?: string; position?: number; color?: string }>(request);
-      if (!body.name) return json({ error: "Nome obrigatório" }, { status: 400 });
+      const colName = (body.name ?? "").trim().slice(0, 100);
+      if (!colName) return json({ error: "Nome obrigatório" }, { status: 400 });
       const maxPos = await env.DB.prepare(
         "SELECT COALESCE(MAX(position), -1) as maxPos FROM crm_columns WHERE tenant_id = ?",
       ).bind(tenantId).first<{ maxPos: number }>();
-      const pos = body.position ?? (maxPos ? maxPos.maxPos + 1 : 0);
+      const pos = body.position != null ? Math.max(0, Number(body.position)) : (maxPos ? maxPos.maxPos + 1 : 0);
+      const colColor = body.color ? String(body.color).trim().slice(0, 30) : "#6366f1";
       const res = await env.DB.prepare(
         "INSERT INTO crm_columns (tenant_id, name, position, color) VALUES (?, ?, ?, ?)",
-      ).bind(tenantId, body.name, pos, body.color ?? "#6366f1").run();
+      ).bind(tenantId, colName, pos, colColor).run();
       const created = await env.DB.prepare(
         "SELECT id, name, position, color, wip_limit FROM crm_columns WHERE id = ? AND tenant_id = ?",
       ).bind(res.lastRowId, tenantId).first();
@@ -3752,10 +3921,17 @@ async function handleCRM(request: Request, env: Env, method: string, url: URL) {
       }>(request);
       const sets: string[] = [];
       const vals: (string | number | null)[] = [];
-      if (body.tags !== undefined) { sets.push("tags = ?"); vals.push(JSON.stringify(body.tags)); }
-      if (body.deal_value !== undefined) { sets.push("deal_value = ?"); vals.push(body.deal_value); }
-      if (body.notes !== undefined) { sets.push("notes = ?"); vals.push(body.notes); }
-      if (body.assignee !== undefined) { sets.push("assignee = ?"); vals.push(body.assignee); }
+      if (body.tags !== undefined) { sets.push("tags = ?"); vals.push(JSON.stringify(Array.isArray(body.tags) ? body.tags.slice(0, 20) : [])); }
+      if (body.deal_value !== undefined) {
+        const dv = body.deal_value === null ? null : Number(body.deal_value);
+        if (dv !== null && (!Number.isFinite(dv) || dv < 0 || dv > 999_999_999)) {
+          return json({ error: "deal_value inválido" }, { status: 400 });
+        }
+        sets.push("deal_value = ?");
+        vals.push(dv);
+      }
+      if (body.notes !== undefined) { sets.push("notes = ?"); vals.push(body.notes !== null ? String(body.notes).slice(0, 2000) : null); }
+      if (body.assignee !== undefined) { sets.push("assignee = ?"); vals.push(body.assignee !== null ? String(body.assignee).slice(0, 100) : null); }
       if (sets.length === 0) return json({ error: "Nenhum campo" }, { status: 400 });
       vals.push(leadEntryId, tenantId);
       await env.DB.prepare(
@@ -3850,6 +4026,10 @@ async function handleProspectFunnels(request: Request, env: Env, method: string,
     }
     const file = formData.get("file") as File | null;
     if (!file) return json({ error: "Campo 'file' obrigatório" }, { status: 400 });
+    const MAX_FUNNEL_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB
+    if (file.size > MAX_FUNNEL_UPLOAD_BYTES) {
+      return json({ error: "Arquivo muito grande. Limite: 50 MB" }, { status: 413 });
+    }
 
     const ext = (file.name.split(".").pop() ?? "").toLowerCase();
     const ALLOWED_FUNNEL_EXTS = ["jpg", "jpeg", "png", "gif", "webp", "mp4", "webm", "mov", "m4a", "mp3", "ogg", "pdf"];
@@ -3917,13 +4097,15 @@ async function handleProspectFunnels(request: Request, env: Env, method: string,
 
   if (method === "POST" && !funnelId) {
     const body = await readBody<{ name?: string; status?: string; steps?: Array<{ type: string; content?: string; wait_seconds?: number; caption?: string; position?: number }> }>(request);
-    if (!body.name || typeof body.name !== "string" || !body.name.trim()) {
+    const funnelName = typeof body.name === "string" ? body.name.trim().slice(0, 200) : "";
+    if (!funnelName) {
       return json({ error: "Nome obrigatório" }, { status: 400 });
     }
-    const status = body.status ?? "draft";
+    const VALID_FUNNEL_STATUSES = new Set(["draft", "active", "archived"]);
+    const funnelStatus = VALID_FUNNEL_STATUSES.has(String(body.status ?? "")) ? String(body.status) : "draft";
     const res = await env.DB.prepare(
       "INSERT INTO prospect_funnels (tenant_id, name, status) VALUES (?, ?, ?)",
-    ).bind(tenantId, body.name.trim(), status).run();
+    ).bind(tenantId, funnelName, funnelStatus).run();
     const newId = res.lastRowId;
 
     const VALID_STEP_TYPES = new Set(["text", "wait", "image", "video", "audio", "pdf"]);
@@ -3931,9 +4113,12 @@ async function handleProspectFunnels(request: Request, env: Env, method: string,
     for (let i = 0; i < steps.length; i++) {
       const s = steps[i];
       if (!VALID_STEP_TYPES.has(s.type)) continue;
+      const waitSecs = Math.max(5, Math.min(86400, Number(s.wait_seconds ?? 60)));
+      const stepContent = s.content != null ? String(s.content).slice(0, 2000) : null;
+      const stepCaption = s.caption != null ? String(s.caption).slice(0, 500) : null;
       await env.DB.prepare(
         "INSERT INTO funnel_steps (funnel_id, position, type, content, wait_seconds, caption) VALUES (?, ?, ?, ?, ?, ?)",
-      ).bind(newId, s.position ?? i, s.type, s.content ?? null, s.wait_seconds ?? 60, s.caption ?? null).run();
+      ).bind(newId, s.position ?? i, s.type, stepContent, waitSecs, stepCaption).run();
     }
 
     const created = await env.DB.prepare(
@@ -3954,8 +4139,15 @@ async function handleProspectFunnels(request: Request, env: Env, method: string,
 
     const updates: string[] = ["updated_at = datetime('now')", "version = version + 1"];
     const params: unknown[] = [];
-    if (body.name !== undefined) { updates.unshift("name = ?"); params.push(String(body.name).trim()); }
-    if (body.status !== undefined) { updates.unshift("status = ?"); params.push(String(body.status)); }
+    if (body.name !== undefined) {
+      const putFunnelName = String(body.name).trim().slice(0, 200);
+      if (putFunnelName) { updates.unshift("name = ?"); params.push(putFunnelName); }
+    }
+    if (body.status !== undefined) {
+      const VALID_FUNNEL_STATUSES_PUT = new Set(["draft", "active", "archived"]);
+      const putFunnelStatus = VALID_FUNNEL_STATUSES_PUT.has(String(body.status)) ? String(body.status) : "draft";
+      updates.unshift("status = ?"); params.push(putFunnelStatus);
+    }
     params.push(funnelId, tenantId);
 
     await env.DB.prepare(
@@ -3969,9 +4161,12 @@ async function handleProspectFunnels(request: Request, env: Env, method: string,
     for (let i = 0; i < steps.length; i++) {
       const s = steps[i];
       if (!VALID_STEP_TYPES_PUT.has(s.type)) continue;
+      const waitSecs = Math.max(5, Math.min(86400, Number(s.wait_seconds ?? 60)));
+      const stepContent = s.content != null ? String(s.content).slice(0, 2000) : null;
+      const stepCaption = s.caption != null ? String(s.caption).slice(0, 500) : null;
       await env.DB.prepare(
         "INSERT INTO funnel_steps (funnel_id, position, type, content, wait_seconds, caption) VALUES (?, ?, ?, ?, ?, ?)",
-      ).bind(funnelId, s.position ?? i, s.type, s.content ?? null, s.wait_seconds ?? 60, s.caption ?? null).run();
+      ).bind(funnelId, s.position ?? i, s.type, stepContent, waitSecs, stepCaption).run();
     }
 
     const updated = await env.DB.prepare(
@@ -4294,7 +4489,7 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
     if (method !== "POST") return new Response("Method not allowed", { status: 405 });
 
     const body = await readBody<{ profile?: string }>(request);
-    const profile = (body.profile || "").trim();
+    const profile = (body.profile || "").trim().slice(0, 100);
     if (!profile) return json({ error: "Perfil é obrigatório" }, { status: 400 });
 
     const res = await env.DB.prepare(
@@ -4384,9 +4579,9 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
     const leads = body.leads;
     let inserted = 0;
     for (const lead of leads) {
-      const company = lead?.company != null ? String(lead.company) : "";
-      const phone = lead?.phone != null ? String(lead.phone) : "";
-      if (!company.trim() || !phone.trim()) continue;
+      const company = lead?.company != null ? String(lead.company).trim().slice(0, 200) : "";
+      const phone = lead?.phone != null ? String(lead.phone).trim() : "";
+      if (!company || !phone) continue;
       if (phone && !isPhonePlausible(phone)) continue; // rejeita telefone inválido
       await env.DB.prepare(
         "INSERT INTO leads (tenant_id, company, phone, folder_id) VALUES (?, ?, ?, NULL)",
@@ -4500,9 +4695,9 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
         }
       }
 
-      const website = lead?.website != null ? String(lead.website).trim() : null;
-      const category = lead?.category != null ? String(lead.category).trim() : null;
-      const address = lead?.address != null ? String(lead.address).trim() : null;
+      const website = lead?.website != null ? String(lead.website).trim().slice(0, 500) : null;
+      const category = lead?.category != null ? String(lead.category).trim().slice(0, 100) : null;
+      const address = lead?.address != null ? String(lead.address).trim().slice(0, 300) : null;
 
       // Evita duplicata por tenant + phone (se tiver phone)
       if (phone) {
@@ -4819,9 +5014,9 @@ async function handleInstagramTools(request: Request, env: Env, method: string, 
         if (exists) continue;
       }
 
-      const email   = lead?.email   != null ? String(lead.email).trim()   : null;
-      const website = lead?.website != null ? String(lead.website).trim() : null;
-      const notes   = lead?.notes   != null ? String(lead.notes).trim()   : null;
+      const email   = lead?.email   != null ? String(lead.email).trim().slice(0, 200)   : null;
+      const website = lead?.website != null ? String(lead.website).trim().slice(0, 500) : null;
+      const notes   = lead?.notes   != null ? String(lead.notes).trim().slice(0, 500)   : null;
 
       await env.DB.prepare(
         `INSERT INTO leads (tenant_id, company, phone, folder_id, website, notes)
@@ -5317,7 +5512,7 @@ async function handleInbox(request: Request, env: Env, method: string, url: URL)
   if (method === "POST" && parts[3] === "reply") {
     const body = await readBody<{ message?: string }>(request);
     if (!body.message?.trim()) return json({ error: "message obrigatório" }, { status: 400 });
-    const text = body.message.trim();
+    const text = body.message.trim().slice(0, 4000);
     await sendWhatsAppMessage(env, tenantId, phone, text);
     await appendConversation(env, tenantId, phone, "assistant", text);
     // Garante que a conversa não está descartada (já que respondemos)
