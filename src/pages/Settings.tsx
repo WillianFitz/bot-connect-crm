@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Save, Bell, Key, Building2, Loader2, Check, Calendar, Copy, ExternalLink, Link2, Users, Phone, MessageSquare, Trash2, RefreshCw, Plus, CreditCard, Zap, Shield, Crown, CheckCircle2, AlertCircle } from "lucide-react";
+import { Save, Bell, Key, Building2, Loader2, Check, Calendar, Copy, ExternalLink, Link2, Users, Phone, MessageSquare, Trash2, RefreshCw, Plus, CreditCard, Zap, Shield, Crown, CheckCircle2, AlertCircle, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,6 +10,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const DAY_LABELS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
@@ -71,6 +80,19 @@ export default function SettingsPage() {
     changePasswordMutation.mutate();
   };
 
+  // ── Exclusão de conta (LGPD Art. 18) ──
+  const [showDeleteAccount, setShowDeleteAccount] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
+
+  const deleteAccountMutation = useMutation({
+    mutationFn: () => api.deleteAccount(deletePassword),
+    onSuccess: () => {
+      localStorage.clear();
+      window.location.href = "/login";
+    },
+    onError: (e: Error) => toast({ title: "Erro ao excluir conta", description: e.message, variant: "destructive" }),
+  });
+
   // ── Notificações ──
   const settingsQuery = useQuery({
     queryKey: ["settings"],
@@ -117,6 +139,49 @@ export default function SettingsPage() {
   });
 
   return (
+    <>
+    {/* ── AlertDialog exclusão de conta ── */}
+    <AlertDialog open={showDeleteAccount} onOpenChange={setShowDeleteAccount}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+            <AlertTriangle className="h-5 w-5" /> Excluir conta permanentemente
+          </AlertDialogTitle>
+          <AlertDialogDescription className="space-y-3">
+            <span className="block">
+              Esta ação é <strong>irreversível</strong>. Todos os seus dados serão excluídos permanentemente
+              imediatamente após a confirmação. Não é possível recuperá-los.
+            </span>
+            <span className="block pt-1 text-foreground font-medium">Digite sua senha para confirmar:</span>
+            <Input
+              type="password"
+              placeholder="Sua senha atual"
+              value={deletePassword}
+              onChange={(e) => setDeletePassword(e.target.value)}
+              className="bg-secondary border-border/50"
+            />
+            {deleteAccountMutation.isError && (
+              <span className="block text-xs text-destructive">
+                {(deleteAccountMutation.error as Error).message}
+              </span>
+            )}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel onClick={() => setDeletePassword("")}>Cancelar</AlertDialogCancel>
+          <Button
+            variant="destructive"
+            disabled={!deletePassword || deleteAccountMutation.isPending}
+            onClick={() => deleteAccountMutation.mutate()}
+            className="gap-2"
+          >
+            {deleteAccountMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+            Excluir tudo permanentemente
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+
     <div className="space-y-6 animate-slide-in w-full max-w-4xl xl:max-w-5xl 2xl:max-w-6xl">
       <div>
         <h1 className="text-2xl lg:text-3xl font-bold text-foreground">Configurações</h1>
@@ -248,6 +313,26 @@ export default function SettingsPage() {
                 {changePasswordMutation.isSuccess ? "Senha alterada!" : "Alterar senha"}
               </Button>
             </form>
+          </div>
+          {/* ── Exclusão de conta ── */}
+          <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-5 space-y-3">
+            <h3 className="text-sm font-semibold text-destructive flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4" /> Excluir minha conta
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              Esta ação é <strong className="text-foreground">irreversível</strong>. Todos os seus dados — leads, campanhas,
+              conversas, agendamentos e configurações — serão excluídos permanentemente. Conforme a{" "}
+              <strong className="text-foreground">LGPD Art. 18</strong>, você tem o direito de solicitar a exclusão a qualquer momento.
+            </p>
+            <Button
+              variant="destructive"
+              size="sm"
+              className="gap-2"
+              onClick={() => setShowDeleteAccount(true)}
+            >
+              <Trash2 className="h-4 w-4" />
+              Excluir minha conta e todos os dados
+            </Button>
           </div>
         </TabsContent>
 
@@ -394,6 +479,7 @@ export default function SettingsPage() {
         <SubscriptionTab />
       </Tabs>
     </div>
+    </>
   );
 }
 

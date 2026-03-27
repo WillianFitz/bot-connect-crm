@@ -3599,6 +3599,49 @@ async function handleChangePassword(request: Request, env: Env) {
   return json({ ok: true });
 }
 
+// DELETE /api/account — exclusão permanente de todos os dados do tenant (LGPD Art. 18)
+async function handleDeleteAccount(request: Request, env: Env) {
+  const tenantId = await getTenantId(request, env);
+
+  const body = await readBody<{ currentPassword?: string }>(request);
+  if (!body.currentPassword) {
+    return json({ error: "Senha obrigatória para confirmar a exclusão" }, { status: 400 });
+  }
+
+  // Rate limit: 3 tentativas por tenant por 15 min (evita brute force)
+  const rateKey = `delete_account:${tenantId}`;
+  await env.DB.prepare(
+    "DELETE FROM login_attempts WHERE key = ? AND window_start < datetime('now', '-15 minutes')",
+  ).bind(rateKey).run();
+  const rateRow = await env.DB.prepare(
+    "SELECT attempts FROM login_attempts WHERE key = ? LIMIT 1",
+  ).bind(rateKey).first<{ attempts: number }>();
+  if ((rateRow?.attempts ?? 0) >= 3) {
+    return json({ error: "Muitas tentativas. Aguarde alguns minutos." }, { status: 429 });
+  }
+
+  const user = await env.DB.prepare(
+    "SELECT id, password_hash FROM users WHERE tenant_id = ? LIMIT 1",
+  ).bind(tenantId).first<{ id: number; password_hash: string }>();
+  if (!user) return json({ error: "Usuário não encontrado" }, { status: 404 });
+
+  const valid = await verifyPassword(body.currentPassword, user.password_hash);
+  if (!valid) {
+    await env.DB.prepare(
+      "INSERT INTO login_attempts (key, attempts, window_start) VALUES (?, 1, datetime('now')) ON CONFLICT(key) DO UPDATE SET attempts = attempts + 1",
+    ).bind(rateKey).run();
+    return json({ error: "Senha incorreta" }, { status: 401 });
+  }
+
+  // Deleta o tenant — todas as tabelas filhas têm ON DELETE CASCADE
+  await env.DB.prepare("DELETE FROM tenants WHERE id = ?").bind(tenantId).run();
+
+  // Limpa login_attempts do tenant
+  await env.DB.prepare("DELETE FROM login_attempts WHERE key LIKE ?").bind(`%:${tenantId}%`).run();
+
+  return json({ ok: true, message: "Conta e todos os dados excluídos permanentemente." });
+}
+
 async function handleAppointments(request: Request, env: Env, method: string, url: URL) {
   const tenantId = await getTenantId(request, env);
   await ensureTenant(env, tenantId);
@@ -6352,6 +6395,8 @@ export default {
         response = await handleAccountSettings(request, env, method);
       } else if (pathname === "/api/settings/password" && method === "PUT") {
         response = await handleChangePassword(request, env);
+      } else if (pathname === "/api/account" && method === "DELETE") {
+        response = await handleDeleteAccount(request, env);
       } else if (pathname === "/api/settings/availability" && (method === "GET" || method === "PUT")) {
         response = await handleAvailabilitySettings(request, env, method);
       } else if (pathname.startsWith("/api/public/slots/")) {

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Phone, CalendarClock, Pencil, Play, Pause, Trash2, Megaphone, CreditCard, RotateCcw } from "lucide-react";
+import { Plus, Phone, CalendarClock, Pencil, Play, Pause, Trash2, Megaphone, CreditCard, RotateCcw, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -69,6 +69,8 @@ export default function Campaigns() {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null);
   const [campaignToDelete, setCampaignToDelete] = useState<Campaign | null>(null);
+  const [pendingActivate, setPendingActivate] = useState<number | null>(null);
+  const [waBanAcknowledged, setWaBanAcknowledged] = useState(false);
 
   const [name, setName] = useState("");
   const [delayMin, setDelayMin] = useState(6);
@@ -319,6 +321,49 @@ export default function Campaigns() {
   }
 
   return (
+    <>
+    {/* ── Aviso de risco de ban do WhatsApp ── */}
+    <AlertDialog open={pendingActivate !== null} onOpenChange={(open) => { if (!open) setPendingActivate(null); }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle className="flex items-center gap-2 text-amber-500">
+            <AlertTriangle className="h-5 w-5" /> Aviso: Risco de ban no WhatsApp
+          </AlertDialogTitle>
+          <AlertDialogDescription className="space-y-3 text-sm">
+            <span className="block">
+              O disparo de mensagens em massa via WhatsApp pode resultar no{" "}
+              <strong className="text-foreground">bloqueio ou banimento permanente</strong> do seu número
+              pelo WhatsApp/Meta, independente da plataforma utilizada.
+            </span>
+            <span className="block">
+              Para reduzir o risco: use intervalos de pelo menos 6–15 segundos entre mensagens,
+              evite listas muito grandes de uma vez, e certifique-se de que os destinatários
+              consentiram em receber mensagens (exigido pela LGPD).
+            </span>
+            <span className="block font-medium text-foreground">
+              A LeadFlowAI não se responsabiliza por bans ou restrições aplicadas pelo WhatsApp.
+            </span>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel onClick={() => setPendingActivate(null)}>Cancelar</AlertDialogCancel>
+          <Button
+            className="gap-2 bg-green-600 hover:bg-green-700 text-white"
+            onClick={() => {
+              if (pendingActivate !== null) {
+                setCampaignStatus.mutate({ id: pendingActivate, status: "active" });
+                setWaBanAcknowledged(true);
+              }
+              setPendingActivate(null);
+            }}
+          >
+            <Play className="h-4 w-4" />
+            Entendi, ativar campanha
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+
     <div className="space-y-6 animate-slide-in w-full">
       <div>
         <h1 className="text-2xl lg:text-3xl font-bold text-foreground">Disparos</h1>
@@ -519,7 +564,13 @@ export default function Campaigns() {
                             variant="ghost"
                             size="icon"
                             className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-500/10"
-                            onClick={() => setCampaignStatus.mutate({ id: c.id, status: "active" })}
+                            onClick={() => {
+                              if (waBanAcknowledged) {
+                                setCampaignStatus.mutate({ id: c.id, status: "active" });
+                              } else {
+                                setPendingActivate(c.id);
+                              }
+                            }}
                             title="Ativar campanha"
                           >
                             <Play className="h-3.5 w-3.5" />
@@ -1010,5 +1061,6 @@ export default function Campaigns() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+    </>
   );
 }

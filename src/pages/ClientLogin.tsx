@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { Zap, Eye, EyeOff, Loader2, Bot, Megaphone, GitBranch, Users } from "lucide-react";
 import { api } from "@/lib/api";
 import { Input } from "@/components/ui/input";
@@ -246,8 +246,12 @@ export default function ClientLogin() {
             </form>
           </div>
 
-          <p className="text-center text-[11px] text-muted-foreground/50">
-            © 2025 LeadFlowAI · Todos os direitos reservados
+          <p className="text-center text-[11px] text-muted-foreground/50 space-x-2">
+            <span>© 2026 LeadFlowAI</span>
+            <span>·</span>
+            <Link to="/terms" className="hover:text-muted-foreground transition-colors">Termos de Uso</Link>
+            <span>·</span>
+            <Link to="/privacy" className="hover:text-muted-foreground transition-colors">Privacidade</Link>
           </p>
         </div>
       </div>

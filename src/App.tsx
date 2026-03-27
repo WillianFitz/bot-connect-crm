@@ -21,6 +21,8 @@ import ProspectFunnels from "./pages/ProspectFunnels";
 import BookingPage from "./pages/BookingPage";
 import LeadHeatMap from "./pages/LeadHeatMap";
 import InboxPage from "./pages/Inbox";
+import TermsOfService from "./pages/TermsOfService";
+import PrivacyPolicy from "./pages/PrivacyPolicy";
 
 const queryClient = new QueryClient();
 
@@ -83,6 +85,10 @@ const App = () => (
           {/* Admin (fora do layout do app dos clientes) */}
           <Route path="/admin-login" element={<AdminLogin />} />
           <Route path="/admin" element={<AdminRoute />} />
+
+          {/* Páginas legais — públicas */}
+          <Route path="/terms" element={<TermsOfService />} />
+          <Route path="/privacy" element={<PrivacyPolicy />} />
 
           {/* Página pública de agendamento — sem autenticação */}
           <Route path="/agendar/:tenantId" element={<BookingPage />} />

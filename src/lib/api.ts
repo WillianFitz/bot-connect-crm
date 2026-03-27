@@ -755,5 +755,11 @@ export const api = {
     request<{ ok: boolean; imported: number; updated: number; total: number }>("/whatsapp-templates/import-from-meta", {
       method: "POST",
     }),
+
+  deleteAccount: (currentPassword: string) =>
+    request<{ ok: boolean; message: string }>("/account", {
+      method: "DELETE",
+      body: JSON.stringify({ currentPassword }),
+    }),
 };
 
