@@ -5,6 +5,15 @@
    Envio: somente leads com telefone são enviados ao SaaS
    ══════════════════════════════════════════════════════════ */
 
+/* ── Escapa HTML para prevenir XSS no innerHTML ── */
+function esc(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 function getProfileKey(tenantId, profile) {
   return `profile:${tenantId}:${profile}`;
 }
@@ -515,8 +524,8 @@ function renderProfilesTable(profiles) {
 
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td>${tenant}</td>
-      <td>@${profile}</td>
+      <td>${esc(tenant)}</td>
+      <td>@${esc(profile)}</td>
       <td>${users}</td>
       <td>${phones > 0
         ? `<span class="chip chip-green">📱 ${phones}</span>`

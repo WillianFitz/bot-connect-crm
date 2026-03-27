@@ -8,6 +8,15 @@
 
 const SEARCH_URL = 'https://portal.casadosdados.com.br/plataforma/pesquisa';
 
+/* ── Escapa HTML para prevenir XSS no innerHTML ── */
+function esc(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 let _stopped      = false;
 let _companies    = [];   // {cnpj, name, url}         — Fase 1
 let _leads        = [];   // {cnpj, name, phone, email, notes} — Fase 2
@@ -304,8 +313,8 @@ function renderSearchesTable(searches) {
     const parts = key.split(':');
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td>${parts[2] || '—'}</td>
-      <td>${parts[1] || 'Todos'}</td>
+      <td>${esc(parts[2]) || '—'}</td>
+      <td>${esc(parts[1]) || 'Todos'}</td>
       <td>${(s.companies || []).length} / ${extr}</td>
       <td>${phones > 0 ? `<span class="chip chip-green">📱 ${phones}</span>` : '<span class="chip chip-gray">0</span>'}</td>
       <td>${emails > 0 ? `<span class="chip chip-green">✉️ ${emails}</span>` : '<span class="chip chip-gray">0</span>'}</td>

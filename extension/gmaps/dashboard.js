@@ -6,6 +6,15 @@
 
 let _stopped = false;
 
+/* ── Escapa HTML para prevenir XSS no innerHTML ── */
+function esc(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 function getSearchKey(tenantId, query) {
   return `gmaps:${tenantId}:${query.toLowerCase().trim()}`;
 }
@@ -296,7 +305,7 @@ function renderSearchesTable(searches) {
 
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td>${s.query || "—"}</td>
+      <td>${esc(s.query) || "—"}</td>
       <td>${found}</td>
       <td>${phones > 0 ? `<span class="chip chip-green">📱 ${phones}</span>` : `<span class="chip chip-gray">0</span>`}</td>
       <td>${extr}</td>

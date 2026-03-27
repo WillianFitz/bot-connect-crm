@@ -4,6 +4,15 @@
    e coleta os participantes do grupo aberto.
    ══════════════════════════════════════════════════════════ */
 
+/* ── Escapa HTML para prevenir XSS no innerHTML ── */
+function esc(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 /* ── Navegação ── */
 function switchSection(id) {
   document.querySelectorAll(".section").forEach(s =>
@@ -278,7 +287,7 @@ function loadDashboard() {
 
       const tr = document.createElement("tr");
       tr.innerHTML = `
-        <td>${g.groupName || key}</td>
+        <td>${esc(g.groupName) || esc(key)}</td>
         <td>${leads.length}</td>
         <td>${phones > 0
           ? `<span class="chip chip-green">📱 ${phones}</span>`
